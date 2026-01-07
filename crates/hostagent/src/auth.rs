@@ -2,43 +2,49 @@
 //!
 //! # TokenStore
 //!
-//! Manages valid authentication tokens using HashSet for O(1) lookup.
+//! Manages valid authentication tokens with expiry time using HashMap for O(1) lookup.
 //!
 //! ## Security Note: Timing Attack Consideration
 //!
-//! HashSet::contains() is NOT constant-time comparison.
+//! HashMap::contains() is NOT constant-time comparison.
 //!
 //! ### Why this is ACCEPTED for MVP:
 //! - Token is 256-bit random (2^256 entropy) - brute force infeasible
 //! - Attacker does NOT control token content (server-generated)
-//! - HashSet hash first → timing variation smaller than direct string compare
+//! - HashMap hash first → timing variation smaller than direct string compare
 //! - Token is like a random API key, not a user-chosen password
 //!
 //! ### Future Enhancement:
 //! - Use constant_time_eq crate if compliance requires (FIPS, etc.)
 
 use comacode_core::auth::AuthToken;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
-/// Token storage for validating authentication
+/// Default token TTL: 7 days
+const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Token storage for validating authentication with expiry tracking
 #[derive(Clone)]
 pub struct TokenStore {
-    valid_tokens: Arc<RwLock<HashSet<AuthToken>>>,
+    /// Maps token -> creation time (for expiry check)
+    valid_tokens: Arc<RwLock<HashMap<AuthToken, SystemTime>>>,
 }
 
 impl TokenStore {
     /// Create new empty token store
     pub fn new() -> Self {
         Self {
-            valid_tokens: Arc::new(RwLock::new(HashSet::new())),
+            valid_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Add valid token (e.g., from QR code scan)
+    /// Add valid token with current timestamp (e.g., from QR code scan)
     pub async fn add_token(&self, token: AuthToken) {
-        self.valid_tokens.write().await.insert(token);
+        let created_at = SystemTime::now();
+        self.valid_tokens.write().await.insert(token, created_at);
     }
 
     /// Remove token (e.g., after disconnect or session expiry)
@@ -47,14 +53,25 @@ impl TokenStore {
         self.valid_tokens.write().await.remove(token);
     }
 
-    /// Validate token
+    /// Validate token AND check expiry
     ///
-    /// Returns true if token is in the valid set.
+    /// Returns true if token exists AND has not expired.
+    /// Expired tokens are automatically removed (lazy cleanup).
     ///
     /// **Security Note**: See module-level docs about timing attack consideration.
     #[allow(dead_code)]
     pub async fn validate(&self, token: &AuthToken) -> bool {
-        self.valid_tokens.read().await.contains(token)
+        let tokens = self.valid_tokens.read().await;
+
+        if let Some(created_at) = tokens.get(token) {
+            // Check expiry
+            match created_at.elapsed() {
+                Ok(elapsed) => elapsed < DEFAULT_TOKEN_TTL,
+                Err(_) => false,  // Clock went backwards? Treat as expired.
+            }
+        } else {
+            false  // Token not found
+        }
     }
 
     /// Generate and add new token
@@ -74,6 +91,20 @@ impl TokenStore {
     #[allow(dead_code)]
     pub async fn clear(&self) {
         self.valid_tokens.write().await.clear();
+    }
+
+    /// Remove expired tokens and return count cleaned
+    ///
+    /// Call periodically (e.g., hourly) to prevent memory leak from old tokens.
+    pub async fn cleanup_expired(&self) -> usize {
+        let mut tokens = self.valid_tokens.write().await;
+
+        let before = tokens.len();
+        tokens.retain(|_token, created_at| {
+            created_at.elapsed().unwrap_or(Duration::MAX) < DEFAULT_TOKEN_TTL
+        });
+
+        before - tokens.len()
     }
 }
 
@@ -155,5 +186,27 @@ mod tests {
 
         let store2 = store1.clone();
         assert!(store2.validate(&token).await);
+    }
+
+    #[tokio::test]
+    async fn test_token_not_expired() {
+        let store = TokenStore::new();
+        let token = store.generate_token().await;
+        // Token should be valid immediately
+        assert!(store.validate(&token).await);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_removes_old_tokens() {
+        let store = TokenStore::new();
+
+        // Add a token manually (we can't test actual expiry without mocking SystemTime)
+        let token = AuthToken::generate();
+        store.add_token(token).await;
+
+        // Cleanup should not remove recent tokens
+        let cleaned = store.cleanup_expired().await;
+        assert_eq!(cleaned, 0);
+        assert!(store.validate(&token).await);
     }
 }

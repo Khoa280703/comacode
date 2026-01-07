@@ -15,6 +15,8 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use rcgen::KeyPair;
 
+use crate::auth::TokenStore;
+use crate::ratelimit::RateLimiterStore;
 use crate::session::SessionManager;
 
 /// QUIC server for terminal connections
@@ -23,13 +25,21 @@ pub struct QuicServer {
     endpoint: Endpoint,
     /// Session manager for PTY instances
     session_mgr: Arc<SessionManager>,
+    /// Token store for authentication validation
+    token_store: Arc<TokenStore>,
+    /// Rate limiter for auth failure tracking
+    rate_limiter: Arc<RateLimiterStore>,
     /// Shutdown signal sender
     shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl QuicServer {
     /// Create new QUIC server with self-signed certificate
-    pub async fn new(bind_addr: SocketAddr) -> Result<(Self, CertificateDer<'static>, PrivateKeyDer<'static>)> {
+    pub async fn new(
+        bind_addr: SocketAddr,
+        token_store: Arc<TokenStore>,
+        rate_limiter: Arc<RateLimiterStore>,
+    ) -> Result<(Self, CertificateDer<'static>, PrivateKeyDer<'static>)> {
         // Generate self-signed certificate ONCE
         let (cert, key_pair) = generate_cert_with_keypair()?;
 
@@ -58,6 +68,8 @@ impl QuicServer {
             Self {
                 endpoint,
                 session_mgr: Arc::new(SessionManager::new()),
+                token_store,
+                rate_limiter,
                 shutdown_tx: None,
             },
             cert,
@@ -70,13 +82,26 @@ impl QuicServer {
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
 
-        // Spawn cleanup task
+        // Spawn session cleanup task
         let session_mgr = Arc::clone(&self.session_mgr);
         tokio::spawn(async move {
             let _cleanup_handle = session_mgr.spawn_cleanup_task();
             // Keep cleanup task running
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
+
+        // Spawn token cleanup task (hourly)
+        let token_store = Arc::clone(&self.token_store);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                let cleaned = token_store.cleanup_expired().await;
+                if cleaned > 0 {
+                    tracing::info!("Cleaned {} expired tokens", cleaned);
+                }
             }
         });
 
@@ -88,8 +113,10 @@ impl QuicServer {
                     match incoming {
                         Some(incoming) => {
                             let session_mgr = Arc::clone(&self.session_mgr);
+                            let token_store = Arc::clone(&self.token_store);
+                            let rate_limiter = Arc::clone(&self.rate_limiter);
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(incoming, session_mgr).await {
+                                if let Err(e) = Self::handle_connection(incoming, session_mgr, token_store, rate_limiter).await {
                                     tracing::error!("Connection error: {}", e);
                                 }
                             });
@@ -115,6 +142,8 @@ impl QuicServer {
     async fn handle_connection(
         incoming: quinn::Incoming,
         session_mgr: Arc<SessionManager>,
+        token_store: Arc<TokenStore>,
+        rate_limiter: Arc<RateLimiterStore>,
     ) -> Result<()> {
         // Accept the connection - returns Result<Connecting, ConnectionError>
         let connecting = incoming.accept()?;
@@ -128,8 +157,10 @@ impl QuicServer {
             match connection.accept_bi().await {
                 Ok((send, recv)) => {
                     let session_mgr = Arc::clone(&session_mgr);
+                    let token_store = Arc::clone(&token_store);
+                    let rate_limiter = Arc::clone(&rate_limiter);
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_stream(send, recv, session_mgr).await {
+                        if let Err(e) = Self::handle_stream(send, recv, session_mgr, token_store, rate_limiter, remote_addr).await {
                             tracing::error!("Stream error: {}", e);
                         }
                     });
@@ -153,8 +184,12 @@ impl QuicServer {
         mut send: quinn::SendStream,
         mut recv: quinn::RecvStream,
         session_mgr: Arc<SessionManager>,
+        token_store: Arc<TokenStore>,
+        rate_limiter: Arc<RateLimiterStore>,
+        peer_addr: SocketAddr,
     ) -> Result<()> {
         let mut session_id: Option<u64> = None;
+        let mut authenticated = false;
 
         // Message receive loop
         let mut read_buf = vec![0u8; 1024];
@@ -179,16 +214,29 @@ impl QuicServer {
                         NetworkMessage::Hello { ref protocol_version, ref app_version, auth_token, .. } => {
                             tracing::info!("Client hello protocol_version={}, app_version={}", protocol_version, app_version);
 
-                            // Phase E03: Validate auth token if provided
-                            // For MVP, we accept connections without token (backward compatibility)
-                            // Future: require auth_token to be Some(valid_token)
-                            if let Some(token) = auth_token {
-                                tracing::info!("Auth token provided (hex: {})", token.to_hex());
-                                // TODO: Validate token against TokenStore when available
-                                // For MVP, we log but don't enforce
+                            // Phase 07-A: AUTH VALIDATION (P0 fix)
+                            let token_valid = if let Some(token) = auth_token {
+                                token_store.validate(&token).await
                             } else {
-                                tracing::warn!("No auth token provided - allowing for MVP");
+                                tracing::warn!("No auth token provided from {}", peer_addr);
+                                false
+                            };
+
+                            if !token_valid {
+                                tracing::warn!("Auth failed for IP: {}", peer_addr);
+
+                                // Record failure for rate limiting
+                                let _ = rate_limiter.record_auth_failure(peer_addr.ip()).await;
+
+                                // Send error response and close
+                                let _ = Self::send_message(&mut send, &NetworkMessage::hello(None)).await;
+                                break;
                             }
+
+                            // Reset auth failures on success
+                            rate_limiter.reset_auth_failures(peer_addr.ip()).await;
+                            authenticated = true;
+                            tracing::info!("Client authenticated: {}", peer_addr);
 
                             // Validate protocol version
                             if let Err(e) = msg.validate_handshake() {
@@ -203,6 +251,12 @@ impl QuicServer {
                             Self::send_message(&mut send, &response).await?;
                         }
                         NetworkMessage::Command(cmd) => {
+                            // Require authentication before creating session
+                            if !authenticated {
+                                tracing::warn!("Command received before authentication from {}", peer_addr);
+                                break;
+                            }
+
                             // Forward command to PTY
                             if let Some(id) = session_id {
                                 if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {

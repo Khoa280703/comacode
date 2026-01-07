@@ -19,6 +19,8 @@ use tracing::{error, info, warn, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::auth::TokenStore;
+use crate::ratelimit::RateLimiterStore;
+use std::sync::Arc;
 
 /// Comacode Host Agent - Terminal server for mobile clients
 #[derive(Parser, Debug)]
@@ -54,12 +56,15 @@ async fn main() -> Result<()> {
     info!("Starting QUIC server on {}", bind_addr);
 
     // Generate auth token for QR pairing
-    let token_store = TokenStore::new();
+    let token_store = Arc::new(TokenStore::new());
     let token = token_store.generate_token().await;
     info!("Auth token: {}", token.to_hex());
 
-    // Create and run QUIC server
-    let (mut server, cert, _key) = quic_server::QuicServer::new(bind_addr).await?;
+    // Create rate limiter for auth failure tracking
+    let rate_limiter = Arc::new(RateLimiterStore::new());
+
+    // Create and run QUIC server with auth stores
+    let (mut server, cert, _key) = quic_server::QuicServer::new(bind_addr, token_store, rate_limiter).await?;
 
     // Get certificate fingerprint for QR code
     let cert_fingerprint = crate::cert::CertStore::fingerprint_from_cert_der(&cert);
