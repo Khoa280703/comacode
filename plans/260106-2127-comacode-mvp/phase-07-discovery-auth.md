@@ -54,7 +54,105 @@ Discovery Layer
 
 ## Implementation Steps
 
-### Step 1: mDNS Host Advertisement (1.5h)
+### Step 1: Token Expiry Mechanism (1h) **[From Phase 06 Debt]
+```dart
+// mobile/lib/core/storage.dart
+class QrPayload {
+  final String ip;
+  final int port;
+  final String fingerprint;
+  final String token;
+  final DateTime createdAt;      // ✅ Thêm timestamp
+  final DateTime? expiresAt;     // ✅ Thêm expiry (default 24h)
+
+  factory QrPayload.fromJson(String json) {
+    final decoded = jsonDecode(json) as Map<String, dynamic>;
+    return QrPayload(
+      // ... existing fields
+      createdAt: DateTime.parse(decoded['created_at']),
+      expiresAt: decoded['expiresAt'] != null
+          ? DateTime.parse(decoded['expiresAt'])
+          : null,
+    );
+  }
+}
+
+// Check expiry when loading
+static Future<QrPayload?> getLastHost() async {
+  final payload = QrPayload.fromJson(jsonStr);
+
+  // Auto-revoke expired tokens
+  if (payload.expiresAt != null && DateTime.now().isAfter(payload.expiresAt!)) {
+    await deleteHost(fp);
+    return null;
+  }
+
+  return payload;
+}
+```
+
+**Tasks**:
+- [ ] Add `createdAt` and `expiresAt` to QrPayload model
+- [ ] Set default expiry to 24 hours from QR generation
+- [ ] Check expiry on load from storage
+- [ ] Auto-delete expired credentials
+- [ ] Update QR payload format on host side
+
+### Step 2: PTY Resize on Screen Rotation (1.5h) **[From Phase 06 Debt]
+```dart
+// mobile/lib/features/terminal/terminal_page.dart
+class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
+  int _terminalRows = 24;
+  int _terminalCols = 80;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateTerminalSize();
+  }
+
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    _updateTerminalSize();
+  }
+
+  void _updateTerminalSize() {
+    final screenSize = MediaQuery.of(context).size;
+    const charWidth = 7.5;   // monospace font width
+    const charHeight = 16.0;  // monospace font height
+
+    final newCols = (screenSize.width / charWidth).floor();
+    final newRows = (screenSize.height / charHeight).floor();
+
+    if (newCols != _terminalCols || newRows != _terminalRows) {
+      _terminalCols = newCols;
+      _terminalRows = newRows;
+      bridge.resizePty(rows: _terminalRows, cols: _terminalCols);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+}
+```
+
+**Tasks**:
+- [ ] Add `didChangeMetrics()` observer
+- [ ] Calculate terminal size from screen dimensions
+- [ ] Call `resizePty()` when size changes
+- [ ] Add observer lifecycle management
+- [ ] Test on device rotation
+
+### Step 3: mDNS Host Advertisement (1.5h)
 ```rust
 // crates/host_agent/src/mdns.rs
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -83,7 +181,7 @@ pub async fn advertise_mdns(port: u16, hostname: String) -> Result<()> {
 - [ ] Auto-refresh registration
 - [ ] Handle mDNS errors gracefully
 
-### Step 2: mDNS Client Browser (1.5h)
+### Step 4: mDNS Client Browser (1.5h)
 ```dart
 // mobile/lib/features/discovery/mdns_browser.dart
 import 'package:mdns/mdns.dart';
@@ -112,7 +210,7 @@ class MdnsBrowser {
 - [ ] Update UI with discovered hosts
 - [ ] Handle timeout/cleanup
 
-### Step 3: Simple Authentication (1.5h)
+### Step 5: Simple Authentication (1.5h)
 ```rust
 // crates/core/src/auth.rs
 use sha2::{Sha256, Digest};
@@ -146,7 +244,7 @@ pub fn generate_response(challenge: &AuthChallenge, password: &str) -> Vec<u8> {
 - [ ] Timestamp for replay prevention
 - [ ] Password storage in keychain
 
-### Step 4: QR Code Pairing (1h)
+### Step 6: QR Code Pairing (1h)
 ```dart
 // mobile/lib/features/discovery/qr_pairing.dart
 import 'package:qr_code_scanner/qr_code_scanner.dart';
@@ -175,7 +273,7 @@ class QrPairingPage extends StatefulWidget {
 - [ ] Extract auth token
 - [ ] Trigger connection
 
-### Step 5: Credential Storage (0.5h)
+### Step 7: Credential Storage (0.5h)
 ```dart
 // mobile/lib/core/storage.dart
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -201,6 +299,12 @@ class SecureStorage {
 - [ ] Clear on logout
 
 ## Todo List
+
+### From Phase 06 Debt (High Priority)
+- [ ] **Token expiry mechanism**: Add createdAt/expiresAt to QrPayload
+- [ ] **PTY resize on rotation**: Hook didChangeMetrics to resizePty()
+
+### Phase 07 Core Tasks
 - [ ] Add mDNS dependencies
 - [ ] Implement host advertisement
 - [ ] Build mDNS browser
