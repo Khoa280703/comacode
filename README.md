@@ -1,78 +1,69 @@
 # Comacode
 
-Remote terminal access via QR code pairing + QUIC.
+> Remote terminal access via QR code pairing
+
+Scan QR code → Connect instantly → Control terminal from your phone
 
 ## Quick Start
+
+```bash
+# Install
+cargo install --path .
+
+# Start server
+comacode-server --host 0.0.0.0 --port 8443
+
+# Show QR code
+comacode-server --qr
+```
+
+Then scan QR with mobile app (Flutter) to connect.
+
+## What It Does
+
+- **One-click pairing**: Scan QR, no manual IP/port entry
+- **Secure**: Certificate fingerprint verification (TOFU)
+- **Fast**: QUIC protocol (UDP-based, low latency)
+- **Mobile-first**: Designed for phone-to-terminal access
+
+## Use Cases
+
+- **Server admin**: Access terminal from phone without laptop
+- **IoT devices**: Control headless devices via mobile
+- **Quick fixes**: Emergency access when SSH unavailable
+
+## Requirements
+
+- **Server**: Rust 1.75+, Linux/macOS
+- **Client**: Flutter app (iOS/Android)
+
+## Architecture
+
+```
+┌─────────────┐     Scan QR     ┌─────────────┐
+│  Phone App  │ ─────────────► │   Server    │
+│             │   (QUIC conn)   │  + Terminal  │
+└─────────────┘                 └─────────────┘
+```
+
+## Development
 
 ```bash
 # Build
 cargo build --release
 
-# Run hostagent (server)
-./target/release/hostagent --host 0.0.0.0 --port 8443
-
-# Run CLI client (for testing)
-./target/release/cli_client --host 127.0.0.1 --port 8443
-```
-
-## Features
-
-- **QR Code Pairing**: Scan QR to get connection params (IP, port, token, fingerprint)
-- **QUIC Protocol**: Fast, secure UDP-based transport with Quinn 0.11
-- **TOFU Verification**: Trust On First Use for certificate fingerprint
-- **Rate Limiting**: IP-based ban system (in-memory)
-- **Mobile Bridge**: FFI layer for Flutter app integration
-
-## Architecture
-
-```
-┌─────────────┐     QUIC      ┌─────────────┐
-│  Mobile App │ ◄────────────► │  Hostagent  │
-│  (Flutter)  │               │  (Rust)     │
-└─────────────┘               └─────────────┘
-                                      │
-                                      ▼
-                                ┌───────────┐
-                                │   PTY     │
-                                └───────────┘
-```
-
-## Crates
-
-| Crate | Purpose |
-|-------|---------|
-| `core` | Shared types (AuthToken, TerminalEvent, NetworkMessage) |
-| `hostagent` | Server binary with PTY + QUIC server |
-| `mobile_bridge` | FFI bridge for Flutter (QUIC client) |
-| `cli_client` | CLI client for testing |
-
-## Development
-
-**Requirements**: Rust 1.75+, Flutter 3.15+ (for mobile)
-
-```bash
 # Run tests
 cargo test
 
-# Run with logs
-RUST_LOG=debug ./target/release/hostagent
-
-# Generate FFI code
-cd mobile && flutter pub run build_runner build
+# With debug logging
+RUST_LOG=debug cargo run --bin hostagent
 ```
 
-## Status
+## Documentation
 
-**Phase**: 04.1 (Post-MVP Bugfix)
-
-- ✅ Phase 01-03: MVP (hostagent, auth, rate limiting, PTY, QUIC server)
-- ✅ Phase 04: QUIC Client for Mobile
-- ✅ Phase 04.1: Critical Bugfixes (UB fix, fingerprint leakage)
-- ⏳ Phase 05: Network Protocol (Stream I/O)
-
-## Known Issues
-
-See `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`
+- [Architecture](docs/system-architecture.md)
+- [Roadmap](docs/project-roadmap.md)
+- [Code Standards](docs/code-standards.md)
 
 ## License
 
