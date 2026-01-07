@@ -1,7 +1,7 @@
 # Known Issues & Technical Debt
 
 **Status**: MVP Complete, tracking post-MVP improvements
-**Updated**: 2026-01-07 (Post-Phase 04.1 - Critical Bug Fixes)
+**Updated**: 2026-01-07 (Post-Phase 06 - Flutter UI)
 **Parent Plan**: 260106-2127-comacode-mvp
 
 ---
@@ -122,24 +122,22 @@ tests/
 
 **Severity**: Unknown (blocking cho mobile)
 **Location**: `crates/mobile_bridge/`
+**Status**: ✅ **COMPLETED** (2026-01-07)
 
 **Problem**:
-- `mobile_bridge` crate đã generate với flutter_rust_bridge
-- Chưa test FFI boundary với Flutter app thật
-- Chưa verify data serialization across FFI
+- ~~`mobile_bridge` crate đã generate với flutter_rust_bridge~~
+- ~~Chưa test FFI boundary với Flutter app thật~~
+- ~~Chưa verify data serialization across FFI~~
 
-**Impact**:
-- Có thể có bug khi Flutter app call Rust functions
-- Type mismatch, null pointer, encoding issues
+**Fix Applied**:
+- ✅ Generated FRB bindings với `flutter_rust_bridge_codegen`
+- ✅ Created `BridgeWrapper` với error handling
+- ✅ QR scanner validates QR payload
+- ✅ Terminal UI receives events via FRB
 
-**Fix Required**:
-- Build Flutter app (separate project)
-- Test từng FFI function
-- Integration tests với real device/simulator
+**See**: Phase 06 Flutter UI
 
-**Note**: Đây là **separate project** - không phải part của hostagent binary.
-
-**Estimate**: 4-6h (part of mobile project development)
+**Completed by**: Phase 06
 
 ---
 
@@ -192,10 +190,11 @@ let client_arc = QUIC_CLIENT.get()
 
 **Severity**: High (blocks Flutter integration)
 **Location**: `crates/mobile_bridge/src/quic_client.rs:229-253`
-**Status**: ⚠️ **OPEN** (TODO for Phase 05)
+**Status**: ✅ **COMPLETED** (2026-01-07)
 
 **Problem**:
 ```rust
+// BEFORE: Stub implementation
 pub async fn receive_event(&self) -> Result<TerminalEvent, String> {
     // TODO: Actually receive from QUIC stream
     Ok(TerminalEvent::output_str(""))  // STUB!
@@ -208,19 +207,15 @@ pub async fn send_command(&self, command: String) -> Result<(), String> {
 }
 ```
 
-**Impact**:
-- Flutter app cannot receive terminal output
-- Flutter app cannot send commands to remote terminal
-- Blocks Phase 04 end-to-end testing
+**Fix Applied**:
+- ✅ Implemented actual QUIC stream reading in `receive_event()`
+- ✅ Implemented actual QUIC stream writing in `send_command()`
+- ✅ Flutter Terminal UI polls events via Timer.periodic
+- ✅ Bidirectional communication working
 
-**Fix Required**:
-- Implement actual QUIC stream reading/writing
-- Spawn background task for streaming
-- Handle stream errors and reconnection
+**See**: Phase 06 Flutter UI - Terminal widget
 
-**Estimate**: 3-4h
-
-**See**: `plans/reports/code-reviewer-260107-1605-quic-client-phase04.md` (Finding #2)
+**Completed by**: Phase 06
 
 ---
 
@@ -333,6 +328,188 @@ if actual_clean.as_bytes().ct_eq(expected_clean.as_bytes()).into() { ... }
 
 ---
 
+## P1: Phase 06 Post-Implementation Issues
+
+### 11. Token Expiry Not Implemented (HIGH)
+
+**Severity**: High (security concern)
+**Location**: `mobile/lib/core/storage.dart:66-74`
+
+**Problem**:
+```dart
+static Future<void> saveHost(QrPayload payload) async {
+    await _storage.write(key: payload.storageKey, value: payload.toJson());
+    await _storage.write(key: 'last_host', value: payload.fingerprint);
+    // ❌ Không store timestamp
+    // ❌ Không store token expiry
+}
+```
+
+**Impact**:
+- TOFU = trust forever, không có revoke mechanism
+- Stolen tokens = permanent access
+- Violates security best practices
+
+**Fix Required**:
+```dart
+class QrPayload {
+    final DateTime createdAt;      // ✅ Thêm timestamp
+    final DateTime? expiresAt;     // ✅ Thêm expiry
+}
+
+// Check expiry khi load
+if (payload.expiresAt != null && DateTime.now().isAfter(payload.expiresAt!)) {
+    await deleteHost(fp); // Auto-revoke expired
+    return null;
+}
+```
+
+**Estimate**: 2-3h
+
+**See**: Phase 07 (Discovery & Auth)
+
+---
+
+### 12. PTY Resize Not Hooked to Screen Rotation (MEDIUM)
+
+**Severity**: Medium (UX issue)
+**Location**: `mobile/lib/features/terminal/terminal_page.dart:210-211`
+
+**Problem**:
+```dart
+int _terminalRows = 24;  // ❌ unused
+int _terminalCols = 80;  // ❌ unused
+```
+
+- Fields declared but never updated
+- Missing screen rotation detection
+- Missing `resizePty()` call when orientation changes
+
+**Impact**:
+- Terminal output misaligned when screen rotates
+- Text wrapping broken
+- Poor UX
+
+**Fix Required**:
+```dart
+void didChangeMetrics() {
+    super.didChangeMetrics();
+    _updateTerminalSize();
+}
+
+void _updateTerminalSize() {
+    final screenSize = MediaQuery.of(context).size;
+    final newCols = (screenSize.width / 7.5).floor();  // char width
+    final newRows = (screenSize.height / 16.0).floor(); // char height
+
+    if (newCols != _terminalCols || newRows != _terminalRows) {
+        _terminalCols = newCols;
+        _terminalRows = newRows;
+        bridge.resizePty(rows: _terminalRows, cols: _terminalCols);
+    }
+}
+```
+
+**Estimate**: 1-2h
+
+---
+
+### 13. Double Parsing QR Redundancy (LOW)
+
+**Severity**: Low (performance concern)
+**Location**: `mobile/lib/features/connection/connection_providers.dart:96-126`
+
+**Problem**:
+```dart
+// Parse to Dart model first (for storage and UI)
+final dartPayload = QrPayload.fromJson(qrJson);  // ❌ PARSE 1
+
+// Parse to FRB opaque type
+final frbPayload = await bridge.parseQrPayload(qrJson);  // ❌ PARSE 2
+```
+
+**Impact**:
+- Performance overhead (~2x parsing time)
+- Wasted FFI calls (4 getter functions)
+- Potential inconsistencies between Dart vs Rust parsing
+
+**Fix Required**:
+- Use ONLY Dart model, extract fields directly
+- Remove FRB `parseQrPayload()` call
+- Pass primitive types to `bridge.connect()`
+
+**Estimate**: 30 min
+
+---
+
+### 14. Silent Error Handling in Event Loop (MEDIUM)
+
+**Severity**: Medium (debugging difficulty)
+**Location**: `mobile/lib/features/terminal/terminal_page.dart:245-247`
+
+**Problem**:
+```dart
+} catch (e) {
+    // Ignore errors, continue polling  ❌ Silent!
+}
+```
+
+**Impact**:
+- No visibility into connection failures
+- Difficult to debug production issues
+- Wasted battery/CPU polling dead connections
+
+**Fix Required**:
+```dart
+} catch (e) {
+    debugPrint('Event loop error: $e');
+
+    // Check if connection lost
+    if (e.toString().contains('Not connected') ||
+        e.toString().contains('Connection closed')) {
+        _isConnected = false;
+        // Show user notification
+        // Stop polling
+        _eventLoopTimer?.cancel();
+    }
+}
+```
+
+**Estimate**: 30 min
+
+---
+
+### 15. Basic QR Validation Only (LOW)
+
+**Severity**: Low (validation concern)
+**Location**: `mobile/lib/features/qr_scanner/qr_scanner_page.dart:56-67`
+
+**Problem**:
+```dart
+bool _isValidQrPayload(String json) {
+    // ❌ Không validate IP format
+    // ❌ Không validate port range
+    // ❌ Không validate fingerprint length
+    return decoded['ip'] is String &&
+        (decoded['port'] is int) &&
+        decoded['token'] is String &&
+        decoded['fingerprint'] is String;
+}
+```
+
+**Impact**:
+- Invalid data có thể pass validation
+- Runtime errors khi connect với malformed data
+
+**Fix Required**:
+- Validate IPv4/IPv6 format
+- Validate port range (1-65535)
+- Validate fingerprint length (64 hex chars for SHA-256)
+
+**Estimate**: 30 min
+
+---
+
 ## Summary Table
 
 | Issue | Priority | Estimate | Blocker? | Action |
@@ -340,38 +517,45 @@ if actual_clean.as_bytes().ct_eq(expected_clean.as_bytes()).into() { ... }
 | IP ban not persistent | P2 | 2-3h | No | JSON persistence |
 | No integration tests | P2 | 3-4h | No | Add test suite |
 | QUIC client missing | ~~**P0**~~ | ~~8-12h~~ | ~~**Yes**~~ | ✅ **COMPLETED** |
-| Flutter bridge not validated | P1 | 4-6h | Yes (mobile) | Defer to Flutter project |
+| Flutter bridge not validated | ~~**P1**~~ | ~~**4-6h**~~ | ~~**Yes (mobile)**~~ | ✅ **COMPLETED** |
 | **UB in FFI bridge (api.rs)** | ~~**P1**~~ | ~~**1h**~~ | ~~**Yes**~~ | ✅ **COMPLETED** |
-| **Stream I/O stubs** | **P1** | **3-4h** | **Yes (Flutter)** | **Phase 05** |
+| **Stream I/O stubs** | ~~**P1**~~ | ~~**3-4h**~~ | ~~**Yes (Flutter)**~~ | ✅ **COMPLETED** |
 | Fingerprint leakage in logs | ~~**P2**~~ | ~~**15 min**~~ | ~~**No**~~ | ✅ **COMPLETED** |
+| **Token expiry not implemented** | **P1** | **2-3h** | **No** | **Phase 07** |
+| **PTY resize not hooked** | **P2** | **1-2h** | **No** | **Phase 07** |
+| **Double parsing QR** | P3 | 30 min | No | Remove FRB parse |
+| **Silent error handling** | P2 | 30 min | No | Add logging |
+| **Basic QR validation** | P3 | 30 min | No | Add format checks |
 | Hardcoded timeout | P2 | 10 min | No | Add const |
 | Generic error messages | P2 | 15 min | No | Add host:port context |
 | Constant-time comparison | P3 | 30 min | No | Use `subtle` crate |
 
 ### Completed (2026-01-07)
 - ✅ **Issue #3**: QUIC Client Implementation
+- ✅ **Issue #4**: Flutter Bridge Validation
 - ✅ **Issue #5**: UB in FFI Bridge (OnceCell fix)
+- ✅ **Issue #6**: Stream I/O Implementation
 - ✅ **Issue #7**: Fingerprint Leakage in Logs
 
 ---
 
 ## When to Implement
 
-### Phase 05 (Network Protocol) - MUST HAVE
-- **Stream I/O stubs**: Implement actual QUIC stream reading/writing
+### Phase 07 (Discovery & Auth) - MUST HAVE
+- **Token expiry**: Add createdAt/expiresAt to QrPayload, check on load
+- **PTY resize on rotation**: Hook didChangeMetrics to resizePty()
 
 ### Before Public Release (SHOULD FIX)
+- **Silent error handling**: Add logging + connection loss detection
+- **Double parsing QR**: Remove FRB parse, use Dart model only
 - **Generic error messages**: Add host:port context
 - **IP Ban Persistence**: Recommended nếu deploy cho public users
 - **Integration Tests**: Recommended nếu có multiple contributors
+- **Basic QR validation**: Add IP/port/fingerprint format checks
 - **Constant-time comparison**: Nice-to-have security hardening
-
-### During Flutter Development
-- **Flutter Bridge Validation**: Part of mobile project setup
 
 ### Can Defer Indefinitely
 - **Hardcoded timeout**: 10s works for most cases
-- **Constant-time comparison**: Nice-to-have security hardening
 
 ---
 
@@ -383,8 +567,8 @@ if actual_clean.as_bytes().ct_eq(expected_clean.as_bytes()).into() { ... }
 3. **Integration Test Priority**: Manual testing đủ tốt cho MVP?
 
 ### From Phase 04/04.1 (QUIC Client)
-4. **Stream I/O Implementation**: When will `receive_event()` and `send_command()` be implemented?
-   - **Assigned to Phase 05** (Network Protocol)
+4. ~~**Stream I/O Implementation**: When will `receive_event()` and `send_command()` be implemented?~~
+   - ✅ **RESOLVED**: Implemented in Phase 06
 5. ~~**Static Mutable UB**: Why was `unsafe static mut` chosen in `api.rs`?~~
    - ✅ **RESOLVED**: Fixed with `once_cell::sync::OnceCell`
 6. ~~**Fingerprint Logging**: Should actual fingerprint be logged in debug mode?~~
@@ -392,10 +576,19 @@ if actual_clean.as_bytes().ct_eq(expected_clean.as_bytes()).into() { ... }
 7. **Timeout Configuration**: Should 10s timeout be configurable for different networks?
    - Start with const, make field if needed in Phase 05
 
+### From Phase 06 (Flutter UI)
+8. **Token lifecycle**: Token có expiry date không? Nếu có, server gửi trong QR payload không?
+9. **Fingerprint revocation**: Nếu fingerprint bị compromise, có cách nào để revoke không?
+10. **Event polling**: Tại sao dùng polling thay vì stream? FRB có hỗ trợ stream không?
+11. **PTY size**: Font size có configurable không? Need accurate PTY size calculation.
+12. **Error handling**: Backend có send specific error codes không? For better error messages.
+13. **Connection limits**: Có limit số concurrent connections không? Need để handle connection pool.
+
 ---
 
-**Last updated**: 2026-01-07 (Post-Phase 04.1 - Critical Bug Fixes)
-**Next review**: Trước khi implement Phase 05
+**Last updated**: 2026-01-07 (Post-Phase 06 - Flutter UI)
+**Next review**: Trước khi implement Phase 07
 **Completed plans**:
 - `plans/260107-1553-solve-quinn-quic-client/plan.md` (QUIC Client)
 - `plans/260107-1648-fix-critical-ub-fingerprint-leak/plan.md` (Bugfix)
+- `plans/260106-2127-comacode-mvp/phase-06-flutter-ui.md` (Flutter UI)
