@@ -3,24 +3,32 @@
 //! FFI-safe functions for Dart integration
 //!
 //! Phase 04: Added QUIC client support
+//! Phase 04.1: Fixed UB - replaced static mut with once_cell::sync::OnceCell
 
 use comacode_core::{TerminalCommand, NetworkMessage, MessageCodec, TerminalEvent, QrPayload};
 use flutter_rust_bridge::frb;
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::quic_client::QuicClient;
 
-/// Global client instance (Arc<Mutex>> for thread-safe access)
-static mut QUIC_CLIENT: Option<Arc<Mutex<QuicClient>>> = None;
+/// Global client instance (thread-safe, no unsafe needed)
+///
+/// Using OnceCell ensures:
+/// - One-time initialization guarantee
+/// - Thread-safe access via atomic operations
+/// - Zero undefined behavior
+static QUIC_CLIENT: OnceCell<Arc<Mutex<QuicClient>>> = OnceCell::new();
 
-/// Initialize the QUIC client
-#[frb]
-pub fn init_quic_client(server_fingerprint: String) {
+/// Initialize the QUIC client (internal helper)
+///
+/// This is called automatically by connect_to_host if not already initialized.
+/// OnceCell ensures this only happens once.
+fn init_quic_client(server_fingerprint: String) -> Result<(), String> {
     let client = QuicClient::new(server_fingerprint);
-    unsafe {
-        QUIC_CLIENT = Some(Arc::new(Mutex::new(client)));
-    }
+    QUIC_CLIENT.set(Arc::new(Mutex::new(client)))
+        .map_err(|_| "Failed to initialize global client (already set)".to_string())
 }
 
 /// Connect to remote host
@@ -33,6 +41,10 @@ pub fn init_quic_client(server_fingerprint: String) {
 /// * `port` - QUIC server port
 /// * `auth_token` - Authentication token from QR scan
 /// * `fingerprint` - Certificate fingerprint for TOFU verification
+///
+/// # Behavior
+/// - First call: Initializes client and connects
+/// - Subsequent calls: Returns error if already connected
 #[frb]
 pub async fn connect_to_host(
     host: String,
@@ -40,13 +52,19 @@ pub async fn connect_to_host(
     auth_token: String,
     fingerprint: String,
 ) -> Result<(), String> {
-    // Get or create client
-    let client_arc = unsafe {
-        if QUIC_CLIENT.is_none() {
-            init_quic_client(fingerprint.clone());
-        }
-        QUIC_CLIENT.as_ref().unwrap().clone()
-    };
+    // Check if already initialized (OnceCell::get is thread-safe)
+    if QUIC_CLIENT.get().is_some() {
+        return Err(
+            "Client already initialized. Please restart app to reset.".to_string()
+        );
+    }
+
+    // Initialize client (one-time, thread-safe)
+    init_quic_client(fingerprint)?;
+
+    // Get client (safe unwrap - we just initialized it)
+    let client_arc = QUIC_CLIENT.get()
+        .ok_or("Failed to get initialized client")?;
 
     // Connect
     let mut client = client_arc.lock().await;
@@ -57,60 +75,55 @@ pub async fn connect_to_host(
 ///
 /// Call this in a loop to stream terminal output.
 /// Returns when a new event is available.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn receive_terminal_event() -> Result<TerminalEvent, String> {
-    let client_arc = unsafe {
-        QUIC_CLIENT
-            .as_ref()
-            .ok_or("Not initialized")?
-            .clone()
-    };
+    let client_arc = QUIC_CLIENT.get()
+        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
 
     let client = client_arc.lock().await;
     client.receive_event().await
 }
 
 /// Send command to remote terminal
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn send_terminal_command(command: String) -> Result<(), String> {
-    let client_arc = unsafe {
-        QUIC_CLIENT
-            .as_ref()
-            .ok_or("Not initialized")?
-            .clone()
-    };
+    let client_arc = QUIC_CLIENT.get()
+        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
 
     let client = client_arc.lock().await;
     client.send_command(command).await
 }
 
 /// Disconnect from host
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn disconnect_from_host() -> Result<(), String> {
-    let client_arc = unsafe {
-        QUIC_CLIENT
-            .as_ref()
-            .ok_or("Not initialized")?
-            .clone()
-    };
+    let client_arc = QUIC_CLIENT.get()
+        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
 
     let mut client = client_arc.lock().await;
     client.disconnect().await
 }
 
 /// Check if connected
+///
+/// Returns false if client not initialized or disconnected.
 #[frb]
 pub async fn is_connected() -> bool {
-    let client_arc = unsafe {
-        if let Some(c) = &QUIC_CLIENT {
-            c.clone()
-        } else {
-            return false;
-        }
-    };
-
-    let client = client_arc.lock().await;
-    client.is_connected().await
+    if let Some(client_arc) = QUIC_CLIENT.get() {
+        let client = client_arc.lock().await;
+        client.is_connected().await
+    } else {
+        false
+    }
 }
 
 // ===== Existing encode/decode functions =====

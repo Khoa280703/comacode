@@ -31,3 +31,5 @@ rustls = { workspace = true, features = ["ring"] }
 rustls-pki-types = "1.0"
 # Crypto for fingerprint verification
 sha2 = { workspace = true }
+# Thread-safe global static (fix UB from static mut)
+once_cell = "1.19"

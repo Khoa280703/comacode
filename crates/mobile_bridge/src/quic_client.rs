@@ -85,14 +85,28 @@ impl ServerCertVerifier for TofuVerifier {
         let actual_clean = Self::normalize_fingerprint(&self.calculate_fingerprint(end_entity));
         let expected_clean = Self::normalize_fingerprint(&self.expected_fingerprint);
 
-        debug!("Verifying cert - Expected: {}, Actual: {}", self.expected_fingerprint, actual_clean);
+        debug!("Verifying cert - Match: {}", actual_clean == expected_clean);
 
         if actual_clean == expected_clean {
             Ok(ServerCertVerified::assertion())
         } else {
+            // Log only partial fingerprint (first 4 and last 4 chars) for debugging
+            let expected_prefix = &expected_clean[..4.min(expected_clean.len())];
+            let expected_suffix = if expected_clean.len() > 4 {
+                &expected_clean[expected_clean.len()-4..]
+            } else {
+                ""
+            };
+            let actual_prefix = &actual_clean[..4.min(actual_clean.len())];
+            let actual_suffix = if actual_clean.len() > 4 {
+                &actual_clean[actual_clean.len()-4..]
+            } else {
+                ""
+            };
+
             error!(
-                "Fingerprint mismatch! Expected: {}, Got: {}",
-                self.expected_fingerprint, actual_clean
+                "Fingerprint mismatch! Expected: {}...{}, Got: {}...{}",
+                expected_prefix, expected_suffix, actual_prefix, actual_suffix
             );
             Err(rustls::Error::General("Fingerprint mismatch".to_string()))
         }
