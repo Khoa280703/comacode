@@ -25,3 +25,9 @@ postcard = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 # Bytes for zero-copy
 bytes = "1.8"
+# QUIC networking (Phase 04)
+quinn = { workspace = true }
+rustls = { workspace = true, features = ["ring"] }
+rustls-pki-types = "1.0"
+# Crypto for fingerprint verification
+sha2 = { workspace = true }

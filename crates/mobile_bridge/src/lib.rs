@@ -2,6 +2,9 @@
 
 pub mod api;
 pub mod bridge;
+pub mod quic_client;
+
+pub use quic_client::QuicClient;
 
 // Note: Run flutter_rust_bridge_codegen to generate the bridge
 // For now, we'll include the minimal generated code inline

@@ -2,7 +2,7 @@
 
 **Ngày**: 2026-01-07
 **Plan**: 260107-0858-brainstorm-implementation
-**Status**: Phase 01-06 completed, issues listed below
+**Status**: Phase 01-07 completed, remaining issues listed below
 
 ---
 
@@ -16,85 +16,22 @@
 | 04: Certificate + TOFU | ✅ Done | Cert persistence, QR code, TofuStore |
 | 05: macOS Build + Testing | ✅ Done | Build script, CLI client, dogfooding guide, network test |
 | 06: Windows Cross-Platform | ✅ Done | GitHub Actions CI (Windows build) |
+| 07: Auth Validation + Token Expiry | ✅ Done | Integrated TokenStore validation, 7-day TTL |
 
 ---
 
-## Issues Not Covered in Phase 4-6
+## Resolved Issues (Phase 07)
 
-### 1. Auth Validation Not Integrated
+~~### 1. Auth Validation Not Integrated~~ ✅ **FIXED**
+- TokenStore validation now integrated in quic_server.rs Hello handler
+- Rate limiting integrated with auth failures
+- See commit `67dad1b`
 
-**Severity**: Medium
-**Location**: `crates/hostagent/src/quic_server.rs`
-
-**Problem**:
-- `TokenStore` và `RateLimiterStore` đã implement nhưng **KHÔNG được sử dụng** trong QUIC server
-- Client có thể kết nối mà không cần validate token thực sự
-
-**Current Code**:
-```rust
-// crates/hostagent/src/quic_server.rs
-// Token được nhận từ Hello message nhưng KHÔNG validate
-let token = hello.token;  // Just extracted, not validated
-// TODO: Integrate TokenStore::validate()
-```
-
-**Impact**:
-- Auth không hoạt động như thiết kế
-- Bypass token có thể kết nối
-
-**Fix Required**:
-```rust
-// Trong quic_server.rs connection handler
-if let Some(token) = hello.token {
-    if !self.token_store.validate(token).await {
-        return Err(CoreError::InvalidToken);
-    }
-}
-```
-
-**Estimate**: 1-2h
-
----
-
-### 2. Token Expiry Missing
-
-**Severity**: Medium
-**Location**: `crates/core/src/auth.rs`
-
-**Problem**:
-- `AuthToken` không có TTL (time-to-live)
-- Token hợp mãi mã, không có cơ chế refresh/revoke
-
-**Current Code**:
-```rust
-// crates/core/src/auth.rs
-pub struct AuthToken([u8; 32]);
-// NO expiry timestamp!
-```
-
-**Impact**:
-- Security risk: token bị leak → lifetime mãi mã
-- Không thể revoke token khi cần
-
-**Fix Required**:
-```rust
-pub struct AuthToken {
-    bytes: [u8; 32],
-    expires_at: SystemTime,  // Add TTL
-}
-
-impl AuthToken {
-    pub fn is_expired(&self) -> bool {
-        SystemTime::now() > self.expires_at
-    }
-}
-```
-
-**Questions**:
-- TTL là bao nhiêu? (24h, 7d, 30d)
-- Refresh token mechanism?
-
-**Estimate**: 2-3h
+~~### 2. Token Expiry Missing~~ ✅ **FIXED**
+- TokenStore: HashMap<AuthToken, SystemTime> tracks creation time
+- 7-day TTL (DEFAULT_TOKEN_TTL)
+- Periodic cleanup task (hourly) removes expired tokens
+- See commit `67dad1b`
 
 ---
 
@@ -188,29 +125,33 @@ tests/
 
 ## Summary
 
-| Issue | Severity | Estimate | Priority |
-|-------|----------|----------|----------|
-| Auth validation not integrated | Medium | 1-2h | **P0** - Security |
-| Token expiry missing | Medium | 2-3h | P1 - Security |
-| IP ban not persistent | Low | 2-3h | P2 - Hardening |
-| Flutter bridge not validated | Unknown | 4-6h | P1 - Mobile |
-| No integration tests | Low | 3-4h | P2 - QA |
+| Issue | Severity | Estimate | Priority | Status |
+|-------|----------|----------|----------|--------|
+| Auth validation not integrated | Medium | 1-2h | **P0** - Security | ✅ Fixed (Phase 07) |
+| Token expiry missing | Medium | 2-3h | P1 - Security | ✅ Fixed (Phase 07) |
+| IP ban not persistent | Low | 2-3h | P2 - Hardening | Open |
+| Flutter bridge not validated | Unknown | 4-6h | P1 - Mobile | Open |
+| No integration tests | Low | 3-4h | P2 - QA | Open |
 
 ---
 
-## Recommendations
-
-### Immediate (P0)
-1. **Integrate auth validation** in QUIC server - Critical security issue
+## Remaining Work
 
 ### Short-term (P1)
-2. **Add token expiry** - Security best practice
-3. **Validate Flutter bridge** - Mobile app blocking
+1. **Validate Flutter bridge** - Mobile app blocking (separate project)
 
 ### Long-term (P2)
-4. **Persist IP bans** - Better enforcement
-5. **Add integration tests** - Prevent regressions
+2. **Persist IP bans** - Better enforcement (JSON/SQLite)
+3. **Add integration tests** - Prevent regressions (QUIC, auth, multi-client)
 
 ---
 
 **Last updated**: 2026-01-07
+
+---
+
+## Issue Tracking Update (2026-01-07 14:44)
+
+**Decision**: P1 (Flutter) defer to mobile project, P2 items tracked in technical debt file.
+
+**See**: `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`

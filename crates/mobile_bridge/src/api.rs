@@ -1,9 +1,119 @@
 //! Flutter Rust Bridge API
 //!
 //! FFI-safe functions for Dart integration
+//!
+//! Phase 04: Added QUIC client support
 
-use comacode_core::{TerminalCommand, NetworkMessage, MessageCodec};
+use comacode_core::{TerminalCommand, NetworkMessage, MessageCodec, TerminalEvent, QrPayload};
 use flutter_rust_bridge::frb;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use crate::quic_client::QuicClient;
+
+/// Global client instance (Arc<Mutex>> for thread-safe access)
+static mut QUIC_CLIENT: Option<Arc<Mutex<QuicClient>>> = None;
+
+/// Initialize the QUIC client
+#[frb]
+pub fn init_quic_client(server_fingerprint: String) {
+    let client = QuicClient::new(server_fingerprint);
+    unsafe {
+        QUIC_CLIENT = Some(Arc::new(Mutex::new(client)));
+    }
+}
+
+/// Connect to remote host
+///
+/// This is the main FFI entry point for Flutter app.
+/// Call this after scanning QR code to get connection parameters.
+///
+/// # Arguments
+/// * `host` - Server IP address
+/// * `port` - QUIC server port
+/// * `auth_token` - Authentication token from QR scan
+/// * `fingerprint` - Certificate fingerprint for TOFU verification
+#[frb]
+pub async fn connect_to_host(
+    host: String,
+    port: u16,
+    auth_token: String,
+    fingerprint: String,
+) -> Result<(), String> {
+    // Get or create client
+    let client_arc = unsafe {
+        if QUIC_CLIENT.is_none() {
+            init_quic_client(fingerprint.clone());
+        }
+        QUIC_CLIENT.as_ref().unwrap().clone()
+    };
+
+    // Connect
+    let mut client = client_arc.lock().await;
+    client.connect(host, port, auth_token).await
+}
+
+/// Receive next terminal event from server
+///
+/// Call this in a loop to stream terminal output.
+/// Returns when a new event is available.
+#[frb]
+pub async fn receive_terminal_event() -> Result<TerminalEvent, String> {
+    let client_arc = unsafe {
+        QUIC_CLIENT
+            .as_ref()
+            .ok_or("Not initialized")?
+            .clone()
+    };
+
+    let client = client_arc.lock().await;
+    client.receive_event().await
+}
+
+/// Send command to remote terminal
+#[frb]
+pub async fn send_terminal_command(command: String) -> Result<(), String> {
+    let client_arc = unsafe {
+        QUIC_CLIENT
+            .as_ref()
+            .ok_or("Not initialized")?
+            .clone()
+    };
+
+    let client = client_arc.lock().await;
+    client.send_command(command).await
+}
+
+/// Disconnect from host
+#[frb]
+pub async fn disconnect_from_host() -> Result<(), String> {
+    let client_arc = unsafe {
+        QUIC_CLIENT
+            .as_ref()
+            .ok_or("Not initialized")?
+            .clone()
+    };
+
+    let mut client = client_arc.lock().await;
+    client.disconnect().await
+}
+
+/// Check if connected
+#[frb]
+pub async fn is_connected() -> bool {
+    let client_arc = unsafe {
+        if let Some(c) = &QUIC_CLIENT {
+            c.clone()
+        } else {
+            return false;
+        }
+    };
+
+    let client = client_arc.lock().await;
+    client.is_connected().await
+}
+
+// ===== Existing encode/decode functions =====
 
 /// Create a new terminal command
 #[frb(sync)]
@@ -88,6 +198,101 @@ pub fn create_terminal_config(rows: u16, cols: u16) -> TerminalConfig {
         ..Default::default()
     }
 }
+
+// ===== QR Payload functions =====
+
+/// Parse QR payload JSON string
+#[frb]
+pub fn parse_qr_payload(json: String) -> Result<QrPayload, String> {
+    QrPayload::from_json(&json).map_err(|e| e.to_string())
+}
+
+/// Get QR payload fields
+#[frb(sync)]
+pub fn get_qr_ip(payload: &QrPayload) -> String {
+    payload.ip.clone()
+}
+
+#[frb(sync)]
+pub fn get_qr_port(payload: &QrPayload) -> u16 {
+    payload.port
+}
+
+#[frb(sync)]
+pub fn get_qr_fingerprint(payload: &QrPayload) -> String {
+    payload.fingerprint.clone()
+}
+
+#[frb(sync)]
+pub fn get_qr_token(payload: &QrPayload) -> String {
+    payload.token.clone()
+}
+
+#[frb(sync)]
+pub fn get_qr_protocol_version(payload: &QrPayload) -> u32 {
+    payload.protocol_version
+}
+
+// ===== Terminal Event functions =====
+
+/// Create output event from bytes
+#[frb(sync)]
+pub fn event_output(data: Vec<u8>) -> TerminalEvent {
+    TerminalEvent::output(data)
+}
+
+/// Create output event from string
+#[frb(sync)]
+pub fn event_output_str(s: String) -> TerminalEvent {
+    TerminalEvent::output_str(&s)
+}
+
+/// Get event data (for Output events)
+#[frb(sync)]
+pub fn get_event_data(event: &TerminalEvent) -> Vec<u8> {
+    match event {
+        TerminalEvent::Output { data } => data.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// Get event error message (for Error events)
+#[frb(sync)]
+pub fn get_event_error_message(event: &TerminalEvent) -> String {
+    match event {
+        TerminalEvent::Error { message } => message.clone(),
+        _ => String::new(),
+    }
+}
+
+/// Get event exit code (for Exit events)
+#[frb(sync)]
+pub fn get_event_exit_code(event: &TerminalEvent) -> i32 {
+    match event {
+        TerminalEvent::Exit { code } => *code,
+        _ => -1,
+    }
+}
+
+/// Check if event is Output
+#[frb(sync)]
+pub fn is_event_output(event: &TerminalEvent) -> bool {
+    matches!(event, TerminalEvent::Output { .. })
+}
+
+/// Check if event is Error
+#[frb(sync)]
+pub fn is_event_error(event: &TerminalEvent) -> bool {
+    matches!(event, TerminalEvent::Error { .. })
+}
+
+/// Check if event is Exit
+#[frb(sync)]
+pub fn is_event_exit(event: &TerminalEvent) -> bool {
+    matches!(event, TerminalEvent::Exit { .. })
+}
+
+// ===== Test functions =====
 
 /// Simple add function for testing FFI
 #[frb(sync)]
