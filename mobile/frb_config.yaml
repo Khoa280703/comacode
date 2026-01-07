@@ -1,0 +1,7 @@
+# Flutter Rust Bridge configuration
+# See: https://github.com/fzyzcjy/flutter_rust_bridge
+
+rust_input: mobile_bridge::api
+rust_root: ../crates/mobile_bridge
+dart_output: lib/bridge/
+dart_root: ./

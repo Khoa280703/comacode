@@ -17,6 +17,7 @@ pub mod error;
 pub mod protocol;
 pub mod streaming;
 pub mod terminal;
+pub mod transport;
 pub mod types;
 
 // Re-export common types

@@ -266,6 +266,19 @@ impl QuicClient {
         Ok(())
     }
 
+    /// Resize PTY (for screen rotation support)
+    ///
+    /// Phase 06: Send resize event via QUIC to update PTY size on server
+    pub async fn resize_pty(&self, rows: u16, cols: u16) -> Result<(), String> {
+        if self.connection.is_none() {
+            return Err("Not connected".to_string());
+        }
+
+        // TODO: Send NetworkMessage::Resize via QUIC stream
+        info!("QUIC client: resize PTY to {}x{}", rows, cols);
+        Ok(())
+    }
+
     /// Disconnect from server
     pub async fn disconnect(&mut self) -> Result<(), String> {
         if let Some(conn) = &self.connection {

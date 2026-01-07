@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib"]
 # Core shared logic
 comacode-core = { path = "../core" }
 # FFI bridge
-flutter_rust_bridge = { workspace = true }
+flutter_rust_bridge = "=2.11.1"
 # Workspace dependencies
 anyhow = { workspace = true }
 tracing = { workspace = true }

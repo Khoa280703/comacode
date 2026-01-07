@@ -1,0 +1,7 @@
+# Flutter Rust Bridge Language Server Protocol config
+# Enables IDE support for FRB generated code
+
+frb-version: 2.4.0
+rust-input: crates/mobile_bridge/src/lib.rs
+dart-output: mobile/lib/bridge/
+dart-root: mobile/

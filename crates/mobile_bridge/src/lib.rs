@@ -1,3 +1,4 @@
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 //! Flutter Rust Bridge for Comacode Mobile
 
 pub mod api;
@@ -6,8 +7,5 @@ pub mod quic_client;
 
 pub use quic_client::QuicClient;
 
-// Note: Run flutter_rust_bridge_codegen to generate the bridge
-// For now, we'll include the minimal generated code inline
-
-// This will be replaced by the actual generated code from FRB
+// Flutter Rust Bridge generated code will be added here after generation
 // flutter_rust_bridge::frb_generated!();

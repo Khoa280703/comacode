@@ -25,7 +25,8 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 | 04.1 | Critical Bugfixes | ✅ Done | 100% |
 | 05 | Network Protocol | ⏳ TODO | 0% |
 | 06 | Flutter UI | ⏳ TODO | 0% |
-| 07 | Production Hardening | ⏳ TODO | 0% |
+| 07 | Discovery & Auth | ⏳ TODO | 0% |
+| 08 | Production Hardening | ⏳ TODO | 0% |
 
 ---
 
@@ -86,13 +87,17 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 **Goal**: Implement actual QUIC stream I/O for terminal communication
 
 **Tasks**:
-- [ ] Design wire protocol (message framing, chunking)
-- [ ] Implement `receive_event()` with actual QUIC stream reading
-- [ ] Implement `send_command()` with actual QUIC stream writing
-- [ ] Add reconnection logic
-- [ ] Handle stream errors gracefully
+- [ ] Create `crates/core/src/transport/` module
+- [ ] Implement `configure_client()` with migration enabled
+- [ ] Implement `pump_pty_to_quic()` stream pump
+- [ ] Implement `pump_quic_to_pty()` stream pump
+- [ ] Add heartbeat/ping-pong logic
+- [ ] Implement exponential backoff reconnect
+- [ ] Update stub implementations in `quic_client.rs`
 
-**Estimate**: 8-12h
+**Estimate**: 6h (revised from 10h)
+
+**Plan**: `plans/260106-2127-comacode-mvp/phase-05-network-protocol.md`
 
 **Dependencies**: None (can start immediately)
 
@@ -100,14 +105,14 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 
 ### Phase 06: Flutter UI
 
-**Goal**: Build mobile app UI
+**Goal**: Build mobile app UI for terminal access
 
 **Tasks**:
 - [ ] QR scanner screen
-- [ ] Terminal display (xterm.js flutter fork)
+- [ ] Terminal display (xterm.js flutter fork or custom widget)
 - [ ] Connection status indicator
-- [ ] Settings (fingerprint management)
-- [ ] Test FFI boundary
+- [ ] Settings (fingerprint management, saved hosts)
+- [ ] Test FFI boundary with actual data flow
 
 **Estimate**: 16-24h
 
@@ -115,13 +120,33 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 
 ---
 
-### Phase 07: Production Hardening
+### Phase 07: Discovery & Auth
+
+**Goal**: mDNS service discovery for zero-config setup
+
+**Tasks**:
+- [ ] mDNS advertisement (host broadcasts availability)
+- [ ] mDNS browsing (client discovers hosts)
+- [ ] QR code pairing option (fallback)
+- [ ] Credential storage (secure keystore)
+- [ ] Connection history
+- [ ] Bluetooth LE discovery (optional fallback)
+
+**Estimate**: 6-8h
+
+**Plan**: `plans/260106-2127-comacode-mvp/phase-06-discovery-auth.md` (to be renamed to phase-07)
+
+**Dependencies**: Phase 06 (Flutter UI - for UX integration)
+
+---
+
+### Phase 08: Production Hardening
 
 **Goal**: Prepare for public release
 
 **Tasks**:
 - [ ] IP ban persistence (JSON file)
-- [ ] Integration tests
+- [ ] Integration tests (end-to-end)
 - [ ] Constant-time fingerprint comparison
 - [ ] Error message improvements
 - [ ] Configurable timeout values
@@ -129,7 +154,7 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 
 **Estimate**: 6-8h
 
-**Dependencies**: Phase 06
+**Dependencies**: Phase 07
 
 ---
 
@@ -140,11 +165,11 @@ See `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`
 | Issue | Priority | Phase |
 |-------|----------|-------|
 | Stream I/O stubs | P1 | Phase 05 |
-| IP ban persistence | P2 | Phase 07 |
-| Integration tests | P2 | Phase 07 |
-| Constant-time comparison | P3 | Phase 07 |
-| Hardcoded timeout | P2 | Phase 07 |
-| Generic error messages | P2 | Phase 07 |
+| Integration tests | P2 | Phase 08 |
+| IP ban persistence | P2 | Phase 08 |
+| Constant-time comparison | P3 | Phase 08 |
+| Hardcoded timeout | P2 | Phase 08 |
+| Generic error messages | P2 | Phase 08 |
 
 ---
 
@@ -154,10 +179,11 @@ See `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`
 2026-01-06  │ Phase 01-03: MVP Complete
 2026-01-07  │ Phase 04: QUIC Client Complete
 2026-01-07  │ Phase 04.1: Bugfixes Complete
-────────────┼────────────────────────────
-TBD         │ Phase 05: Network Protocol
-TBD         │ Phase 06: Flutter UI
-TBD         │ Phase 07: Production Hardening
+────────────┼───────────────────────────────────
+TBD         │ Phase 05: Network Protocol (6h)
+TBD         │ Phase 06: Flutter UI (16-24h)
+TBD         │ Phase 07: Discovery & Auth (6-8h)
+TBD         │ Phase 08: Production Hardening (6-8h)
 ```
 
 ---
@@ -168,4 +194,5 @@ TBD         │ Phase 07: Production Hardening
 - [ ] Terminal I/O works bidirectionally
 - [ ] TOFU verification prevents MitM
 - [ ] Rate limiting protects against abuse
+- [ ] mDNS discovery works (Phase 07)
 - [ ] Production-ready (hardened, tested)

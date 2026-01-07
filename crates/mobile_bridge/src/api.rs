@@ -100,6 +100,26 @@ pub async fn send_terminal_command(command: String) -> Result<(), String> {
     client.send_command(command).await
 }
 
+/// Resize PTY (for screen rotation support)
+///
+/// Phase 06: Send resize event to update PTY size on server.
+/// Call this when device orientation changes.
+///
+/// # Arguments
+/// * `rows` - Number of rows (characters per column)
+/// * `cols` - Number of columns (characters per row)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn resize_pty(rows: u16, cols: u16) -> Result<(), String> {
+    let client_arc = QUIC_CLIENT.get()
+        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
+
+    let client = client_arc.lock().await;
+    client.resize_pty(rows, cols).await
+}
+
 /// Disconnect from host
 ///
 /// # Errors

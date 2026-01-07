@@ -1,19 +1,23 @@
 ---
-title: "Phase 06: Service Discovery & Authentication"
+title: "Phase 07: Service Discovery & Authentication"
 description: "mDNS discovery and secure authentication for zero-config setup"
 status: pending
 priority: P1
-effort: 6h
+effort: 6-8h
 branch: main
 tags: [mdns, authentication, ux, discovery]
 created: 2026-01-06
+updated: 2026-01-07
 ---
 
-# Phase 06: Service Discovery & Authentication
+# Phase 07: Service Discovery & Authentication
 
 ## Context
 - [Parent Plan](./plan.md)
-- Previous: [Phase 05](./phase-05-network-protocol.md)
+- Previous: [Phase 06 - Flutter UI](./phase-06-flutter-ui.md) (to be created)
+- Next: [Phase 08 - Production Hardening](./phase-07-production-hardening.md) (to be renamed from phase-07)
+
+**Note:** This file was originally `phase-06-discovery-auth.md`, renamed to `phase-07` on 2026-01-07 to reflect updated roadmap.
 
 ## Overview
 Implement mDNS service discovery for automatic host detection and simple authentication for secure connections.

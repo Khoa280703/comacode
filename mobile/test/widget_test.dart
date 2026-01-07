@@ -1,21 +1,29 @@
 // Comacode widget tests
 //
 // Phase 04: Mobile App
-// Basic widget test for Comacode app
+// Phase 06: Riverpod update - wrap test with ProviderScope
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:comacode/main.dart';
 
 void main() {
   testWidgets('ComacodeApp smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const ComacodeApp());
+    // Wrap with ProviderScope for Riverpod
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: ComacodeApp(),
+      ),
+    );
+
+    // Trigger a frame after ProviderScope is set up
+    await tester.pumpAndSettle();
 
     // Verify that the app title is displayed.
     expect(find.text('Comacode'), findsOneWidget);
 
-    // Verify that "Connect to Host" text is present.
-    expect(find.text('Connect to Host'), findsOneWidget);
+    // Verify that "Remote Terminal" text is present (HomePage).
+    expect(find.text('Remote Terminal'), findsOneWidget);
   });
 }

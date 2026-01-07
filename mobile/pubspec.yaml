@@ -19,8 +19,13 @@ dependencies:
   flutter_rust_bridge: ^2.4.0
   ffi: ^2.1.0
 
-  # State Management
-  provider: ^6.1.2
+  # State Management - Riverpod (Phase 06)
+  flutter_riverpod: ^2.4.0
+  riverpod: ^2.4.0
+  riverpod_annotation: ^2.3.0
+
+  # Terminal UI (Phase 06)
+  xterm: ^3.5.0
 
   # QR Code Scanner
   mobile_scanner: ^3.5.0
@@ -48,6 +53,7 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   build_runner: ^2.4.13
+  riverpod_generator: ^2.3.0
   integration_test:
     sdk: flutter
 

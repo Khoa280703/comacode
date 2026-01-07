@@ -1,19 +1,22 @@
 ---
-title: "Phase 07: Testing & Deployment"
-description: "End-to-end testing, builds, and deployment for all platforms"
+title: "Phase 08: Production Hardening"
+description: "Security hardening, integration tests, and deployment preparation"
 status: pending
 priority: P1
-effort: 4h
+effort: 6-8h
 branch: main
-tags: [testing, deployment, ci-cd, builds]
+tags: [testing, security, deployment, production]
 created: 2026-01-06
+updated: 2026-01-07
 ---
 
-# Phase 07: Testing & Deployment
+# Phase 08: Production Hardening
 
 ## Context
 - [Parent Plan](./plan.md)
-- Previous: [Phase 06](./phase-06-discovery-auth.md)
+- Previous: [Phase 07 - Discovery & Auth](./phase-07-discovery-auth.md)
+
+**Note:** This file was originally `phase-07-testing-deploy.md`, renamed to `phase-08` on 2026-01-07 to reflect updated roadmap.
 
 ## Overview
 Comprehensive testing, build automation, and deployment pipeline for production-ready release.

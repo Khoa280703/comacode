@@ -1,23 +1,35 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'scan_qr_page.dart';
-import 'manual_connect_page.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../qr_scanner/qr_scanner_page.dart';
 import '../terminal/terminal_page.dart';
-import 'connection_provider.dart';
+import 'connection_providers.dart';
 import '../../core/storage.dart';
+import '../../core/theme.dart';
 
 /// Home page for connection selection
 ///
-/// Phase 04: Mobile App
+/// Phase 06: Refactor to Riverpod
 /// Shows saved hosts and options to connect
-class HomePage extends StatelessWidget {
+class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectionState = ref.watch(connectionStateProvider);
+
+    // Auto-navigate to terminal if already connected
+    if (connectionState.isConnected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const TerminalPage()),
+        );
+      });
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Comacode'),
+        backgroundColor: CatppuccinMocha.mantle,
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
@@ -27,26 +39,13 @@ class HomePage extends StatelessWidget {
           ),
         ],
       ),
-      body: Consumer<ConnectionProvider>(
-        builder: (context, connection, _) {
-          if (connection.isConnected) {
-            // Already connected - show terminal
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const TerminalPage()),
-              );
-            });
-          }
-
-          return _buildContent(context, connection);
-        },
-      ),
+      body: _buildContent(context, ref),
     );
   }
 
-  Widget _buildContent(BuildContext context, ConnectionProvider connection) {
+  Widget _buildContent(BuildContext context, WidgetRef ref) {
     return FutureBuilder<bool>(
-      future: connection.hasSavedHosts(),
+      future: ref.read(connectionStateProvider.notifier).hasSavedHosts(),
       builder: (context, snapshot) {
         final hasHosts = snapshot.data ?? false;
 
@@ -55,24 +54,46 @@ class HomePage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Logo/Icon
+              Center(
+                child: Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    color: CatppuccinMocha.surface,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.qr_code_scanner,
+                    size: 48,
+                    color: CatppuccinMocha.mauve,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
               // Title
               const Text(
-                'Connect to Host',
+                'Remote Terminal',
+                textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 24,
+                  fontSize: 28,
                   fontWeight: FontWeight.bold,
+                  color: CatppuccinMocha.text,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Scan a QR code or enter connection details to pair with a host.',
+              Text(
+                'Scan QR code from host terminal to connect',
+                textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Color(0xFF6C7086),
+                  color: CatppuccinMocha.subtext0,
+                  fontSize: 14,
                 ),
               ),
               const SizedBox(height: 32),
 
-              // Connection options
+              // Primary action: Scan QR
               _buildPrimaryButton(
                 context,
                 icon: Icons.qr_code_scanner,
@@ -81,6 +102,8 @@ class HomePage extends StatelessWidget {
                 onTap: () => _navigateToScan(context),
               ),
               const SizedBox(height: 16),
+
+              // Secondary action: Manual connect
               _buildSecondaryButton(
                 context,
                 icon: Icons.edit,
@@ -92,26 +115,9 @@ class HomePage extends StatelessWidget {
               // Saved hosts section
               if (hasHosts) ...[
                 const SizedBox(height: 32),
-                const Divider(),
+                const Divider(color: CatppuccinMocha.surface0),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Text(
-                      'Saved Hosts',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () => _clearAllHosts(context),
-                      child: const Text('Clear All'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _buildSavedHostsList(context),
+                _buildSavedHostsSection(context, ref),
               ],
             ],
           ),
@@ -129,14 +135,14 @@ class HomePage extends StatelessWidget {
   }) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: const Color(0xFF313244),
-          borderRadius: BorderRadius.circular(12),
+          color: CatppuccinMocha.surface,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: const Color(0xFFCBA6F7).withValues(alpha: 0.3),
+            color: CatppuccinMocha.mauve.withValues(alpha: 0.3),
             width: 2,
           ),
         ),
@@ -145,12 +151,12 @@ class HomePage extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: const BoxDecoration(
-                color: Color(0xFFCBA6F7),
+                color: CatppuccinMocha.mauve,
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 icon,
-                color: const Color(0xFF1E1E2E),
+                color: CatppuccinMocha.crust,
               ),
             ),
             const SizedBox(width: 16),
@@ -160,25 +166,26 @@ class HomePage extends StatelessWidget {
                 children: [
                   Text(
                     label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
+                      color: CatppuccinMocha.text,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     description,
-                    style: const TextStyle(
-                      color: Color(0xFF6C7086),
+                    style: TextStyle(
+                      color: CatppuccinMocha.subtext0,
                       fontSize: 14,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(
+            Icon(
               Icons.chevron_right,
-              color: Color(0xFF6C7086),
+              color: CatppuccinMocha.subtext0,
             ),
           ],
         ),
@@ -199,14 +206,14 @@ class HomePage extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFF313244),
+          color: CatppuccinMocha.surface,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
             Icon(
               icon,
-              color: const Color(0xFF6C7086),
+              color: CatppuccinMocha.subtext0,
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -215,16 +222,17 @@ class HomePage extends StatelessWidget {
                 children: [
                   Text(
                     label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
+                      color: CatppuccinMocha.text,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     description,
-                    style: const TextStyle(
-                      color: Color(0xFF6C7086),
+                    style: TextStyle(
+                      color: CatppuccinMocha.subtext0,
                       fontSize: 12,
                     ),
                   ),
@@ -233,7 +241,7 @@ class HomePage extends StatelessWidget {
             ),
             Icon(
               Icons.chevron_right,
-              color: const Color(0xFF6C7086),
+              color: CatppuccinMocha.subtext0,
               size: 20,
             ),
           ],
@@ -242,7 +250,37 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  Widget _buildSavedHostsList(BuildContext context) {
+  Widget _buildSavedHostsSection(BuildContext context, WidgetRef ref) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Saved Hosts',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: CatppuccinMocha.text,
+              ),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => _clearAllHosts(context),
+              child: Text(
+                'Clear All',
+                style: TextStyle(color: CatppuccinMocha.red),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _buildSavedHostsList(context, ref),
+      ],
+    );
+  }
+
+  Widget _buildSavedHostsList(BuildContext context, WidgetRef ref) {
     return FutureBuilder<List<QrPayload>>(
       future: AppStorage.getAllHosts(),
       builder: (context, snapshot) {
@@ -259,62 +297,78 @@ class HomePage extends StatelessWidget {
 
         return Column(
           children: hosts.map((host) {
-            return _buildHostTile(context, host);
+            return _buildHostTile(context, ref, host);
           }).toList(),
         );
       },
     );
   }
 
-  Widget _buildHostTile(BuildContext context, QrPayload host) {
-    return ListTile(
-      leading: const CircleAvatar(
-        backgroundColor: Color(0xFF45475A),
-        foregroundColor: Color(0xFFCBA6F7),
-        child: Icon(Icons.computer),
+  Widget _buildHostTile(BuildContext context, WidgetRef ref, QrPayload host) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: CatppuccinMocha.surface,
+        borderRadius: BorderRadius.circular(12),
       ),
-      title: Text(host.displayName),
-      subtitle: Text(
-        'Fingerprint: ${host.fingerprint.substring(0, 16)}...',
-        style: const TextStyle(
-          color: Color(0xFF6C7086),
-          fontSize: 12,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: CatppuccinMocha.surface1,
+          foregroundColor: CatppuccinMocha.mauve,
+          child: const Icon(Icons.computer),
         ),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.connect_without_contact),
-            onPressed: () => _connectToSaved(context, host),
-            tooltip: 'Connect',
+        title: Text(
+          host.displayName,
+          style: TextStyle(color: CatppuccinMocha.text),
+        ),
+        subtitle: Text(
+          'Saved host', // Don't display fingerprint for security (shoulder surfing)
+          style: TextStyle(
+            color: CatppuccinMocha.subtext0,
+            fontSize: 12,
           ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => _deleteHost(context, host),
-            tooltip: 'Delete',
-          ),
-        ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(
+                Icons.connect_without_contact,
+                color: CatppuccinMocha.green,
+              ),
+              onPressed: () => _connectToSaved(context, ref, host),
+              tooltip: 'Connect',
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.delete_outline,
+                color: CatppuccinMocha.red,
+              ),
+              onPressed: () => _deleteHost(context, host),
+              tooltip: 'Delete',
+            ),
+          ],
+        ),
       ),
     );
   }
 
   void _navigateToScan(BuildContext context) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ScanQrPage()),
+      MaterialPageRoute(builder: (_) => const QrScannerPage()),
     );
   }
 
   void _navigateToManual(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ManualConnectPage()),
+    // TODO: Implement manual connect page
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Manual connect coming soon')),
     );
   }
 
-  void _connectToSaved(BuildContext context, QrPayload host) async {
-    final connection = context.read<ConnectionProvider>();
+  void _connectToSaved(BuildContext context, WidgetRef ref, QrPayload host) async {
     try {
-      await connection.connectWithQrString(host.toJson());
+      await ref.read(connectionStateProvider.notifier).connect(host.toJson());
       if (context.mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const TerminalPage()),
@@ -323,7 +377,10 @@ class HomePage extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Connection failed: $e')),
+          SnackBar(
+            content: Text('Connection failed: $e'),
+            backgroundColor: CatppuccinMocha.red,
+          ),
         );
       }
     }
@@ -333,16 +390,26 @@ class HomePage extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Host'),
-        content: const Text('Remove this saved host?'),
+        backgroundColor: CatppuccinMocha.surface,
+        title: Text(
+          'Delete Host',
+          style: TextStyle(color: CatppuccinMocha.text),
+        ),
+        content: Text(
+          'Remove this saved host?',
+          style: TextStyle(color: CatppuccinMocha.subtext0),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: Text(
+              'Delete',
+              style: TextStyle(color: CatppuccinMocha.red),
+            ),
           ),
         ],
       ),
@@ -350,10 +417,7 @@ class HomePage extends StatelessWidget {
 
     if (confirmed == true) {
       await AppStorage.deleteHost(host.fingerprint);
-      // Refresh
-      if (context.mounted) {
-        (context as Element).markNeedsBuild();
-      }
+      // Refresh handled by FutureBuilder
     }
   }
 
@@ -361,19 +425,26 @@ class HomePage extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear All Hosts'),
-        content: const Text('Remove all saved hosts?'),
+        backgroundColor: CatppuccinMocha.surface,
+        title: Text(
+          'Clear All Hosts',
+          style: TextStyle(color: CatppuccinMocha.text),
+        ),
+        content: Text(
+          'Remove all saved hosts?',
+          style: TextStyle(color: CatppuccinMocha.subtext0),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFF38BA8),
+            child: Text(
+              'Clear All',
+              style: TextStyle(color: CatppuccinMocha.red),
             ),
-            child: const Text('Clear All'),
           ),
         ],
       ),
@@ -381,10 +452,6 @@ class HomePage extends StatelessWidget {
 
     if (confirmed == true) {
       await AppStorage.clearAll();
-      // Refresh
-      if (context.mounted) {
-        (context as Element).markNeedsBuild();
-      }
     }
   }
 }

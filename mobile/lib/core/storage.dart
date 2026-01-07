@@ -63,11 +63,25 @@ class AppStorage {
   /// Save verified host (TOFU - auto-trust)
   ///
   /// After successful connection, save credentials for auto-reconnect
+  ///
+  /// SECURITY NOTE: Token expiry is not implemented in Phase 06.
+  /// Future enhancement: Add token expiry time to QrPayload and check
+  /// before reconnecting. Consider credential rotation mechanism.
   static Future<void> saveHost(QrPayload payload) async {
     try {
       await _storage.write(key: payload.storageKey, value: payload.toJson());
       // Mark as last used
       await _storage.write(key: 'last_host', value: payload.fingerprint);
+    } catch (e) {
+      throw Exception('Failed to save host: $e');
+    }
+  }
+
+  /// Save host from JSON string (Phase 06: for FRB integration)
+  static Future<void> saveHostString(String jsonStr) async {
+    try {
+      final payload = QrPayload.fromJson(jsonStr);
+      await saveHost(payload);
     } catch (e) {
       throw Exception('Failed to save host: $e');
     }

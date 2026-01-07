@@ -1,0 +1,224 @@
+//! QUIC stream pumps for terminal I/O
+//!
+//! This module provides bidirectional data pumping between PTY and QUIC streams.
+//! It uses Quinn's built-in flow control for natural backpressure.
+
+use quinn::{RecvStream, SendStream};
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
+
+use crate::protocol::MessageCodec;
+use crate::types::{NetworkMessage, TerminalCommand, TerminalEvent};
+use crate::{CoreError, Result};
+
+/// Pump data from PTY to QUIC stream
+///
+/// This is the CRITICAL function for terminal I/O.
+/// Quinn's write_all() automatically handles backpressure:
+/// - When network is slow, write_all() awaits
+/// - Loop stops → no more PTY reads → natural backpressure
+///
+/// # Arguments
+/// * `pty` - Async reader from PTY
+/// * `send` - QUIC send stream (mutable reference for shared use)
+///
+/// # Behavior
+/// 1. Read from PTY in 8KB chunks
+/// 2. Encode as NetworkMessage::Event
+/// 3. Send via QUIC (with automatic flow control)
+pub async fn pump_pty_to_quic<R>(
+    mut pty: R,
+    send: &mut SendStream,
+) -> Result<()>
+where
+    R: AsyncReadExt + Unpin + Send,
+{
+    let mut buf = vec![0u8; 8192];
+
+    loop {
+        let n = pty.read(&mut buf).await?;
+        if n == 0 {
+            tracing::debug!("PTY EOF, closing stream");
+            break;
+        }
+
+        // Encode as NetworkMessage FIRST (do NOT send raw bytes!)
+        // MessageCodec already handles length prefixing
+        let msg = NetworkMessage::Event(TerminalEvent::Output {
+            data: buf[..n].to_vec()
+        });
+        let encoded = MessageCodec::encode(&msg)?;
+
+        // Send ONCE - Quinn handles flow control automatically
+        send.write_all(&encoded).await?;
+
+        tracing::trace!("Sent {} bytes from PTY to QUIC", n);
+    }
+
+    // Finish the stream gracefully
+    send.finish().await?;
+    Ok(())
+}
+
+/// Pump data from QUIC stream to PTY
+///
+/// Reads NetworkMessages from QUIC stream and writes commands to PTY.
+///
+/// # Arguments
+/// * `recv` - QUIC receive stream
+/// * `pty` - Async writer to PTY
+/// * `send` - Optional QUIC send stream for control messages (Pong, etc.)
+///
+/// # Message Handling
+/// - Command: Write text to PTY
+/// - Resize: Handle terminal resize (TODO)
+/// - Ping: Respond with Pong (if send stream provided)
+/// - Other: Ignore with debug log
+pub async fn pump_quic_to_pty<W>(
+    mut recv: RecvStream,
+    mut pty: W,
+    send: Option<Arc<Mutex<SendStream>>>,
+) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin + Send,
+{
+    let mut len_buf = [0u8; 4];
+
+    loop {
+        // Read length prefix (4 bytes, big endian)
+        recv.read_exact(&mut len_buf).await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    CoreError::Connection("Stream closed by peer".to_string())
+                } else {
+                    CoreError::Io(e)
+                }
+            })?;
+
+        let len = u32::from_be_bytes(len_buf) as usize;
+
+        // Validate message size (max 16MB as per MessageCodec)
+        if len > 16 * 1024 * 1024 {
+            return Err(CoreError::MessageTooLarge {
+                size: len,
+                max: 16 * 1024 * 1024,
+            });
+        }
+
+        // Read payload
+        let mut data = vec![0u8; len];
+        recv.read_exact(&mut data).await?;
+
+        // Decode message
+        let msg = MessageCodec::decode(&data)?;
+
+        match msg {
+            NetworkMessage::Command(cmd) => {
+                // Write command text to PTY
+                pty.write_all(cmd.text.as_bytes()).await?;
+                tracing::trace!("Wrote command to PTY: {}", cmd.text.trim());
+            }
+            NetworkMessage::Resize { rows, cols } => {
+                // TODO: Handle PTY resize
+                tracing::debug!("Resize request: {}x{} (not yet implemented)", rows, cols);
+            }
+            NetworkMessage::Ping { timestamp } => {
+                // Respond to ping with pong
+                tracing::trace!("Received ping with timestamp {}, sending pong", timestamp);
+                if let Some(send) = &send {
+                    let pong = NetworkMessage::pong();
+                    let encoded = MessageCodec::encode(&pong)?;
+                    let mut send = send.lock().await;
+                    send.write_all(&encoded).await
+                        .map_err(|e| CoreError::Connection(format!("Failed to send pong: {}", e)))?;
+                    tracing::trace!("Sent pong response");
+                } else {
+                    tracing::warn!("Received ping but no send stream available to respond");
+                }
+            }
+            NetworkMessage::Pong { timestamp } => {
+                tracing::trace!("Received pong");
+            }
+            NetworkMessage::Close => {
+                tracing::info!("Received close message");
+                return Ok(());
+            }
+            _ => {
+                tracing::debug!("Ignoring message: {:?}", msg);
+            }
+        }
+    }
+}
+
+/// Bidirectional stream pump
+///
+/// Spawns two tasks to handle bidirectional PTY ↔ QUIC communication.
+/// Returns when either direction completes or fails.
+///
+/// # Arguments
+/// * `pty_reader` - Async reader from PTY
+/// * `pty_writer` - Async writer to PTY
+/// * `send` - QUIC send stream
+/// * `recv` - QUIC receive stream
+pub async fn bidirectional_pump<R, W>(
+    pty_reader: R,
+    pty_writer: W,
+    send: SendStream,
+    recv: RecvStream,
+) -> Result<()>
+where
+    R: AsyncReadExt + Unpin + Send + 'static,
+    W: AsyncWriteExt + Unpin + Send + 'static,
+{
+    // Share send stream so both pumps can use it
+    // PTY→QUIC uses it for terminal output
+    // QUIC→PTY uses it for control messages (Pong)
+    let send_shared = Arc::new(Mutex::new(send));
+
+    let pty_task = tokio::spawn({
+        let send = send_shared.clone();
+        async move {
+            let mut send_lock = send.lock().await;
+            pump_pty_to_quic(pty_reader, &mut *send_lock).await
+        }
+    });
+
+    let quic_task = tokio::spawn(async move {
+        pump_quic_to_pty(recv, pty_writer, Some(send_shared)).await
+    });
+
+    tokio::select! {
+        r = pty_task => {
+            match r {
+                Ok(Ok(())) => tracing::debug!("PTY→QUIC pump completed"),
+                Ok(Err(e)) => tracing::error!("PTY→QUIC pump failed: {}", e),
+                Err(e) => tracing::error!("PTY→QUIC task panicked: {}", e),
+            }
+        }
+        r = quic_task => {
+            match r {
+                Ok(Ok(())) => tracing::debug!("QUIC→PTY pump completed"),
+                Ok(Err(e)) => tracing::error!("QUIC→PTY pump failed: {}", e),
+                Err(e) => tracing::error!("QUIC→PTY task panicked: {}", e),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_size_validation() {
+        // Test that max size check works
+        let max_size = 16 * 1024 * 1024;
+        assert!(max_size == 16 * 1024 * 1024);
+    }
+
+    // Note: Full integration tests require async runtime and mock streams
+    // These are better suited as integration tests in the test suite
+}

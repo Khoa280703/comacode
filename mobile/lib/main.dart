@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme.dart';
-import 'features/connection/connection_provider.dart';
 import 'features/connection/home_page.dart';
 
 void main() {
-  runApp(const ComacodeApp());
+  runApp(
+    const ProviderScope(
+      child: ComacodeApp(),
+    ),
+  );
 }
 
 class ComacodeApp extends StatelessWidget {
@@ -13,16 +16,13 @@ class ComacodeApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => ConnectionProvider(),
-      child: MaterialApp(
-        title: 'Comacode',
-        debugShowCheckedModeBanner: false,
-        theme: CatppuccinMocha.lightTheme,
-        darkTheme: CatppuccinMocha.darkTheme,
-        themeMode: ThemeMode.dark,
-        home: const HomePage(),
-      ),
+    return MaterialApp(
+      title: 'Comacode',
+      debugShowCheckedModeBanner: false,
+      theme: CatppuccinMocha.lightTheme,
+      darkTheme: CatppuccinMocha.darkTheme,
+      themeMode: ThemeMode.dark,
+      home: const HomePage(),
     );
   }
 }

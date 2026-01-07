@@ -3,7 +3,7 @@
 **Ngày tạo**: 2026-01-07
 **Người tạo**: docs-manager subagent
 **Version**: 0.1.0
-**Last updated**: 2026-01-07 (E05 completed)
+**Last updated**: 2026-01-07 (Phase 05 completed)
 
 ---
 
@@ -37,6 +37,18 @@
 - **NEW**: Rate limiting với governor keyed state (5 req/min)
 - **NEW**: IP banning sau 3 auth failures
 
+### Mobile Bridge & Network (Phase 04-05)
+Đã hoàn thành 2 phase cho mobile connectivity:
+- **Phase 04**: Mobile Bridge (QUIC Client) ✅
+- **Phase 05**: Network Protocol (Shared Transport) ✅
+
+**Kết quả mobile**:
+- crates/mobile_bridge với TOFU verification
+- crates/core/src/transport/ shared library
+- 55/55 tests passing (core)
+- Stream pumps, heartbeat, reconnection
+- Mobile-optimized QUIC settings (30s timeout, 5s keep-alive)
+
 ---
 
 ## Báo cáo chi tiết
@@ -56,9 +68,19 @@
 | E01: Core Enhancements | [phase-e01-core-enhancements-vi.md](phase-e01-core-enhancements-vi.md) | ✅ |
 | E02: Output Streaming | [phase-e02-output-streaming-vi.md](phase-e02-output-streaming-vi.md) | ✅ |
 | E03: Security Hardening | [phase-e03-security-hardening-vi.md](phase-e03-security-hardening-vi.md) | ✅ |
-| E04: Certificate + TOFU | [phase-e04-certificate-tofu-vi.md](phase-e04-certificate-tofu-vi.md) | ✅ |
+| E04: Certificate + TOFU | [phase-e04-cert-persistence-vi.md](phase-e04-cert-persistence-vi.md) | ✅ |
 | E05: macOS Build | [phase-e05-macos-build-vi.md](phase-e05-macos-build-vi.md) | ✅ |
 | E06: Windows Cross-Platform | - | Pending |
+
+### Mobile Bridge & Network
+
+| Phase | Report | Status |
+|-------|--------|--------|
+| 04: Mobile Bridge (QUIC) | [code-reviewer-260107-1605-quic-client-phase04.md](code-reviewer-260107-1605-quic-client-phase04.md) | ✅ |
+| 05: Network Protocol | [phase-05-network-protocol-vi.md](phase-05-network-protocol-vi.md) | ✅ |
+| 06: Flutter UI | - | Pending |
+| 07: Discovery & Auth | - | Pending |
+| 08: Production Hardening | - | Pending |
 
 ### Phase 01: Project Setup & Tooling
 **File**: `phase-01-project-setup-vi.md`
@@ -265,6 +287,11 @@ Coverage: 100% (public API)
 | **CLI** | clap | 4.5 |
 | **Rate Limiting** | governor | 0.6 |
 | **Random** | rand | 0.8 |
+| **QR Code** | qrcode | 0.14 |
+| **JSON** | serde_json | 1.0 |
+| **Hash** | sha2 | 0.10 |
+| **Platform Dirs** | dirs | 5.0 |
+| **Certificate Gen** | rcgen | 0.13 |
 
 ---
 
@@ -283,6 +310,13 @@ Phase E03: Security Hardening         [██████████] 100%
 Phase E04: Certificate + TOFU         [██████████] 100%
 Phase E05: macOS Build                [██████████] 100%
 Phase E06: Windows Cross-Platform     [          ]   0%
+
+Mobile & Network:
+Phase 04: Mobile Bridge (QUIC)        [██████████] 100%
+Phase 05: Network Protocol            [██████████] 100%
+Phase 06: Flutter UI                  [          ]   0%
+Phase 07: Discovery & Auth            [          ]   0%
+Phase 08: Production Hardening        [          ]   0%
 ```
 
 ---
@@ -390,4 +424,4 @@ Phase E06: Windows Cross-Platform     [          ]   0%
 - Discord: (server URL)
 - Email: (contact email)
 
-**Last updated**: 2026-01-07
+**Last updated**: 2026-01-07 (Phase 05 completed)
