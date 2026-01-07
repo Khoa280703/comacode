@@ -1,7 +1,7 @@
 # Comacode System Architecture
 
-> Version: 1.0 | Last Updated: 2026-01-07
-> Phase: Phase 04 - QUIC Client Implementation
+> Version: 1.1 | Last Updated: 2026-01-07
+> Phase: Phase 04.1 - QUIC Client + Critical Bugfixes
 
 ---
 
@@ -256,25 +256,40 @@ impl TofuVerifier {
 **Responsibilities**:
 - Expose Rust functions to Flutter
 - Serialize/deserialize data (Dart ↔ Rust)
-- Manage StreamSink for async streaming
+- Manage global client state (thread-safe)
 
-**Key Functions**:
+**Key Implementation** (Phase 04.1):
 ```rust
+use once_cell::sync::OnceCell;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+// Thread-safe global static (zero unsafe)
+static QUIC_CLIENT: OnceCell<Arc<Mutex<QuicClient>>> = OnceCell::new();
+
 #[frb]
-pub fn connect_to_host(
+pub async fn connect_to_host(
     host: String,
     port: u16,
     auth_token: String,
     fingerprint: String,
-    sink: StreamSink<TerminalEvent>,
 ) -> Result<(), String>;
 
 #[frb]
-pub fn send_command(command: String) -> Result<(), String>;
+pub async fn receive_terminal_event() -> Result<TerminalEvent, String>;
 
 #[frb]
-pub fn disconnect() -> Result<(), String>;
+pub async fn send_terminal_command(command: String) -> Result<(), String>;
+
+#[frb]
+pub async fn disconnect() -> Result<(), String>;
 ```
+
+**Phase 04.1 Improvements**:
+- Replaced `static mut` with `once_cell::sync::OnceCell`
+- Thread-safe initialization via atomic operations
+- Zero unsafe blocks (previously had UB risk)
+- Proper Arc<Mutex<T>> for concurrent access
 
 ### Mobile App Components
 
@@ -902,3 +917,45 @@ jobs:
 **Last Updated**: 2026-01-07
 **Maintainer**: Comacode Development Team
 **Next Review**: Phase 05 completion
+
+---
+
+## Phase 04.1 Architecture Updates
+
+### Global Static Management
+
+**Problem**: Phase 04 used `static mut QUIC_CLIENT` with unsafe blocks → Undefined Behavior
+
+**Solution**: Migrated to `once_cell::sync::OnceCell<Arc<Mutex<T>>>`
+
+**Benefits**:
+1. **Thread Safety**: Atomic operations for initialization
+2. **Zero Unsafe**: No unsafe blocks needed
+3. **Async Compatible**: Works seamlessly with Tokio runtime
+4. **One-Time Init**: OnceCell guarantees single initialization
+
+**Implementation Pattern**:
+```rust
+// Declaration
+static GLOBAL: OnceCell<Arc<Mutex<MyType>>> = OnceCell::new();
+
+// Initialization (happens once)
+fn init() {
+    GLOBAL.set(Arc::new(Mutex::new(MyType::new())))
+        .expect("Already initialized");
+}
+
+// Access (safe, async-compatible)
+async fn use_global() {
+    let instance = GLOBAL.get().expect("Not initialized");
+    let mut guard = instance.lock().await;
+    // Use guard...
+}
+```
+
+### Security Improvements
+
+**Fingerprint Logging** (Phase 04.1):
+- Before: Logged full fingerprint in plaintext (security risk)
+- After: Logs only match result (boolean)
+- Impact: Prevents credential leakage in logs

@@ -1,7 +1,7 @@
 # Comacode Codebase Summary
 
 > Last Updated: 2026-01-07
-> Version: Phase 04 (QUIC Client Implemented)
+> Version: Phase 04.1 (QUIC Client + Critical Bugfixes)
 
 ---
 
@@ -58,7 +58,7 @@ Comacode/
 
 ## Phase 04 Implementation Status
 
-### Completed Features ✅
+### Phase 04 Completed Features ✅
 
 1. **QUIC Client Implementation** (`crates/mobile_bridge/src/quic_client.rs`)
    - Full Quinn 0.11 + Rustls 0.23 integration
@@ -66,6 +66,7 @@ Comacode/
    - Connection management (connect, disconnect, is_connected)
    - AuthToken validation
    - 7 unit tests (all passing)
+   - Zero clippy warnings
 
 2. **Certificate Fingerprint Handling**
    - Case-insensitive comparison
@@ -79,23 +80,28 @@ Comacode/
    - `rustls-pki-types = "1.0"` (Rustls 0.23 compatibility)
    - `sha2 = "0.10"` (Fingerprint calculation)
 
+### Phase 04.1 Critical Bugfixes ✅
+
+4. **Fixed Undefined Behavior in FFI Bridge** (`api.rs`)
+   - **Before**: `static mut QUIC_CLIENT: Option<QuicClient> = None` (UB risk)
+   - **After**: `static QUIC_CLIENT: OnceCell<Arc<Mutex<QuicClient>>> = OnceCell::new()`
+   - **Benefits**:
+     - Thread-safe initialization via OnceCell
+     - Zero unsafe blocks (previously had 3+ unsafe blocks)
+     - Proper Arc<Mutex<T>> for concurrent access
+     - No more compiler warnings
+
+5. **Fixed Security: Fingerprint Leakage** (`quic_client.rs`)
+   - **Before**: `debug!("Expected: {}, Actual: {}", expected, actual)` (leaks full fingerprint)
+   - **After**: `debug!("Verifying cert - Match: {}", actual_clean == expected_clean)` (only result)
+   - **Impact**: Sensitive data no longer logged in plaintext
+
 ### Partial Implementation ⚠️
 
-4. **Stream I/O Methods** (Stub implementations)
+6. **Stream I/O Methods** (Stub implementations - deferred to Phase 05)
    - `receive_event()`: Returns empty stub (TODO: Read from QUIC stream)
    - `send_command()`: Logs only (TODO: Write to QUIC stream)
    - **Blocks**: Flutter integration with StreamSink
-
-### Known Issues ❌
-
-1. **Undefined Behavior in FFI Bridge** (`api.rs`)
-   - Unsafe static mutable access (`static mut QUIC_CLIENT`)
-   - Compiler warnings about UB risk
-   - **Fix Required**: Use `once_cell` or `tokio::sync::RwLock`
-
-2. **Security: Fingerprint Leakage**
-   - Actual fingerprint logged in debug output
-   - **Fix Required**: Log only comparison result
 
 ---
 
@@ -175,16 +181,21 @@ impl QuicClient {
 
 **Purpose**: Expose Rust functions to Flutter via `flutter_rust_bridge`
 
-**Current State**: Stub implementations (unsafe static - needs refactoring)
+**Current State**: Thread-safe implementation with once_cell (Phase 04.1)
 
-**Required API** (from Phase 04 plan):
+**Key Implementation Details**:
+- Uses `once_cell::sync::OnceCell` for global static
+- Wrapped in `Arc<Mutex<T>>` for concurrent access
+- Zero unsafe blocks (all UB risks eliminated)
+- Functions: `connect_to_host`, `receive_terminal_event`, `send_terminal_command`, `disconnect`
+
+**API Signature**:
 ```rust
-pub fn connect_to_host(
+pub async fn connect_to_host(
     host: String,
     port: u16,
     auth_token: String,
     fingerprint: String,
-    sink: StreamSink<TerminalEvent>,  // Push events to Flutter
 ) -> Result<(), String>;
 ```
 
@@ -239,28 +250,33 @@ pub fn connect_to_host(
 
 ## Development Workflow
 
-### Current Phase: Phase 04 - Mobile App (Flutter)
+### Current Phase: Phase 04.1 - Mobile App (QUIC Client + Bugfixes)
 
-**Status**: QUIC client complete, Flutter UI pending
+**Status**: QUIC client complete with critical bugfixes, Flutter UI pending
 
-**Completed**:
+**Phase 04 Completed**:
 - ✅ QUIC client implementation (quic_client.rs)
 - ✅ TOFU certificate verification
 - ✅ Fingerprint normalization
 - ✅ Unit tests (7 tests, all passing)
+- ✅ Zero clippy warnings
+
+**Phase 04.1 Completed**:
+- ✅ Fixed UB in FFI bridge (api.rs)
+- ✅ Replaced `static mut` with `once_cell::sync::OnceCell`
+- ✅ Fixed fingerprint leakage in logs
+- ✅ Thread-safe implementation
 
 **Blocked**:
-- ❌ FFI bridge unsafe static UB (must fix)
-- ❌ Stream I/O stub implementations (blocks Flutter)
-- ❌ Flutter project not created
+- ⏳ Stream I/O stub implementations (blocks Flutter integration)
+- ⏳ Flutter project not created
 
 **Next Steps**:
-1. Fix unsafe static in `api.rs` (use `once_cell`)
-2. Implement stream I/O (receive_event, send_command)
-3. Generate FRB bindings
-4. Create Flutter project
-5. Implement QR scanner
-6. Implement terminal UI with xterm_flutter
+1. Implement stream I/O in Phase 05 (receive_event, send_command)
+2. Generate FRB bindings for Flutter
+3. Create Flutter project
+4. Implement QR scanner
+5. Implement terminal UI with xterm_flutter
 
 ### Testing Strategy
 
@@ -338,21 +354,19 @@ cargo test -p mobile_bridge
 ## Known Technical Debt
 
 ### Critical (Must Fix)
-1. **Undefined Behavior in `api.rs`**
-   - File: `crates/mobile_bridge/src/api.rs:15-114`
-   - Issue: Unsafe static mutable access
-   - Fix: Replace with `once_cell` or `tokio::sync::RwLock`
+1. ~~**Undefined Behavior in `api.rs`**~~ ✅ RESOLVED (Phase 04.1)
+   - Was: `static mut QUIC_CLIENT` with unsafe access
+   - Fixed: Replaced with `once_cell::sync::OnceCell<Arc<Mutex<QuicClient>>>`
 
 2. **Stream I/O Stubs**
    - File: `crates/mobile_bridge/src/quic_client.rs:232-253`
    - Issue: receive_event/send_command return stubs
-   - Fix: Implement actual QUIC stream reading/writing
+   - Fix: Implement actual QUIC stream reading/writing (deferred to Phase 05)
 
 ### High Priority (Should Fix)
-3. **Fingerprint Leakage in Logs**
-   - File: `crates/mobile_bridge/src/quic_client.rs:88`
-   - Issue: Actual fingerprint logged in debug output
-   - Fix: Log only comparison result
+3. ~~**Fingerprint Leakage in Logs**~~ ✅ RESOLVED (Phase 04.1)
+   - Was: Actual fingerprint logged at line 88
+   - Fixed: Now logs only match result
 
 4. **Hardcoded Timeout**
    - File: `crates/mobile_bridge/src/quic_client.rs:206`
@@ -453,5 +467,5 @@ cargo test -p mobile_bridge
 ---
 
 **Last Updated**: 2026-01-07
-**Current Phase**: Phase 04 - QUIC Client Complete, Flutter UI Pending
+**Current Phase**: Phase 04.1 - QUIC Client Complete + Critical Bugfixes
 **Next Milestone**: Phase 05 - Network Protocol (Stream I/O Implementation)

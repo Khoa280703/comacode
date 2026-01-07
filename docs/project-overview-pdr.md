@@ -1,8 +1,8 @@
 # Comacode Project Overview & PDR
 
 > Product Development Requirements (PDR)
-> Version: 1.0 | Last Updated: 2026-01-07
-> Current Phase: Phase 04 (Mobile App - QUIC Client Complete)
+> Version: 1.1 | Last Updated: 2026-01-07
+> Current Phase: Phase 04.1 (Mobile App - QUIC Client Complete + Critical Bugfixes)
 
 ---
 
@@ -307,26 +307,32 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 - Certificate generation
 - QR code display
 
-### Phase 04: Mobile App (In Progress)
-**Status**: QUIC Client Complete, Flutter UI Pending
+### Phase 04: Mobile App - QUIC Client ✅
+**Status**: Complete (Phase 04.1 - Critical Bugfixes Applied)
 
-**Completed**:
-- ✅ QUIC client with TOFU verification
-- ✅ Fingerprint normalization
+**Phase 04 Completed**:
+- ✅ QUIC client with TOFU verification (Quinn 0.11 + Rustls 0.23)
+- ✅ Fingerprint normalization (case-insensitive, separator-agnostic)
 - ✅ AuthToken validation
 - ✅ Unit tests (7 tests, all passing)
+- ✅ Zero clippy warnings
+
+**Phase 04.1 Completed** (Critical Bugfixes):
+- ✅ Fixed UB in `api.rs`: Replaced `static mut QUIC_CLIENT` with `once_cell::sync::OnceCell`
+  - Thread-safe initialization
+  - Zero unsafe blocks
+  - Proper Arc<Mutex<T>> wrapping
+- ✅ Fixed fingerprint leakage in logs: Only match result logged (line 88 in quic_client.rs)
 
 **Pending**:
-- ⏳ Fix unsafe static in `api.rs` (UB risk)
-- ⏳ Implement stream I/O (receive_event, send_command)
-- ⏳ Generate FRB bindings
+- ⏳ Implement actual stream I/O (receive_event, send_command) - Currently stubs
+- ⏳ Generate FRB bindings for Flutter
 - ⏳ Create Flutter project
 - ⏳ Implement QR scanner
 - ⏳ Implement terminal UI
 
 **Blocked**:
-- ❌ Stream I/O stubs block Flutter integration
-- ❌ FFI bridge UB must be fixed before production use
+- ⏳ Stream I/O stubs block real Flutter integration
 
 ### Phase 05: Network Protocol (Planned)
 **Status**: Not started
@@ -391,7 +397,7 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 |----|------|-------------|--------|------------|--------|
 | R1 | QUIC client not implemented | 100% | **Blocker** | Implement in Rust first | ✅ Resolved |
 | R2 | Stream I/O stubs | High | High | Implement in Phase 05 | ⚠️ Active |
-| R3 | FFI bridge UB risk | High | Critical | Use `once_cell` | ⚠️ Active |
+| R3 | FFI bridge UB risk | High | Critical | Use `once_cell` | ✅ Resolved (Phase 04.1) |
 | R4 | Camera permission denied | Medium | Medium | Fallback to manual entry | Planned |
 | R5 | Secure storage fails | Low | Medium | Fallback to shared_prefs | Planned |
 | R6 | xterm_flutter performance | Medium | High | Test with large output | Planned |
@@ -496,6 +502,6 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 ---
 
 **Last Updated**: 2026-01-07
-**Current Phase**: Phase 04 - Mobile App (QUIC Client Complete, Flutter UI Pending)
+**Current Phase**: Phase 04.1 - Mobile App (QUIC Client Complete + Critical Bugfixes)
 **Next Milestone**: Phase 05 - Network Protocol (Stream I/O Implementation)
 **Maintainer**: Comacode Development Team

@@ -1,7 +1,7 @@
 # Comacode Code Standards & Architecture
 
-> Version: 1.0 | Last Updated: 2026-01-07
-> Phase: Phase 04 - QUIC Client Implementation
+> Version: 1.1 | Last Updated: 2026-01-07
+> Phase: Phase 04.1 - QUIC Client + Critical Bugfixes
 
 ---
 
@@ -233,13 +233,34 @@ pub async fn connect_with_streaming(
 
 **Avoid `unsafe` unless absolutely necessary**:
 ```rust
-// ❌ BAD: Unsafe static mutable (UB risk)
-static mut QUIC_CLIENT: Option<QuicClient> = None;
+// ❌ BAD: Unsafe static mutable (UB risk) - FIXED in Phase 04.1
+// static mut QUIC_CLIENT: Option<QuicClient> = None;
 
-// ✅ GOOD: Use once_cell
+// ✅ GOOD: Use once_cell (implemented in Phase 04.1)
 use once_cell::sync::OnceCell;
-static QUIC_CLIENT: OnceCell<QuicClient> = OnceCell::new();
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+static QUIC_CLIENT: OnceCell<Arc<Mutex<QuicClient>>> = OnceCell::new();
+
+// Thread-safe initialization
+fn init_client() -> Result<(), String> {
+    let client = QuicClient::new();
+    QUIC_CLIENT.set(Arc::new(Mutex::new(client)))
+        .map_err(|_| "Already initialized".to_string())
+}
+
+// Safe access
+async fn get_client() -> &'static Arc<Mutex<QuicClient>> {
+    QUIC_CLIENT.get().expect("Client not initialized")
+}
 ```
+
+**Benefits of OnceCell pattern**:
+- Thread-safe initialization (atomic operations)
+- One-time initialization guarantee
+- Zero unsafe blocks required
+- Works with async runtimes (Tokio)
 
 **Document all `unsafe` blocks**:
 ```rust
@@ -1140,3 +1161,40 @@ class ConnectionProvider extends ChangeNotifier {
 **Last Updated**: 2026-01-07
 **Maintainer**: Comacode Development Team
 **Next Review**: Phase 05 completion
+
+---
+
+## Phase 04.1 Updates
+
+### Global Static Pattern with OnceCell
+
+Starting Phase 04.1, all global static state must use `once_cell::sync::OnceCell` instead of `static mut`:
+
+**Pattern**:
+```rust
+use once_cell::sync::OnceCell;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+static GLOBAL_STATE: OnceCell<Arc<Mutex<MyType>>> = OnceCell::new();
+
+// Initialize once
+fn init() {
+    GLOBAL_STATE.set(Arc::new(Mutex::new(MyType::new())))
+        .expect("Already initialized");
+}
+
+// Access safely
+async fn access() {
+    let state = GLOBAL_STATE.get()
+        .expect("Not initialized");
+    let mut guard = state.lock().await;
+    // Use guard...
+}
+```
+
+**Why this pattern?**
+- Eliminates undefined behavior from `static mut`
+- Thread-safe via atomic operations
+- Compatible with async/await (no blocking)
+- Zero unsafe blocks needed
