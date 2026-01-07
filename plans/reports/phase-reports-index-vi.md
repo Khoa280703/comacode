@@ -3,7 +3,7 @@
 **Ngày tạo**: 2026-01-07
 **Người tạo**: docs-manager subagent
 **Version**: 0.1.0
-**Last updated**: 2026-01-07 (Phase 05 completed)
+**Last updated**: 2026-01-07 (Phase 06 completed)
 
 ---
 
@@ -78,7 +78,7 @@
 |-------|--------|--------|
 | 04: Mobile Bridge (QUIC) | [code-reviewer-260107-1605-quic-client-phase04.md](code-reviewer-260107-1605-quic-client-phase04.md) | ✅ |
 | 05: Network Protocol | [phase-05-network-protocol-vi.md](phase-05-network-protocol-vi.md) | ✅ |
-| 06: Flutter UI | - | Pending |
+| 06: Flutter UI | [phase-06-flutter-ui-vi.md](phase-06-flutter-ui-vi.md) | ✅ |
 | 07: Discovery & Auth | - | Pending |
 | 08: Production Hardening | - | Pending |
 
@@ -314,7 +314,7 @@ Phase E06: Windows Cross-Platform     [          ]   0%
 Mobile & Network:
 Phase 04: Mobile Bridge (QUIC)        [██████████] 100%
 Phase 05: Network Protocol            [██████████] 100%
-Phase 06: Flutter UI                  [          ]   0%
+Phase 06: Flutter UI                  [██████████] 100%
 Phase 07: Discovery & Auth            [          ]   0%
 Phase 08: Production Hardening        [          ]   0%
 ```
@@ -424,4 +424,4 @@ Phase 08: Production Hardening        [          ]   0%
 - Discord: (server URL)
 - Email: (contact email)
 
-**Last updated**: 2026-01-07 (Phase 05 completed)
+**Last updated**: 2026-01-07 (Phase 06 completed)
