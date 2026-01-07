@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Comacode - Settings Screen</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ===== DESIGN TOKENS ===== */
+        :root {
+            --bg-base: #1E1E2E;
+            --bg-mantle: #181825;
+            --bg-crust: #11111B;
+            --text: #CDD6F4;
+            --text-subtle: #A6ADC8;
+            --text-muted: #6C7086;
+            --accent-purple: #C678DD;
+            --accent-green: #98C379;
+            --accent-blue: #61AFEF;
+            --accent-red: #E06C75;
+
+            --safe-top: env(safe-area-inset-top, 16px);
+            --safe-bottom: env(safe-area-inset-bottom, 16px);
+            --page-padding: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui;
+            background: var(--bg-base);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            height: calc(56px + var(--safe-top));
+            padding-top: var(--safe-top);
+            padding-left: var(--page-padding);
+            padding-right: var(--page-padding);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .back-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .header__title {
+            font: 600 17px var(--font-ui);
+            color: var(--text);
+        }
+
+        /* ===== CONTENT ===== */
+        .content {
+            padding: var(--page-padding);
+            padding-bottom: calc(24px + var(--safe-bottom));
+        }
+
+        /* ===== SECTION ===== */
+        .section {
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font: 600 13px var(--font-ui);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            padding-left: 4px;
+        }
+
+        .section-card {
+            background: var(--bg-mantle);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* ===== SETTINGS ITEMS ===== */
+        .setting-item {
+            display: flex;
+            align-items: center;
+            padding: 14px 16px;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .setting-item:last-child {
+            border-bottom: none;
+        }
+
+        .setting-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .setting-icon svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .setting-icon--purple {
+            background: rgba(198, 120, 221, 0.15);
+            color: var(--accent-purple);
+        }
+
+        .setting-icon--blue {
+            background: rgba(97, 175, 239, 0.15);
+            color: var(--accent-blue);
+        }
+
+        .setting-icon--green {
+            background: rgba(152, 195, 121, 0.15);
+            color: var(--accent-green);
+        }
+
+        .setting-icon--orange {
+            background: rgba(209, 154, 102, 0.15);
+            color: #D19A66;
+        }
+
+        .setting-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .setting-label {
+            font: 500 15px var(--font-ui);
+            color: var(--text);
+            margin-bottom: 2px;
+        }
+
+        .setting-desc {
+            font: 400 13px var(--font-ui);
+            color: var(--text-muted);
+        }
+
+        .setting-value {
+            font: 500 14px var(--font-ui);
+            color: var(--accent-purple);
+        }
+
+        /* ===== TOGGLE SWITCH ===== */
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 28px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch--active {
+            background: var(--accent-purple);
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 24px;
+            height: 24px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle-switch--active::after {
+            transform: translateX(20px);
+        }
+
+        /* ===== CHEVRON ===== */
+        .chevron {
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        /* ===== SLIDER ===== */
+        .slider-container {
+            width: 100%;
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .slider-label {
+            font: 500 15px var(--font-ui);
+            color: var(--text);
+        }
+
+        .slider-value {
+            font: 600 15px 'JetBrains Mono', monospace;
+            color: var(--accent-purple);
+        }
+
+        .slider {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            appearance: none;
+            outline: none;
+        }
+
+        .slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: var(--accent-purple);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(198, 120, 221, 0.4);
+        }
+
+        /* ===== SELECT ===== */
+        .select-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+        }
+
+        .select-item:last-child {
+            border-bottom: none;
+        }
+
+        .select-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* ===== ABOUT CARD ===== */
+        .about-card {
+            background: linear-gradient(135deg, rgba(198, 120, 221, 0.1), rgba(198, 120, 221, 0.02));
+            border: 1px solid rgba(198, 120, 221, 0.2);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        .about-logo {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 12px;
+            background: var(--bg-mantle);
+            border: 1px solid rgba(198, 120, 221, 0.3);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            font-size: 18px;
+            color: var(--accent-purple);
+        }
+
+        .about-title {
+            font: 600 17px var(--font-ui);
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .about-version {
+            font: 400 13px var(--font-ui);
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .about-links {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+
+        .about-link {
+            font: 500 13px var(--font-ui);
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        /* ===== ANNOTATIONS ===== */
+        .annotation {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11px;
+            color: var(--text-subtle);
+            max-width: 200px;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        .annotation::before {
+            content: '';
+            position: absolute;
+            width: 1px;
+            background: rgba(198, 120, 221, 0.5);
+        }
+
+        .annotation--1 {
+            top: 25%;
+            right: 16px;
+        }
+        .annotation--1::before {
+            left: 100%;
+            top: 50%;
+            height: 1px;
+            width: 12px;
+        }
+
+        .annotation--2 {
+            top: 50%;
+            left: 16px;
+        }
+        .annotation--2::before {
+            right: 100%;
+            top: 50%;
+            height: 1px;
+            width: 12px;
+        }
+
+        .annotations-toggle {
+            position: fixed;
+            top: calc(var(--safe-top) + 16px);
+            right: 16px;
+            background: rgba(198, 120, 221, 0.2);
+            border: 1px solid rgba(198, 120, 221, 0.3);
+            color: var(--accent-purple);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            cursor: pointer;
+            z-index: 1001;
+        }
+
+        .annotations-hidden .annotation {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <button class="annotations-toggle" onclick="document.body.classList.toggle('annotations-hidden')">Toggle</button>
+
+    <!-- Header -->
+    <header class="header">
+        <button class="back-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m15 18-6-6 6-6"/>
+            </svg>
+        </button>
+        <h1 class="header__title">Settings</h1>
+    </header>
+
+    <!-- Content -->
+    <div class="content">
+
+        <!-- Terminal Section -->
+        <div class="section">
+            <p class="section-title">Terminal</p>
+            <div class="section-card">
+                <!-- Font Size Slider -->
+                <div class="slider-container">
+                    <div class="slider-header">
+                        <span class="slider-label">Font Size</span>
+                        <span class="slider-value">13px</span>
+                    </div>
+                    <input type="range" class="slider" min="11" max="18" value="13">
+                </div>
+
+                <!-- Font Family -->
+                <div class="select-item">
+                    <div class="select-left">
+                        <div class="setting-icon setting-icon--purple">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>
+                            </svg>
+                        </div>
+                        <div class="setting-info">
+                            <div class="setting-label">Font Family</div>
+                            <div class="setting-desc">Terminal text font</div>
+                        </div>
+                    </div>
+                    <div class="setting-value">JetBrains Mono</div>
+                    <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="m9 18 6-6-6-6"/>
+                    </svg>
+                </div>
+
+                <!-- Theme -->
+                <div class="select-item">
+                    <div class="select-left">
+                        <div class="setting-icon setting-icon--blue">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z"/>
+                            </svg>
+                        </div>
+                        <div class="setting-info">
+                            <div class="setting-label">Color Theme</div>
+                            <div class="setting-desc">Terminal color scheme</div>
+                        </div>
+                    </div>
+                    <div class="setting-value">Catppuccin</div>
+                    <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="m9 18 6-6-6-6"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection Section -->
+        <div class="section">
+            <p class="section-title">Connection</p>
+            <div class="section-card">
+                <!-- Auto-reconnect -->
+                <div class="setting-item">
+                    <div class="setting-icon setting-icon--green">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M7 17l9.2-9.2M17 17V7H7"/>
+                        </svg>
+                    </div>
+                    <div class="setting-info">
+                        <div class="setting-label">Auto-reconnect</div>
+                        <div class="setting-desc">Restore connection on app launch</div>
+                    </div>
+                    <div class="toggle-switch toggle-switch--active"></div>
+                </div>
+
+                <!-- Keep-alive -->
+                <div class="setting-item">
+                    <div class="setting-icon setting-icon--orange">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2v20M2 12h20"/>
+                        </svg>
+                    </div>
+                    <div class="setting-info">
+                        <div class="setting-label">Keep-alive Interval</div>
+                        <div class="setting-desc">Send ping every N seconds</div>
+                    </div>
+                    <div class="setting-value">30s</div>
+                    <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="m9 18 6-6-6-6"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Interface Section -->
+        <div class="section">
+            <p class="section-title">Interface</p>
+            <div class="section-card">
+                <!-- Haptic Feedback -->
+                <div class="setting-item">
+                    <div class="setting-icon setting-icon--purple">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2v20M2 12h20"/><path d="m4.93 4.93 4.24 4.24m5.66 5.66 4.24 4.24"/>
+                        </svg>
+                    </div>
+                    <div class="setting-info">
+                        <div class="setting-label">Haptic Feedback</div>
+                        <div class="setting-desc">Vibrate on key press</div>
+                    </div>
+                    <div class="toggle-switch toggle-switch--active"></div>
+                </div>
+
+                <!-- Show Status Bar -->
+                <div class="setting-item">
+                    <div class="setting-icon setting-icon--blue">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        </svg>
+                    </div>
+                    <div class="setting-info">
+                        <div class="setting-label">Show Status Bar</div>
+                        <div class="setting-desc">Display connection info</div>
+                    </div>
+                    <div class="toggle-switch toggle-switch--active"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- About Section -->
+        <div class="section">
+            <p class="section-title">About</p>
+            <div class="about-card">
+                <div class="about-logo">$ _</div>
+                <h3 class="about-title">Comacode</h3>
+                <p class="about-version">Version 1.0.0-beta (build 42)</p>
+                <div class="about-links">
+                    <a href="#" class="about-link">GitHub</a>
+                    <span style="color: var(--text-muted)">•</span>
+                    <a href="#" class="about-link">Changelog</a>
+                    <span style="color: var(--text-muted)">•</span>
+                    <a href="#" class="about-link">License</a>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Annotations -->
+    <div class="annotation annotation--1">
+        <strong>Slider Control</strong><br>
+        Direct manipulation for font size. 11-18px range covers accessibility needs. Value updates in real-time.
+    </div>
+    <div class="annotation annotation--2">
+        <strong>Toggle Switch</strong><br>
+        iOS-style toggle. Purple accent when active. Tap target 48x28px meets touch guidelines.
+    </div>
+</body>
+</html>

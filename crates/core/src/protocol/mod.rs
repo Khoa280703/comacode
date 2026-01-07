@@ -1,0 +1,5 @@
+//! Network protocol handling
+
+mod codec;
+
+pub use codec::MessageCodec;

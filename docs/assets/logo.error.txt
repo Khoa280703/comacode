@@ -1,0 +1,19 @@
+# Batch Processing Results
+
+## 1. generated
+
+**Status**: error
+
+**Error**: [FREE TIER LIMITATION] Image/Video generation is NOT available on free tier.
+
+Free tier users have zero quota (limit: 0) for:
+- All Imagen models (imagen-4.0-*)
+- All Veo models (veo-*)
+- Gemini image models (gemini-*-image, gemini-*-image-preview)
+
+To use image/video generation:
+1. Enable billing: https://aistudio.google.com/apikey
+2. Or use Google Cloud $300 free credits: https://cloud.google.com/free
+
+STOP: Do not retry image/video generation on free tier - it will always fail.
+

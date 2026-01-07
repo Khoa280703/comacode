@@ -1,0 +1,310 @@
+//! QUIC server for terminal connections
+//!
+//! Provides encrypted QUIC endpoint for mobile client connections.
+
+use anyhow::{Context, Result};
+use comacode_core::{
+    protocol::MessageCodec,
+    types::NetworkMessage,
+};
+use quinn::{Endpoint, ServerConfig, TokioRuntime};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::oneshot;
+use rcgen::KeyPair;
+
+use crate::session::SessionManager;
+
+/// QUIC server for terminal connections
+pub struct QuicServer {
+    /// QUIC endpoint
+    endpoint: Endpoint,
+    /// Session manager for PTY instances
+    session_mgr: Arc<SessionManager>,
+    /// Shutdown signal sender
+    shutdown_tx: Option<oneshot::Sender<()>>,
+}
+
+impl QuicServer {
+    /// Create new QUIC server with self-signed certificate
+    pub async fn new(bind_addr: SocketAddr) -> Result<(Self, CertificateDer<'static>, PrivateKeyDer<'static>)> {
+        // Generate self-signed certificate ONCE
+        let (cert, key_pair) = generate_cert_with_keypair()?;
+
+        // Serialize key twice - once for config, once for return
+        let key_der = key_pair.serialize_der();
+        let key_for_config = PrivateKeyDer::Pkcs8(key_der.clone().into());
+        let key_for_return = PrivateKeyDer::Pkcs8(key_der.into());
+
+        // Configure TLS - use cloned key
+        let cert_vec = vec![cert.clone()];
+        let cfg = ServerConfig::with_single_cert(cert_vec, key_for_config)
+            .context("Failed to configure TLS")?;
+
+        // Bind UDP socket
+        let socket = std::net::UdpSocket::bind(bind_addr)
+            .context("Failed to bind UDP socket")?;
+
+        // Create endpoint with Tokio runtime
+        let runtime = Arc::new(TokioRuntime);
+        let endpoint = Endpoint::new(Default::default(), Some(cfg), socket, runtime)
+            .context("Failed to create QUIC endpoint")?;
+
+        tracing::info!("QUIC server listening on {}", bind_addr);
+
+        Ok((
+            Self {
+                endpoint,
+                session_mgr: Arc::new(SessionManager::new()),
+                shutdown_tx: None,
+            },
+            cert,
+            key_for_return, // Return SAME key bytes, not regenerated
+        ))
+    }
+
+    /// Run server (accepts connections indefinitely)
+    pub async fn run(&mut self) -> Result<()> {
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        self.shutdown_tx = Some(shutdown_tx);
+
+        // Spawn cleanup task
+        let session_mgr = Arc::clone(&self.session_mgr);
+        tokio::spawn(async move {
+            let _cleanup_handle = session_mgr.spawn_cleanup_task();
+            // Keep cleanup task running
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
+
+        // Accept connections loop
+        loop {
+            tokio::select! {
+                // Accept incoming connection
+                incoming = self.endpoint.accept() => {
+                    match incoming {
+                        Some(incoming) => {
+                            let session_mgr = Arc::clone(&self.session_mgr);
+                            tokio::spawn(async move {
+                                if let Err(e) = Self::handle_connection(incoming, session_mgr).await {
+                                    tracing::error!("Connection error: {}", e);
+                                }
+                            });
+                        }
+                        None => {
+                            tracing::warn!("Endpoint closed");
+                            break;
+                        }
+                    }
+                }
+                // Shutdown signal
+                _ = &mut shutdown_rx => {
+                    tracing::info!("Shutdown signal received");
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle single connection
+    async fn handle_connection(
+        incoming: quinn::Incoming,
+        session_mgr: Arc<SessionManager>,
+    ) -> Result<()> {
+        // Accept the connection - returns Result<Connecting, ConnectionError>
+        let connecting = incoming.accept()?;
+        let connection = connecting.await?;
+
+        let remote_addr = connection.remote_address();
+        tracing::info!("Connection from {}", remote_addr);
+
+        // Handle bi-directional streams
+        loop {
+            match connection.accept_bi().await {
+                Ok((send, recv)) => {
+                    let session_mgr = Arc::clone(&session_mgr);
+                    tokio::spawn(async move {
+                        if let Err(e) = Self::handle_stream(send, recv, session_mgr).await {
+                            tracing::error!("Stream error: {}", e);
+                        }
+                    });
+                }
+                Err(quinn::ConnectionError::ApplicationClosed(_)) | Err(quinn::ConnectionError::LocallyClosed) => {
+                    tracing::info!("Connection closed");
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("Accept stream error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle single bi-directional stream
+    async fn handle_stream(
+        mut send: quinn::SendStream,
+        mut recv: quinn::RecvStream,
+        session_mgr: Arc<SessionManager>,
+    ) -> Result<()> {
+        let mut session_id: Option<u64> = None;
+
+        // Message receive loop
+        let mut read_buf = vec![0u8; 1024];
+
+        loop {
+            // Read from stream
+            match recv.read(&mut read_buf).await? {
+                Some(n) if n > 0 => {
+                    // Parse message
+                    let msg = match MessageCodec::decode(&read_buf[..n]) {
+                        Ok(msg) => msg,
+                        Err(e) => {
+                            tracing::error!("Failed to decode message: {}", e);
+                            continue;
+                        }
+                    };
+
+                    tracing::debug!("Received message: {:?}", std::mem::discriminant(&msg));
+
+                    // Handle message
+                    match msg {
+                        NetworkMessage::Hello { ref protocol_version, ref app_version, auth_token, .. } => {
+                            tracing::info!("Client hello protocol_version={}, app_version={}", protocol_version, app_version);
+
+                            // Phase E03: Validate auth token if provided
+                            // For MVP, we accept connections without token (backward compatibility)
+                            // Future: require auth_token to be Some(valid_token)
+                            if let Some(token) = auth_token {
+                                tracing::info!("Auth token provided (hex: {})", token.to_hex());
+                                // TODO: Validate token against TokenStore when available
+                                // For MVP, we log but don't enforce
+                            } else {
+                                tracing::warn!("No auth token provided - allowing for MVP");
+                            }
+
+                            // Validate protocol version
+                            if let Err(e) = msg.validate_handshake() {
+                                tracing::error!("Handshake validation failed: {}", e);
+                                // Send error and close
+                                let _ = Self::send_message(&mut send, &NetworkMessage::hello(None)).await;
+                                break;
+                            }
+
+                            // Respond with Hello
+                            let response = NetworkMessage::hello(None);
+                            Self::send_message(&mut send, &response).await?;
+                        }
+                        NetworkMessage::Command(cmd) => {
+                            // Forward command to PTY
+                            if let Some(id) = session_id {
+                                if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
+                                    tracing::error!("Failed to write to PTY: {}", e);
+                                }
+                            } else {
+                                // Create new session
+                                let config = comacode_core::terminal::TerminalConfig::default();
+                                match session_mgr.create_session(config).await {
+                                    Ok(id) => {
+                                        session_id = Some(id);
+                                        tracing::info!("Created session {} for connection", id);
+
+                                        // Get output sender for this session
+                                        // Note: For MVP, output forwarding is limited due to SendStream ownership
+                                        // Full bi-directional streaming will be implemented in Phase 05
+                                        let _output_tx = session_mgr.get_session_output(id).await;
+                                        tracing::info!("PTY output forwarding via poll mode (Phase 05 will add streaming)");
+
+                                        // Forward command
+                                        let _ = session_mgr.write_to_session(id, cmd.text.as_bytes()).await;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to create session: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        NetworkMessage::Ping { timestamp } => {
+                            // Respond with Pong
+                            let response = NetworkMessage::pong(timestamp);
+                            Self::send_message(&mut send, &response).await?;
+                        }
+                        NetworkMessage::Resize { rows, cols } => {
+                            if let Some(id) = session_id {
+                                if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
+                                    tracing::error!("Failed to resize PTY: {}", e);
+                                }
+                            }
+                        }
+                        NetworkMessage::Close => {
+                            tracing::info!("Received Close message");
+                            break;
+                        }
+                        _ => {
+                            tracing::warn!("Unhandled message type");
+                        }
+                    }
+                }
+                Some(0) | None => {
+                    tracing::debug!("Stream closed by client");
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        // Cleanup session on disconnect
+        if let Some(id) = session_id {
+            let _ = session_mgr.cleanup_session(id).await;
+        }
+
+        Ok(())
+    }
+
+    /// Send message to stream
+    async fn send_message(
+        send: &mut quinn::SendStream,
+        msg: &NetworkMessage,
+    ) -> Result<()> {
+        let encoded = MessageCodec::encode(msg)?;
+        send.write_all(&encoded).await?;
+        Ok(())
+    }
+
+    /// Get session manager reference
+    #[allow(dead_code)]
+    pub fn session_manager(&self) -> Arc<SessionManager> {
+        Arc::clone(&self.session_mgr)
+    }
+
+    /// Shutdown server
+    #[allow(dead_code)]
+    pub async fn shutdown(self) -> Result<()> {
+        if let Some(tx) = self.shutdown_tx {
+            let _ = tx.send(());
+        }
+        self.endpoint.close(0u32.into(), b"Server shutdown");
+        Ok(())
+    }
+}
+
+/// Generate self-signed TLS certificate with keypair
+fn generate_cert_with_keypair() -> Result<(CertificateDer<'static>, KeyPair)> {
+    use rcgen;
+
+    // Simple self-signed certificate generation
+    let cert = rcgen::generate_simple_self_signed(vec!["Comacode".to_string()])
+        .context("Failed to generate certificate")?;
+
+    Ok((
+        CertificateDer::from(cert.cert.der().to_vec()),
+        cert.key_pair,
+    ))
+}

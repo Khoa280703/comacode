@@ -1,0 +1,38 @@
+[package]
+name = "hostagent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "hostagent"
+path = "src/main.rs"
+
+[dependencies]
+# Core shared logic
+comacode-core = { path = "../core" }
+# Workspace dependencies
+tokio = { workspace = true, features = ["sync"] }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# Terminal
+portable-pty = { workspace = true }
+# Bytes for zero-copy
+bytes = "1.8"
+# QUIC networking
+quinn = { workspace = true }
+rustls = { version = "0.23", features = ["ring"] }
+rcgen = "0.13"
+# mDNS
+mdns-sd = "0.11"
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+# Security (Phase E03)
+governor = { workspace = true }
+nonzero_ext = { workspace = true }
+# Certificate & QR (Phase E04)
+dirs = { workspace = true }
+sha2 = { workspace = true }

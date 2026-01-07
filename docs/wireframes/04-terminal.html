@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Comacode - Terminal Screen</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ===== DESIGN TOKENS ===== */
+        :root {
+            --bg-base: #1E1E2E;
+            --bg-mantle: #181825;
+            --bg-crust: #11111B;
+            --text: #CDD6F4;
+            --text-subtle: #A6ADC8;
+            --text-muted: #6C7086;
+            --accent-purple: #C678DD;
+            --accent-green: #98C379;
+            --accent-blue: #61AFEF;
+            --accent-red: #E06C75;
+
+            --safe-top: env(safe-area-inset-top, 16px);
+            --safe-bottom: env(safe-area-inset-bottom, 16px);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-base);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ===== TERMINAL HEADER ===== */
+        .terminal-header {
+            height: calc(48px + var(--safe-top));
+            padding-top: var(--safe-top);
+            padding-left: 12px;
+            padding-right: 12px;
+            background: var(--bg-mantle);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            flex-shrink: 0;
+        }
+
+        .hostname {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .session-info {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .header-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: transparent;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-subtle);
+            cursor: pointer;
+        }
+
+        .header-btn:active {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* ===== TERMINAL OUTPUT ===== */
+        .terminal-output {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px;
+            font-size: 13px;
+            line-height: 1.4;
+            background: var(--bg-base);
+        }
+
+        .terminal-line {
+            margin-bottom: 2px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* Syntax highlighting */
+        .syn-prompt { color: var(--accent-green); font-weight: 600; }
+        .syn-path { color: var(--accent-blue); }
+        .syn-git { color: var(--accent-purple); }
+        .syn-cmd { color: var(--text); }
+        .syn-comment { color: var(--text-muted); font-style: italic; }
+        .syn-keyword { color: var(--accent-purple); }
+        .syn-string { color: var(--accent-green); }
+        .syn-number { color: #D19A66; }
+        .syn-error { color: var(--accent-red); }
+        .syn-func { color: var(--accent-blue); }
+
+        .cursor-line {
+            display: flex;
+            align-items: center;
+        }
+
+        .cursor {
+            width: 8px;
+            height: 16px;
+            background: var(--accent-purple);
+            animation: blink 1s step-end infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        /* ===== KEYS BAR ===== */
+        .keys-bar {
+            height: 48px;
+            background: var(--bg-mantle);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 12px;
+            overflow-x: auto;
+            flex-shrink: 0;
+        }
+
+        .keys-bar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .terminal-key {
+            min-width: 48px;
+            height: 32px;
+            padding: 0 12px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .terminal-key:active {
+            background: var(--accent-purple);
+            color: #fff;
+        }
+
+        .terminal-key.modifier {
+            background: rgba(198, 120, 221, 0.15);
+            color: var(--accent-purple);
+        }
+
+        .terminal-key.modifier.active {
+            background: var(--accent-purple);
+            color: #fff;
+        }
+
+        .terminal-key.wide {
+            min-width: 60px;
+        }
+
+        .key-spacer {
+            width: 4px;
+            flex-shrink: 0;
+        }
+
+        /* ===== KEYBOARD TOGGLE ===== */
+        .keyboard-toggle {
+            position: fixed;
+            bottom: calc(48px + var(--safe-bottom) + 12px);
+            right: 16px;
+            width: 48px;
+            height: 48px;
+            background: var(--accent-purple);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            box-shadow: 0 4px 20px rgba(198, 120, 221, 0.4);
+            cursor: pointer;
+            z-index: 100;
+        }
+
+        /* ===== VIRTUAL KEYBOARD (hidden by default) ===== */
+        .virtual-keyboard {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: calc(216px + var(--safe-bottom));
+            padding-bottom: var(--safe-bottom);
+            background: var(--bg-crust);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+            padding: 8px;
+            z-index: 200;
+        }
+
+        .virtual-keyboard--visible {
+            display: block;
+        }
+
+        .keyboard-row {
+            display: flex;
+            justify-content: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .v-key {
+            min-width: 28px;
+            height: 38px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 5px;
+            font-size: 14px;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            max-width: 36px;
+        }
+
+        .v-key.wide {
+            max-width: 56px;
+            flex: 1.5;
+        }
+
+        .v-key.space {
+            max-width: 200px;
+            flex: 5;
+        }
+
+        /* ===== ANNOTATIONS ===== */
+        .annotation {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11px;
+            color: var(--text-subtle);
+            max-width: 200px;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        .annotation::before {
+            content: '';
+            position: absolute;
+            width: 1px;
+            background: rgba(198, 120, 221, 0.5);
+        }
+
+        .annotation--1 {
+            top: 70px;
+            right: 16px;
+        }
+        .annotation--1::before {
+            bottom: 100%;
+            right: 20%;
+            height: 20px;
+        }
+
+        .annotation--2 {
+            top: 50%;
+            left: 16px;
+        }
+        .annotation--2::before {
+            right: 100%;
+            top: 30%;
+            height: 1px;
+            width: 12px;
+        }
+
+        .annotation--3 {
+            bottom: 100px;
+            right: 80px;
+        }
+        .annotation--3::before {
+            top: 100%;
+            left: 30%;
+            height: 30px;
+        }
+
+        .annotations-toggle {
+            position: fixed;
+            top: calc(var(--safe-top) + 16px);
+            right: 16px;
+            background: rgba(198, 120, 221, 0.2);
+            border: 1px solid rgba(198, 120, 221, 0.3);
+            color: var(--accent-purple);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            cursor: pointer;
+            z-index: 1001;
+        }
+
+        .annotations-hidden .annotation {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <button class="annotations-toggle" onclick="document.body.classList.toggle('annotations-hidden')">Toggle</button>
+
+    <!-- Terminal Header -->
+    <header class="terminal-header">
+        <div class="header-left">
+            <div class="status-indicator"></div>
+            <div>
+                <div class="hostname">MacBook Pro</div>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="header-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+            </button>
+            <button class="header-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>
+                </svg>
+            </button>
+            <button class="header-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Terminal Output -->
+    <main class="terminal-output" id="terminal">
+        <div class="terminal-line"><span class="syn-comment">Welcome to Comacode Terminal</span></div>
+        <div class="terminal-line"><span class="syn-comment">Connected via QUIC • Zero-latency mode</span></div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line"><span class="syn-prompt">khoa@MacBook-Pro</span> <span class="syn-path">~/dev/comacode</span> <span class="syn-git">(main)</span> <span class="syn-cmd">$</span> npm run dev</div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line">  <span class="syn-keyword">comacode</span>@1.0.0 <span class="syn-keyword">dev</span></div>
+        <div class="terminal-line">  <span class="syn-func">nodemon</span> src/index.js</div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line">[nodemon] <span class="syn-number">2.0.22</span> starting...</div>
+        <div class="terminal-line">[nodemon] reading config <span class="syn-string">nodemon.json</span></div>
+        <div class="terminal-line">[nodemon] watching path(s): <span class="syn-string">**/*</span></div>
+        <div class="terminal-line">[nodemon] watching extensions: <span class="syn-string">js,json</span></div>
+        <div class="terminal-line">[nodemon] starting <span class="syn-string">node src/index.js</span></div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line"><span class="syn-string">Server running on http://localhost:3000</span></div>
+        <div class="terminal-line"><span class="syn-string">Ready for connections</span></div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line cursor-line">
+            <span class="syn-prompt">khoa@MacBook-Pro</span> <span class="syn-path">~/dev/comacode</span> <span class="syn-git">(main)</span> <span class="syn-cmd">$</span> <span class="cursor"></span>
+        </div>
+    </main>
+
+    <!-- Keys Bar -->
+    <div class="keys-bar">
+        <div class="terminal-key modifier">Esc</div>
+        <div class="key-spacer"></div>
+        <div class="terminal-key modifier" onclick="this.classList.toggle('active')">Tab</div>
+        <div class="terminal-key wide">Ctrl</div>
+        <div class="terminal-key wide">Alt</div>
+        <div class="key-spacer"></div>
+        <div class="terminal-key">↑</div>
+        <div class="terminal-key">↓</div>
+        <div class="terminal-key">←</div>
+        <div class="terminal-key">→</div>
+        <div class="key-spacer"></div>
+        <div class="terminal-key modifier" onclick="this.classList.toggle('active')">⇧</div>
+    </div>
+
+    <!-- Keyboard Toggle FAB -->
+    <div class="keyboard-toggle" onclick="toggleKeyboard()">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M6 12h.01"/><path d="M10 12h.01"/><path d="M14 12h.01"/><path d="M18 12h.01"/><path d="M8 16h8"/>
+        </svg>
+    </div>
+
+    <!-- Virtual Keyboard -->
+    <div class="virtual-keyboard" id="keyboard">
+        <div class="keyboard-row">
+            <div class="v-key">Esc</div>
+            <div class="v-key">1</div>
+            <div class="v-key">2</div>
+            <div class="v-key">3</div>
+            <div class="v-key">4</div>
+            <div class="v-key">5</div>
+            <div class="v-key">6</div>
+            <div class="v-key">7</div>
+            <div class="v-key">8</div>
+            <div class="v-key">9</div>
+            <div class="v-key">0</div>
+            <div class="v-key">-</div>
+            <div class="v-key">=</div>
+            <div class="v-key wide">⌫</div>
+        </div>
+        <div class="keyboard-row">
+            <div class="v-key wide">Tab</div>
+            <div class="v-key">q</div>
+            <div class="v-key">w</div>
+            <div class="v-key">e</div>
+            <div class="v-key">r</div>
+            <div class="v-key">t</div>
+            <div class="v-key">y</div>
+            <div class="v-key">u</div>
+            <div class="v-key">i</div>
+            <div class="v-key">o</div>
+            <div class="v-key">p</div>
+            <div class="v-key">[</div>
+            <div class="v-key">]</div>
+            <div class="v-key">\</div>
+        </div>
+        <div class="keyboard-row">
+            <div class="v-key wide" style="flex: 1.8">Caps</div>
+            <div class="v-key">a</div>
+            <div class="v-key">s</div>
+            <div class="v-key">d</div>
+            <div class="v-key">f</div>
+            <div class="v-key">g</div>
+            <div class="v-key">h</div>
+            <div class="v-key">j</div>
+            <div class="v-key">k</div>
+            <div class="v-key">l</div>
+            <div class="v-key">;</div>
+            <div class="v-key">'</div>
+            <div class="v-key wide">Enter</div>
+        </div>
+        <div class="keyboard-row">
+            <div class="v-key wide" style="flex: 2.2">⇧</div>
+            <div class="v-key">z</div>
+            <div class="v-key">x</div>
+            <div class="v-key">c</div>
+            <div class="v-key">v</div>
+            <div class="v-key">b</div>
+            <div class="v-key">n</div>
+            <div class="v-key">m</div>
+            <div class="v-key">,</div>
+            <div class="v-key">.</div>
+            <div class="v-key">/</div>
+            <div class="v-key wide" style="flex: 2.2">⇧</div>
+        </div>
+        <div class="keyboard-row">
+            <div class="v-key wide">Ctrl</div>
+            <div class="v-key wide">⌥</div>
+div>
+            <div class="v-key wide">⌘</div>
+            <div class="v-key space"></div>
+            <div class="v-key wide">⌘</div>
+            <div class="v-key wide">⌥</div>
+            <div class="v-key wide">Ctrl</div>
+        </div>
+    </div>
+
+    <!-- Annotations -->
+    <div class="annotation annotation--1">
+        <strong>Status Header</strong><br>
+        Green dot = connected. Hostname with current path. Quick actions (clear, copy, more) accessible.
+    </div>
+    <div class="annotation annotation--2">
+        <strong>Terminal Output</strong><br>
+        JetBrains Mono 13px. Syntax highlighting using Catppuccin colors. Smooth scroll to bottom on new output.
+    </div>
+    <div class="annotation annotation--3">
+        <strong>Keys Bar</strong><br>
+        Horizontal scrollable modifier keys. Esc, Tab, Ctrl, Alt arrows. Purple accent = modifier toggle state.
+    </div>
+
+    <script>
+        function toggleKeyboard() {
+            document.getElementById('keyboard').classList.toggle('virtual-keyboard--visible');
+        }
+    </script>
+</body>
+</html>

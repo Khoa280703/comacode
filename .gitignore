@@ -1,0 +1,44 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Flutter
+**/flutter/dart_tool/
+**/flutter/.flutter-plugins
+**/flutter/.flutter-plugins-dependencies
+**/flutter/packages
+**/flutter/pubspec.lock
+**/flutter/.pub-cache/
+**/flutter/.pub/
+
+# Dart
+.idea
+.dart_tool/
+_flutter_build_options.json
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude
+.claude/cache/
+.claude/session/
+.claude/logs/
+
+# Build
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log

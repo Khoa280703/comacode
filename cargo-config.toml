@@ -1,0 +1,22 @@
+# Copy this to .cargo/config.toml
+
+[build]
+target-dir = "target"
+
+[term]
+verbose = false
+color = "auto"
+
+[net]
+git-fetch-with-cli = true
+offline = false
+
+# Target-specific configurations
+[target.aarch64-apple-ios]
+rustflags = ["-C", "link-arg=-framework", "-C", "link-arg=UIKit"]
+
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-llog"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

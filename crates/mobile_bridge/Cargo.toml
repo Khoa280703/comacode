@@ -1,0 +1,27 @@
+[package]
+name = "mobile_bridge"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "mobile_bridge"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+# Core shared logic
+comacode-core = { path = "../core" }
+# FFI bridge
+flutter_rust_bridge = { workspace = true }
+# Workspace dependencies
+anyhow = { workspace = true }
+tracing = { workspace = true }
+# Serialization
+serde = { workspace = true }
+postcard = { workspace = true }
+# Async (optional for mobile)
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+# Bytes for zero-copy
+bytes = "1.8"

@@ -1,0 +1,16 @@
+[package]
+name = "cli_client"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "cli_client"
+path = "src/main.rs"
+
+[dependencies]
+comacode-core = { path = "../core" }
+anyhow = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+tokio = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }

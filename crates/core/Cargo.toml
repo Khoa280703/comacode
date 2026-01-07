@@ -1,0 +1,32 @@
+[package]
+name = "comacode-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Workspace dependencies
+serde = { workspace = true }
+postcard = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# Networking
+quinn = { workspace = true }
+# Terminal
+portable-pty = { workspace = true }
+# Async
+tokio = { workspace = true, features = ["sync"] }
+async-trait = "0.1"
+# Bytes for zero-copy
+bytes = "1.8"
+# Security (Phase E03)
+rand = { workspace = true }
+# Certificate & QR (Phase E04)
+qrcode = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
