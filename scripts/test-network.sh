@@ -116,7 +116,7 @@ echo ""
 echo "📡 Step 4: Verifying message protocol..."
 
 # Check hostagent logs for connection
-if grep -q "Client connected" "$HOSTAGENT_LOG"; then
+if grep -q "Connection from" "$HOSTAGENT_LOG"; then
     echo -e "${GREEN}✅ Hostagent logged client connection${NC}"
 else
     echo -e "${YELLOW}⚠️  No client connection log found${NC}"
