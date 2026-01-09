@@ -287,6 +287,18 @@ impl QuicServer {
                         break;
                     }
 
+                    // Log input for debugging (printable chars only)
+                    if let Ok(text) = std::str::from_utf8(&data) {
+                        let printable: String = text.chars().filter(|c| c.is_ascii() && !c.is_ascii_control()).collect();
+                        if !printable.is_empty() {
+                            tracing::info!("Input: session={:?} data={:?}", session_id, printable);
+                        } else if data.contains(&b'\n') {
+                            tracing::info!("Input: session={:?} data=<newline>", session_id);
+                        } else if data.contains(&b'\r') {
+                            tracing::info!("Input: session={:?} data=<CR>", session_id);
+                        }
+                    }
+
                     if let Some(id) = session_id {
                         // Write raw bytes directly to PTY
                         if let Err(e) = session_mgr.write_to_session(id, &data).await {
