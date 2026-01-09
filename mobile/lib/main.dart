@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme.dart';
 import 'features/connection/home_page.dart';
+import 'bridge/frb_generated.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Initialize flutter_rust_bridge before using FFI
+  await RustLib.init();
   runApp(
     const ProviderScope(
       child: ComacodeApp(),

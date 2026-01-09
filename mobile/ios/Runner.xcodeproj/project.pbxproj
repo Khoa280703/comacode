@@ -15,7 +15,7 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
-		EB1EC705FAE6AE69ECF2D3D0 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD474AE4DB6A1CCA1DD79E3A /* Pods_Runner.framework */; };
+		CCE29B8BA0CF7153AF30EE2C /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CD474AE4DB6A1CCA1DD79E3A /* Pods_Runner.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,7 +80,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EB1EC705FAE6AE69ECF2D3D0 /* Pods_Runner.framework in Frameworks */,
+				CCE29B8BA0CF7153AF30EE2C /* Pods_Runner.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -97,7 +97,6 @@
 				DBF809A9BE16D9F4D1D22163 /* Pods-RunnerTests.release.xcconfig */,
 				E61FAF48C7EB9CAB130BDA4F /* Pods-RunnerTests.profile.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};

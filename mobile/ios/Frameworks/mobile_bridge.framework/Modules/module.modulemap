@@ -1,0 +1,4 @@
+framework module mobile_bridge {
+    header "mobile_bridge.h"
+    export *
+}
