@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
     // stdin_task: different behavior based on raw mode availability
     let mut stdin_task = if raw_mode_enabled {
         // === RAW MODE: byte-by-byte for interactive shell ===
-        // Send raw bytes, PTY handles everything including backspace
+        // Filter backspace locally, send other bytes to PTY
         tokio::task::spawn_blocking(move || {
             let mut stdin = std::io::stdin();
             let mut buf = [0u8; 1024];
@@ -207,20 +207,29 @@ async fn main() -> Result<()> {
                     Ok(n) => {
                         let data = &buf[..n];
 
-                        // Send raw bytes immediately - PTY handles all control chars
-                        let msg = NetworkMessage::Input {
-                            data: data.to_vec(),
-                        };
-                        if let Ok(encoded) = MessageCodec::encode(&msg) {
-                            if stdin_tx.blocking_send(encoded).is_err() {
-                                break;
+                        // Filter out backspace bytes - handle locally, don't send to PTY
+                        // Backspace in raw mode would cause PTY to send back erase sequences
+                        let filtered_data: Vec<u8> = data.iter()
+                            .filter(|&&b| b != 0x08 && b != 0x7F) // Remove BS (0x08) and DEL (0x7F)
+                            .copied()
+                            .collect();
+
+                        // Send filtered bytes
+                        if !filtered_data.is_empty() {
+                            let msg = NetworkMessage::Input {
+                                data: filtered_data,
+                            };
+                            if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                if stdin_tx.blocking_send(encoded).is_err() {
+                                    break;
+                                }
                             }
                         }
 
                         // Track for /exit detection (with backspace handling)
                         for &byte in data {
                             match byte {
-                                0x08 | 0x7F => { // Backspace (BS or DEL)
+                                0x08 | 0x7F => { // Backspace (BS or DEL) - handled locally
                                     line_buf.pop();
                                 }
                                 b'\n' | b'\r' => { // Line ending - check for /exit
