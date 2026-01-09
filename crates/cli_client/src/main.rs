@@ -166,6 +166,9 @@ async fn main() -> Result<()> {
 
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(32);
 
+    // Track if raw mode is enabled for stdin_task
+    let raw_mode_enabled = _guard.is_some();
+
     // SIGWINCH handler for dynamic terminal resize
     let resize_tx = stdin_tx.clone();
     tokio::spawn(async move {
@@ -186,41 +189,79 @@ async fn main() -> Result<()> {
             }
         }
     });
-    let mut stdin_task = tokio::task::spawn_blocking(move || {
-        use std::io::BufRead;
 
-        // When raw mode is unavailable, use line-buffered reading
-        // This allows /exit command interception to work correctly
-        let stdin = std::io::stdin();
-        let reader = stdin.lock();
-        let mut lines = reader.lines();
+    // stdin_task: different behavior based on raw mode availability
+    let mut stdin_task = if raw_mode_enabled {
+        // === RAW MODE: byte-by-byte for interactive shell ===
+        // Accumulate lines to detect /exit command
+        tokio::task::spawn_blocking(move || {
+            let mut stdin = std::io::stdin();
+            let mut buf = [0u8; 1024];
+            let mut line_buf = Vec::new(); // Accumulate line for /exit detection
 
-        loop {
-            match lines.next() {
-                None => break, // EOF
-                Some(Ok(line)) => {
-                    // Check for /exit command
-                    if line.trim() == "/exit" {
-                        // Give server time to process pending commands before closing
-                        // Shell commands can take time to execute and send output
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        break;
-                    }
-                    // Send line with newline (remote shell expects it)
-                    let full_line = format!("{}\n", line);
-                    let msg = NetworkMessage::Input {
-                        data: full_line.into_bytes(),
-                    };
-                    if let Ok(encoded) = MessageCodec::encode(&msg) {
-                        if stdin_tx.blocking_send(encoded).is_err() {
+            loop {
+                match stdin.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let data = &buf[..n];
+
+                        // Check for /exit in accumulated line
+                        line_buf.extend_from_slice(data);
+                        if line_buf.contains(&b'/') && line_buf.windows(5).any(|w| w == b"/exit") {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
                             break;
                         }
+                        // Clear line buffer on newline
+                        if data.contains(&b'\n') {
+                            line_buf.clear();
+                        }
+
+                        // Send raw bytes
+                        let msg = NetworkMessage::Input {
+                            data: data.to_vec(),
+                        };
+                        if let Ok(encoded) = MessageCodec::encode(&msg) {
+                            if stdin_tx.blocking_send(encoded).is_err() {
+                                break;
+                            }
+                        }
                     }
+                    Err(_) => break,
                 }
-                Some(Err(_)) => break,
             }
-        }
-    });
+        })
+    } else {
+        // === LINE-BUFFERED: for piped input / non-TTY ===
+        tokio::task::spawn_blocking(move || {
+            use std::io::BufRead;
+
+            let stdin = std::io::stdin();
+            let reader = stdin.lock();
+            let mut lines = reader.lines();
+
+            loop {
+                match lines.next() {
+                    None => break,
+                    Some(Ok(line)) => {
+                        if line.trim() == "/exit" {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            break;
+                        }
+                        let full_line = format!("{}\n", line);
+                        let msg = NetworkMessage::Input {
+                            data: full_line.into_bytes(),
+                        };
+                        if let Ok(encoded) = MessageCodec::encode(&msg) {
+                            if stdin_tx.blocking_send(encoded).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(_)) => break,
+                }
+            }
+        })
+    };
 
     let mut stdin_eof = false;
 
