@@ -182,7 +182,7 @@ impl QuicServer {
 
     /// Handle single bi-directional stream
     async fn handle_stream(
-        mut send: quinn::SendStream,
+        send: quinn::SendStream,
         mut recv: quinn::RecvStream,
         session_mgr: Arc<SessionManager>,
         token_store: Arc<TokenStore>,
@@ -197,226 +197,233 @@ impl QuicServer {
         // Share send stream for PTY output forwarding
         let send_shared = Arc::new(Mutex::new(send));
 
-        // Message receive loop
-        let mut read_buf = vec![0u8; 1024];
+        // Message receive loop - read length-prefixed messages properly
+        let mut len_buf = [0u8; 4];
 
         loop {
-            // Read from stream
-            match recv.read(&mut read_buf).await? {
-                Some(n) if n > 0 => {
-                    // Parse message
-                    let msg = match MessageCodec::decode(&read_buf[..n]) {
-                        Ok(msg) => msg,
-                        Err(e) => {
-                            tracing::error!("Failed to decode message: {}", e);
-                            continue;
-                        }
+            // Read 4-byte length prefix
+            recv.read_exact(&mut len_buf).await
+                .map_err(|_| anyhow::anyhow!("Stream closed while reading length"))?;
+
+            let len = u32::from_be_bytes(len_buf) as usize;
+
+            // Validate size (prevent DoS)
+            if len > 16 * 1024 * 1024 {
+                tracing::error!("Message too large: {} bytes", len);
+                break;
+            }
+
+            // Read payload
+            let mut data = vec![0u8; len];
+            recv.read_exact(&mut data).await
+                .map_err(|_| anyhow::anyhow!("Stream closed while reading payload"))?;
+
+            // Parse message
+            let msg = match MessageCodec::decode(&data) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::error!("Failed to decode message: {}", e);
+                    continue;
+                }
+            };
+
+            tracing::debug!("Received message: {:?}", std::mem::discriminant(&msg));
+
+            // Handle message
+            match msg {
+                NetworkMessage::Hello { ref protocol_version, ref app_version, auth_token, .. } => {
+                    tracing::info!("Client hello protocol_version={}, app_version={}", protocol_version, app_version);
+
+                    // Phase 07-A: AUTH VALIDATION (P0 fix)
+                    let token_valid = if let Some(token) = auth_token {
+                        token_store.validate(&token).await
+                    } else {
+                        tracing::warn!("No auth token provided from {}", peer_addr);
+                        false
                     };
 
-                    tracing::debug!("Received message: {:?}", std::mem::discriminant(&msg));
+                    if !token_valid {
+                        tracing::warn!("Auth failed for IP: {}", peer_addr);
 
-                    // Handle message
-                    match msg {
-                        NetworkMessage::Hello { ref protocol_version, ref app_version, auth_token, .. } => {
-                            tracing::info!("Client hello protocol_version={}, app_version={}", protocol_version, app_version);
+                        // Record failure for rate limiting
+                        let _ = rate_limiter.record_auth_failure(peer_addr.ip()).await;
 
-                            // Phase 07-A: AUTH VALIDATION (P0 fix)
-                            let token_valid = if let Some(token) = auth_token {
-                                token_store.validate(&token).await
-                            } else {
-                                tracing::warn!("No auth token provided from {}", peer_addr);
-                                false
-                            };
+                        // Send error response and close
+                        let mut send_lock = send_shared.lock().await;
+                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
+                        break;
+                    }
 
-                            if !token_valid {
-                                tracing::warn!("Auth failed for IP: {}", peer_addr);
+                    // Reset auth failures on success
+                    rate_limiter.reset_auth_failures(peer_addr.ip()).await;
+                    authenticated = true;
+                    tracing::info!("Client authenticated: {}", peer_addr);
 
-                                // Record failure for rate limiting
-                                let _ = rate_limiter.record_auth_failure(peer_addr.ip()).await;
+                    // Validate protocol version
+                    if let Err(e) = msg.validate_handshake() {
+                        tracing::error!("Handshake validation failed: {}", e);
+                        // Send error and close
+                        let mut send_lock = send_shared.lock().await;
+                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
+                        break;
+                    }
 
-                                // Send error response and close
-                                let mut send_lock = send_shared.lock().await;
-                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
-                                break;
-                            }
+                    // Respond with Hello
+                    let response = NetworkMessage::hello(None);
+                    let mut send_lock = send_shared.lock().await;
+                    Self::send_message(&mut *send_lock, &response).await?;
+                }
+                NetworkMessage::Input { data } => {
+                    // Raw input bytes - pure passthrough to PTY
+                    // PTY handles echo & signal generation (Ctrl+C = SIGINT)
+                    if !authenticated {
+                        tracing::warn!("Input received before authentication from {}", peer_addr);
+                        break;
+                    }
 
-                            // Reset auth failures on success
-                            rate_limiter.reset_auth_failures(peer_addr.ip()).await;
-                            authenticated = true;
-                            tracing::info!("Client authenticated: {}", peer_addr);
-
-                            // Validate protocol version
-                            if let Err(e) = msg.validate_handshake() {
-                                tracing::error!("Handshake validation failed: {}", e);
-                                // Send error and close
-                                let mut send_lock = send_shared.lock().await;
-                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
-                                break;
-                            }
-
-                            // Respond with Hello
-                            let response = NetworkMessage::hello(None);
-                            let mut send_lock = send_shared.lock().await;
-                            Self::send_message(&mut *send_lock, &response).await?;
+                    if let Some(id) = session_id {
+                        // Write raw bytes directly to PTY
+                        if let Err(e) = session_mgr.write_to_session(id, &data).await {
+                            tracing::error!("Failed to write input to PTY: {}", e);
                         }
-                        NetworkMessage::Input { data } => {
-                            // Raw input bytes - pure passthrough to PTY
-                            // PTY handles echo & signal generation (Ctrl+C = SIGINT)
-                            if !authenticated {
-                                tracing::warn!("Input received before authentication from {}", peer_addr);
-                                break;
-                            }
+                    } else {
+                        // Spawn new session with terminal configuration
+                        let mut config = comacode_core::terminal::TerminalConfig::default();
 
-                            if let Some(id) = session_id {
-                                // Write raw bytes directly to PTY
-                                if let Err(e) = session_mgr.write_to_session(id, &data).await {
-                                    tracing::error!("Failed to write input to PTY: {}", e);
-                                }
-                            } else {
-                                // Spawn new session with terminal configuration
-                                let mut config = comacode_core::terminal::TerminalConfig::default();
+                        // Apply terminal size from earlier Resize message
+                        if let Some((rows, cols)) = pending_resize {
+                            config.rows = rows;
+                            config.cols = cols;
+                            // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
+                            config.env.push(("COLUMNS".to_string(), cols.to_string()));
+                            config.env.push(("LINES".to_string(), rows.to_string()));
+                            // Hide % marker if Zsh thinks line is incomplete
+                            config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+                        }
 
-                                // Apply terminal size from earlier Resize message
+                        match session_mgr.create_session(config).await {
+                            Ok(id) => {
+                                session_id = Some(id);
+                                tracing::info!("Created session {} for connection", id);
+
+                                // Resize PTY to match terminal size
+                                // This syncs the PTY driver with env vars
                                 if let Some((rows, cols)) = pending_resize {
-                                    config.rows = rows;
-                                    config.cols = cols;
-                                    // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
-                                    config.env.push(("COLUMNS".to_string(), cols.to_string()));
-                                    config.env.push(("LINES".to_string(), rows.to_string()));
-                                    // Hide % marker if Zsh thinks line is incomplete
-                                    config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+                                    tracing::info!("Resize PTY: {}x{}", rows, cols);
+                                    let _ = session_mgr.resize_session(id, rows, cols).await;
                                 }
 
-                                match session_mgr.create_session(config).await {
-                                    Ok(id) => {
-                                        session_id = Some(id);
-                                        tracing::info!("Created session {} for connection", id);
-
-                                        // Resize PTY to match terminal size
-                                        // This syncs the PTY driver with env vars
-                                        if let Some((rows, cols)) = pending_resize {
-                                            tracing::info!("Resize PTY: {}x{}", rows, cols);
-                                            let _ = session_mgr.resize_session(id, rows, cols).await;
+                                // Spawn PTY→QUIC pump task
+                                if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
+                                    let send_clone = send_shared.clone();
+                                    pty_task = Some(tokio::spawn(async move {
+                                        let mut send_lock = send_clone.lock().await;
+                                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
+                                            tracing::error!("PTY→QUIC pump error: {}", e);
                                         }
+                                        tracing::debug!("PTY→QUIC pump completed");
+                                    }));
+                                    tracing::info!("PTY→QUIC pump task spawned for session {}", id);
+                                } else {
+                                    tracing::warn!("Failed to get PTY reader for session {}", id);
+                                }
 
-                                        // Spawn PTY→QUIC pump task
-                                        if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
-                                            let send_clone = send_shared.clone();
-                                            pty_task = Some(tokio::spawn(async move {
-                                                let mut send_lock = send_clone.lock().await;
-                                                if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
-                                                    tracing::error!("PTY→QUIC pump error: {}", e);
-                                                }
-                                                tracing::debug!("PTY→QUIC pump completed");
-                                            }));
-                                            tracing::info!("PTY→QUIC pump task spawned for session {}", id);
-                                        } else {
-                                            tracing::warn!("Failed to get PTY reader for session {}", id);
-                                        }
-
-                                        // Write initial data if non-empty
-                                        // Empty Input = eager spawn trigger, don't write to PTY
-                                        if !data.is_empty() {
-                                            let _ = session_mgr.write_to_session(id, &data).await;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to create session: {}", e);
-                                    }
+                                // Write initial data if non-empty
+                                // Empty Input = eager spawn trigger, don't write to PTY
+                                if !data.is_empty() {
+                                    let _ = session_mgr.write_to_session(id, &data).await;
                                 }
                             }
-                        }
-                        NetworkMessage::Command(cmd) => {
-                            // Legacy: Command with String text
-                            // Still supported for backward compatibility
-                            // Use Input instead for raw byte passthrough
-                            if !authenticated {
-                                tracing::warn!("Command received before authentication from {}", peer_addr);
-                                break;
+                            Err(e) => {
+                                tracing::error!("Failed to create session: {}", e);
                             }
-
-                            // Forward command text to PTY
-                            if let Some(id) = session_id {
-                                if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
-                                    tracing::error!("Failed to write to PTY: {}", e);
-                                }
-                            } else {
-                                // Spawn new session with terminal configuration (legacy Command path)
-                                let mut config = comacode_core::terminal::TerminalConfig::default();
-
-                                if let Some((rows, cols)) = pending_resize.take() {
-                                    config.rows = rows;
-                                    config.cols = cols;
-                                    // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
-                                    config.env.push(("COLUMNS".to_string(), cols.to_string()));
-                                    config.env.push(("LINES".to_string(), rows.to_string()));
-                                    config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
-                                }
-
-                                match session_mgr.create_session(config).await {
-                                    Ok(id) => {
-                                        session_id = Some(id);
-                                        tracing::info!("Created session {} for connection (legacy Command)", id);
-
-                                        // Resize PTY to match terminal size
-                                        if let Some((rows, cols)) = pending_resize {
-                                            let _ = session_mgr.resize_session(id, rows, cols).await;
-                                        }
-
-                                        if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
-                                            let send_clone = send_shared.clone();
-                                            pty_task = Some(tokio::spawn(async move {
-                                                let mut send_lock = send_clone.lock().await;
-                                                if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
-                                                    tracing::error!("PTY→QUIC pump error: {}", e);
-                                                }
-                                                tracing::debug!("PTY→QUIC pump completed");
-                                            }));
-                                            tracing::info!("PTY→QUIC pump task spawned for session {}", id);
-                                        }
-
-                                        // Forward command only if non-empty
-                                        if !cmd.text.is_empty() {
-                                            let _ = session_mgr.write_to_session(id, cmd.text.as_bytes()).await;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to create session: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                        NetworkMessage::Ping { timestamp } => {
-                            // Respond with Pong
-                            let response = NetworkMessage::pong(timestamp);
-                            let mut send_lock = send_shared.lock().await;
-                            Self::send_message(&mut *send_lock, &response).await?;
-                        }
-                        NetworkMessage::Resize { rows, cols } => {
-                            if let Some(id) = session_id {
-                                if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
-                                    tracing::error!("Failed to resize PTY: {}", e);
-                                }
-                            } else {
-                                // Store pending resize for when session is created
-                                pending_resize = Some((rows, cols));
-                                tracing::debug!("Stored pending resize: {}x{}", rows, cols);
-                            }
-                        }
-                        NetworkMessage::Close => {
-                            tracing::info!("Received Close message");
-                            break;
-                        }
-                        _ => {
-                            tracing::warn!("Unhandled message type");
                         }
                     }
                 }
-                Some(0) | None => {
-                    tracing::debug!("Stream closed by client");
+                NetworkMessage::Command(cmd) => {
+                    // Legacy: Command with String text
+                    // Still supported for backward compatibility
+                    // Use Input instead for raw byte passthrough
+                    if !authenticated {
+                        tracing::warn!("Command received before authentication from {}", peer_addr);
+                        break;
+                    }
+
+                    // Forward command text to PTY
+                    if let Some(id) = session_id {
+                        if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
+                            tracing::error!("Failed to write to PTY: {}", e);
+                        }
+                    } else {
+                        // Spawn new session with terminal configuration (legacy Command path)
+                        let mut config = comacode_core::terminal::TerminalConfig::default();
+
+                        if let Some((rows, cols)) = pending_resize.take() {
+                            config.rows = rows;
+                            config.cols = cols;
+                            // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
+                            config.env.push(("COLUMNS".to_string(), cols.to_string()));
+                            config.env.push(("LINES".to_string(), rows.to_string()));
+                            config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+                        }
+
+                        match session_mgr.create_session(config).await {
+                            Ok(id) => {
+                                session_id = Some(id);
+                                tracing::info!("Created session {} for connection (legacy Command)", id);
+
+                                // Resize PTY to match terminal size
+                                if let Some((rows, cols)) = pending_resize {
+                                    let _ = session_mgr.resize_session(id, rows, cols).await;
+                                }
+
+                                if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
+                                    let send_clone = send_shared.clone();
+                                    pty_task = Some(tokio::spawn(async move {
+                                        let mut send_lock = send_clone.lock().await;
+                                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
+                                            tracing::error!("PTY→QUIC pump error: {}", e);
+                                        }
+                                        tracing::debug!("PTY→QUIC pump completed");
+                                    }));
+                                    tracing::info!("PTY→QUIC pump task spawned for session {}", id);
+                                }
+
+                                // Forward command only if non-empty
+                                if !cmd.text.is_empty() {
+                                    let _ = session_mgr.write_to_session(id, cmd.text.as_bytes()).await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create session: {}", e);
+                            }
+                        }
+                    }
+                }
+                NetworkMessage::Ping { timestamp } => {
+                    // Respond with Pong
+                    let response = NetworkMessage::pong(timestamp);
+                    let mut send_lock = send_shared.lock().await;
+                    Self::send_message(&mut *send_lock, &response).await?;
+                }
+                NetworkMessage::Resize { rows, cols } => {
+                    if let Some(id) = session_id {
+                        if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
+                            tracing::error!("Failed to resize PTY: {}", e);
+                        }
+                    } else {
+                        // Store pending resize for when session is created
+                        pending_resize = Some((rows, cols));
+                        tracing::debug!("Stored pending resize: {}x{}", rows, cols);
+                    }
+                }
+                NetworkMessage::Close => {
+                    tracing::info!("Received Close message");
                     break;
                 }
-                _ => {}
+                _ => {
+                    tracing::warn!("Unhandled message type");
+                }
             }
         }
 

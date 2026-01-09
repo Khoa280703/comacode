@@ -1,11 +1,13 @@
 //! QUIC client for Comacode remote terminal
 //! Features: SSH-like raw mode, eager spawn, proper resize
 
+mod message_reader;
 mod raw_mode;
 
 use anyhow::Result;
 use clap::Parser;
 use comacode_core::{AuthToken, MessageCodec, NetworkMessage, TerminalEvent};
+use message_reader::MessageReader;
 use crossterm::terminal::size;
 use quinn::{ClientConfig, Endpoint};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -100,17 +102,13 @@ async fn main() -> Result<()> {
 
     let connecting = endpoint.connect(args.connect, "comacode.local")?;
     let connection = connecting.await?;
-    let (mut send, mut recv) = connection.open_bi().await?;
+    let (mut send, recv) = connection.open_bi().await?;
 
-    // Handshake
+    // Handshake: Send Hello, read response with proper framing
     let hello = NetworkMessage::hello(Some(token));
     send.write_all(&MessageCodec::encode(&hello)?).await?;
-    let mut buf = vec![0u8; 4096];
-    let n = match recv.read(&mut buf).await? {
-        Some(n) => n,
-        None => return Err(anyhow::anyhow!("Closed")),
-    };
-    let _ = MessageCodec::decode(&buf[..n])?;
+    let mut reader = MessageReader::new(recv);
+    let _ = reader.read_message().await?;
     println!("Authenticated");
 
     // ===== 1. BANNER & RAW MODE =====
@@ -177,7 +175,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    let mut recv_buf = vec![0u8; 8192];
     let mut stdin_eof = false;
 
     loop {
@@ -186,23 +183,20 @@ async fn main() -> Result<()> {
             Some(encoded) = stdin_rx.recv() => {
                 if send.write_all(&encoded).await.is_err() { break; }
             }
-            result = recv.read(&mut recv_buf) => {
+            // Use MessageReader for proper framing
+            result = reader.read_message() => {
                 match result {
-                    Ok(Some(n)) => {
-                        // Decode length-prefixed message from buffer
-                        if let Ok(msg) = MessageCodec::decode(&recv_buf[..n]) {
-                            match msg {
-                                NetworkMessage::Event(TerminalEvent::Output { data }) => {
-                                    let mut stdout = std::io::stdout();
-                                    let _ = stdout.write_all(&data);
-                                    let _ = stdout.flush();
-                                }
-                                NetworkMessage::Close => break,
-                                _ => {}
+                    Ok(msg) => {
+                        match msg {
+                            NetworkMessage::Event(TerminalEvent::Output { data }) => {
+                                let mut stdout = std::io::stdout();
+                                let _ = stdout.write_all(&data);
+                                let _ = stdout.flush();
                             }
+                            NetworkMessage::Close => break,
+                            _ => {}
                         }
                     }
-                    Ok(None) => break,
                     Err(_) => break,
                 }
             }
