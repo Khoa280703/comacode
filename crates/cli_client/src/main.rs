@@ -207,29 +207,21 @@ async fn main() -> Result<()> {
                     Ok(n) => {
                         let data = &buf[..n];
 
-                        // Filter out backspace bytes - handle locally, don't send to PTY
-                        // Backspace in raw mode would cause PTY to send back erase sequences
-                        let filtered_data: Vec<u8> = data.iter()
-                            .filter(|&&b| b != 0x08 && b != 0x7F) // Remove BS (0x08) and DEL (0x7F)
-                            .copied()
-                            .collect();
-
-                        // Send filtered bytes
-                        if !filtered_data.is_empty() {
-                            let msg = NetworkMessage::Input {
-                                data: filtered_data,
-                            };
-                            if let Ok(encoded) = MessageCodec::encode(&msg) {
-                                if stdin_tx.blocking_send(encoded).is_err() {
-                                    break;
-                                }
+                        // Send ALL raw bytes to PTY - let PTY handle control chars (backspace, etc.)
+                        // PTY will echo back the correct response
+                        let msg = NetworkMessage::Input {
+                            data: data.to_vec(),
+                        };
+                        if let Ok(encoded) = MessageCodec::encode(&msg) {
+                            if stdin_tx.blocking_send(encoded).is_err() {
+                                break;
                             }
                         }
 
                         // Track for /exit detection (with backspace handling)
                         for &byte in data {
                             match byte {
-                                0x08 | 0x7F => { // Backspace (BS or DEL) - handled locally
+                                0x08 | 0x7F => { // Backspace (BS or DEL) - for /exit detection
                                     line_buf.pop();
                                 }
                                 b'\n' | b'\r' => { // Line ending - check for /exit
