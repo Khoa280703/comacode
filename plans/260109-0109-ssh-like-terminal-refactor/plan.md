@@ -1,7 +1,7 @@
 ---
 title: "SSH-like Terminal Refactor Plan"
 description: "Clean slate + refactor to SSH-like patterns, fix protocol framing, remove all debug code"
-status: in-progress
+status: completed
 priority: P0
 effort: 14h
 issue: terminal-refactor

@@ -1,7 +1,7 @@
 # SSH-like Terminal Refactor - Progress Report
 
 **Plan**: `260109-0109-ssh-like-terminal-refactor`
-**Status**: In Progress (4/5 phases complete)
+**Status**: ✅ Complete (5/5 phases)
 **Last Updated**: 2026-01-09
 
 ---
@@ -22,9 +22,9 @@ Clean slate refactor để fix terminal I/O theo pattern SSH, sửa protocol fra
 | 1 | Protocol Framing Fix | ✅ Done | 2026-01-09 | Added MessageReader, read_exact() pattern |
 | 2 | Client Cleanup | ✅ Done | 2026-01-09 | SIGWINCH handling, raw mode warning |
 | 3 | Server Cleanup | ✅ Done | 2026-01-09 | spawn_session_with_config() helper, handler cleanup |
-| 4 | PTY Pump Refactor | ⏳ Pending | - | Smart flush with 5ms latency |
+| 4 | PTY Pump Refactor | ✅ Done | 2026-01-09 | Documentation only - code already correct |
 
-**Overall Progress**: 80% (4/5 phases)
+**Overall Progress**: 100% (5/5 phases)
 
 ---
 

@@ -20,6 +20,7 @@ pub struct SessionManager {
     /// Active sessions (ID -> PTY)
     sessions: Arc<Mutex<HashMap<u64, Arc<Mutex<PtySession>>>>>,
     /// Output receivers (ID -> Receiver)
+    /// Note: Single-consumer design - receiver is removed when accessed
     outputs: Arc<Mutex<HashMap<u64, mpsc::Receiver<Bytes>>>>,
     /// Next session ID
     next_id: Arc<AtomicU64>,
@@ -168,6 +169,15 @@ impl SessionManager {
     /// Uses tokio utilities to convert the mpsc channel to AsyncRead.
     ///
     /// Returns None if session not found or receiver already taken.
+    ///
+    /// # Design Note
+    /// This is a single-consumer design - the receiver is removed from the HashMap
+    /// when first accessed. This is intentional because:
+    /// 1. Each session has exactly one PTY pump task
+    /// 2. mpsc::Receiver cannot be cloned
+    /// 3. The pump task takes ownership until session cleanup
+    ///
+    /// For multi-consumer support (e.g., logs + monitoring), use tokio::sync::broadcast.
     pub async fn get_pty_reader(&self, session_id: u64) -> Option<impl AsyncReadExt + Unpin + Send> {
         let mut outputs = self.outputs.lock().await;
         let rx = outputs.remove(&session_id)?;
