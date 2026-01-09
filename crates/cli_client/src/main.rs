@@ -148,19 +148,17 @@ async fn main() -> Result<()> {
         }
     };
 
-    // ===== 2. EXPLICIT SPAWN SEQUENCE (SSH-LIKE) =====
-    // Protocol: Hello → RequestPty → StartShell (explicit, no implicit triggers)
+    // ===== 2. EAGER SPAWN SEQUENCE (SSH-LIKE) =====
+    // Send Resize -> Empty Input to spawn session
+    if let Ok((cols, rows)) = size() {
+        let resize = NetworkMessage::Resize { rows, cols };
+        send.write_all(&MessageCodec::encode(&resize)?).await?;
+    }
 
-    // Get terminal size for PTY allocation
-    let (rows, cols) = size().unwrap_or((24, 80));
-
-    // RequestPty: Allocate PTY with correct size
-    let request_pty = NetworkMessage::request_pty(rows, cols);
-    send.write_all(&MessageCodec::encode(&request_pty)?).await?;
-
-    // StartShell: Start the shell process
-    let start_shell = NetworkMessage::start_shell();
-    send.write_all(&MessageCodec::encode(&start_shell)?).await?;
+    // Trigger Spawn: Send empty Input to spawn session on server
+    let spawn_trigger = NetworkMessage::Input { data: vec![] };
+    send.write_all(&MessageCodec::encode(&spawn_trigger)?)
+        .await?;
 
     // ===== 3. INTERACTIVE LOOP =====
     // Spawn stdin task immediately - no need to wait for prompt
@@ -195,7 +193,7 @@ async fn main() -> Result<()> {
     // stdin_task: different behavior based on raw mode availability
     let mut stdin_task = if raw_mode_enabled {
         // === RAW MODE: byte-by-byte for interactive shell ===
-        // Filter backspace locally, send other bytes to PTY
+        // Send immediately for real-time feedback, detect /exit on newline
         tokio::task::spawn_blocking(move || {
             let mut stdin = std::io::stdin();
             let mut buf = [0u8; 1024];
@@ -207,8 +205,7 @@ async fn main() -> Result<()> {
                     Ok(n) => {
                         let data = &buf[..n];
 
-                        // Send ALL raw bytes to PTY - let PTY handle control chars (backspace, etc.)
-                        // PTY will echo back the correct response
+                        // Send raw bytes immediately (real-time interaction)
                         let msg = NetworkMessage::Input {
                             data: data.to_vec(),
                         };
@@ -218,31 +215,28 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Track for /exit detection (with backspace handling)
+                        // Accumulate for /exit detection with backspace handling
                         for &byte in data {
                             match byte {
-                                0x08 | 0x7F => { // Backspace (BS or DEL) - for /exit detection
+                                0x08 | 0x7F => { // Backspace (BS or DEL)
                                     line_buf.pop();
                                 }
                                 b'\n' | b'\r' => { // Line ending - check for /exit
-                                    // Check if current line_buf (without newline) is /exit
-                                    if line_buf == b"/exit" {
-                                        // Send Close message and exit gracefully
-                                        let close_msg = NetworkMessage::Close;
-                                        if let Ok(encoded) = MessageCodec::encode(&close_msg) {
-                                            let _ = stdin_tx.blocking_send(encoded);
+                                    line_buf.push(byte);
+                                    let pos = line_buf.iter().position(|&b| b == b'\n' || b == b'\r');
+                                    if let Some(p) = pos {
+                                        let line = &line_buf[..p];
+                                        if line == b"/exit" {
+                                            std::thread::sleep(std::time::Duration::from_secs(2));
+                                            return;
                                         }
-                                        std::thread::sleep(std::time::Duration::from_millis(100));
-                                        return;
+                                        // Clear processed part
+                                        let skip = if p + 1 < line_buf.len() && line_buf[p + 1] == b'\n' { 2 } else { 1 };
+                                        line_buf = line_buf[p + skip..].to_vec();
                                     }
-                                    // Clear line_buf for next line
-                                    line_buf.clear();
                                 }
-                                _ => { // Regular char - add to buffer
-                                    // Only buffer reasonable length to prevent unbounded growth
-                                    if line_buf.len() < 1024 {
-                                        line_buf.push(byte);
-                                    }
+                                _ => {
+                                    line_buf.push(byte);
                                 }
                             }
                         }
@@ -265,12 +259,7 @@ async fn main() -> Result<()> {
                     None => break,
                     Some(Ok(line)) => {
                         if line.trim() == "/exit" {
-                            // Send Close message for graceful disconnect
-                            let close_msg = NetworkMessage::Close;
-                            if let Ok(encoded) = MessageCodec::encode(&close_msg) {
-                                let _ = stdin_tx.blocking_send(encoded);
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            std::thread::sleep(std::time::Duration::from_secs(2));
                             break;
                         }
                         let full_line = format!("{}\n", line);
