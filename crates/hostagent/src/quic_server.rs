@@ -214,12 +214,18 @@ impl QuicServer {
             }
 
             // Read payload
-            let mut data = vec![0u8; len];
-            recv.read_exact(&mut data).await
+            let mut payload = vec![0u8; len];
+            recv.read_exact(&mut payload).await
                 .map_err(|_| anyhow::anyhow!("Stream closed while reading payload"))?;
 
-            // Parse message
-            let msg = match MessageCodec::decode(&data) {
+            // Reconstruct full buffer: [length prefix][payload]
+            // MessageCodec::decode() expects the complete format
+            let mut full_buffer = Vec::with_capacity(4 + len);
+            full_buffer.extend_from_slice(&len_buf);
+            full_buffer.extend_from_slice(&payload);
+
+            // Parse message from full buffer
+            let msg = match MessageCodec::decode(&full_buffer) {
                 Ok(msg) => msg,
                 Err(e) => {
                     tracing::error!("Failed to decode message: {}", e);

@@ -29,11 +29,11 @@ updated: 2026-01-09
 | 1 | Protocol Framing Fix | ⚠️ Code Review | 3h | [phase-01](./phase-01-protocol-framing.md) |
 | 2 | Client Cleanup | Pending | 2.5h | [phase-02](./phase-02-client-cleanup.md) |
 | 3 | Server Cleanup | ✅ Done (2026-01-09) | 3h | [phase-03](./phase-03-server-cleanup.md) |
-| 4 | PTY Pump Refactor | Pending | 4h | [phase-04](./phase-04-pty-pump.md) |
+| 4 | PTY Pump Refactor | ✅ Done (2026-01-09) | 4h | [phase-04](./phase-04-pty-pump.md) |
 
 **Total Effort**: ~13.5 hours
 
-**Progress**: 80% (4/5 phases complete)
+**Progress**: 100% (5/5 phases complete)
 
 **Fine-tuned for 100% SSH-like**:
 - Phase 01: Added MessageReader helper for clean architecture

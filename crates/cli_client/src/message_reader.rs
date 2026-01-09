@@ -2,6 +2,8 @@
 //!
 //! Wraps framing logic to read complete messages from QUIC stream.
 //! Protocol format: [4-byte big-endian length][N-byte payload]
+//!
+//! Note: MessageCodec::decode() expects the full buffer including length prefix.
 
 use anyhow::Result;
 use comacode_core::{MessageCodec, NetworkMessage};
@@ -34,12 +36,18 @@ impl MessageReader {
         }
 
         // Read payload
-        let mut data = vec![0u8; len];
-        self.recv.read_exact(&mut data).await
+        let mut payload = vec![0u8; len];
+        self.recv.read_exact(&mut payload).await
             .map_err(|_| anyhow::anyhow!("Stream closed while reading payload"))?;
 
-        // Decode message
-        MessageCodec::decode(&data)
+        // Reconstruct full buffer: [length prefix][payload]
+        // MessageCodec::decode() expects the complete format
+        let mut full_buffer = Vec::with_capacity(4 + len);
+        full_buffer.extend_from_slice(&len_buf);
+        full_buffer.extend_from_slice(&payload);
+
+        // Decode message from full buffer
+        MessageCodec::decode(&full_buffer)
             .map_err(|e| anyhow::anyhow!("Decode failed: {}", e))
     }
 }
