@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme.dart';
@@ -6,8 +8,10 @@ import 'bridge/frb_generated.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize flutter_rust_bridge before using FFI
+
+  // Static library (.a) is linked via -force_load, symbols are in main process
   await RustLib.init();
+
   runApp(
     const ProviderScope(
       child: ComacodeApp(),
