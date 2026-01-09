@@ -322,6 +322,9 @@ impl QuicClient {
                 Ok(TerminalEvent::output_str(""))
             }
             NetworkMessage::Resize { .. } => Ok(TerminalEvent::output_str("")),
+            NetworkMessage::RequestPty { .. } | NetworkMessage::StartShell => {
+                Ok(TerminalEvent::output_str(""))
+            }
             NetworkMessage::RequestSnapshot => Ok(TerminalEvent::output_str("")),
             NetworkMessage::Snapshot { .. } => Ok(TerminalEvent::output_str("")),
             NetworkMessage::Close => Ok(TerminalEvent::output_str("")),

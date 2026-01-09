@@ -200,6 +200,10 @@ async fn send_batch(data: &[u8], send: &mut SendStream) -> Result<()> {
     if data.is_empty() {
         return Ok(());
     }
+
+    // DEBUG: Log PTY output
+    eprintln!("[DEBUG] PTY output: {:02X?}", data);
+
     let msg = NetworkMessage::Event(TerminalEvent::Output {
         data: data.to_vec(),
     });
