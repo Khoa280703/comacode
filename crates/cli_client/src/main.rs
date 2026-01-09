@@ -223,16 +223,22 @@ async fn main() -> Result<()> {
                                 0x08 | 0x7F => { // Backspace (BS or DEL)
                                     line_buf.pop();
                                 }
-                                b'\n' | b'\r' => { // Line ending - check for /exit
+                                b'\n' | b'\r' => { // Line ending - check for /exit BEFORE processing this byte
+                                    // Check if current line_buf (without this newline) is /exit
+                                    if line_buf == b"/exit" {
+                                        // Send Close message and exit gracefully
+                                        let close_msg = NetworkMessage::Close;
+                                        if let Ok(encoded) = MessageCodec::encode(&close_msg) {
+                                            let _ = stdin_tx.blocking_send(encoded);
+                                        }
+                                        std::thread::sleep(std::time::Duration::from_millis(100));
+                                        return;
+                                    }
+                                    // Not /exit, continue normal processing
                                     line_buf.push(byte);
                                     let pos = line_buf.iter().position(|&b| b == b'\n' || b == b'\r');
                                     if let Some(p) = pos {
-                                        let line = &line_buf[..p];
-                                        if line == b"/exit" {
-                                            std::thread::sleep(std::time::Duration::from_secs(2));
-                                            return;
-                                        }
-                                        // Clear processed part
+                                        // Clear processed part for next line
                                         let skip = if p + 1 < line_buf.len() && line_buf[p + 1] == b'\n' { 2 } else { 1 };
                                         line_buf = line_buf[p + skip..].to_vec();
                                     }
@@ -261,7 +267,12 @@ async fn main() -> Result<()> {
                     None => break,
                     Some(Ok(line)) => {
                         if line.trim() == "/exit" {
-                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            // Send Close message for graceful disconnect
+                            let close_msg = NetworkMessage::Close;
+                            if let Ok(encoded) = MessageCodec::encode(&close_msg) {
+                                let _ = stdin_tx.blocking_send(encoded);
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(100));
                             break;
                         }
                         let full_line = format!("{}\n", line);
