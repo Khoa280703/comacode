@@ -154,6 +154,20 @@ where
                     break;
                 }
 
+                // DEBUG: Log PTY output (first 64 bytes for readability)
+                if cfg!(debug_assertions) {
+                    let preview_len = n.min(64);
+                    let preview = &read_buf[..preview_len];
+                    let printable: String = preview.iter().map(|&b| {
+                        if b.is_ascii_graphic() || b == b' ' { b as char }
+                        else if b == b'\n' { '⏎' }
+                        else if b == b'\r' { '⇍' }
+                        else if b == b'\t' { '⇉' }
+                        else { '·' }
+                    }).collect();
+                    eprintln!("[PTY OUT] n={} bytes: {:02X?} | {}", n, preview.to_vec(), printable);
+                }
+
                 // Check for newline in this chunk
                 let chunk_has_newline = read_buf[..n].contains(&b'\n');
 
