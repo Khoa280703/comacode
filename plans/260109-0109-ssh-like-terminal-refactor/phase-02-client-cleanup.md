@@ -176,7 +176,7 @@ tokio::spawn(async move {
 - [ ] Fix /exit handling
 - [ ] Fix misleading comment
 - [ ] Fix terminal reset sequence
-- [ ] **[NEW]** Add SIGWINCH handling for dynamic resize
+- [x] **[DONE]** Add SIGWINCH handling for dynamic resize (2026-01-09)
 - [ ] Test cleanup works correctly
 
 ## Success Criteria

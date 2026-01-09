@@ -18,6 +18,7 @@ use rustls::SignatureScheme;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 
 // CLI argument parser and TLS verification
@@ -129,7 +130,10 @@ async fn main() -> Result<()> {
     // Fallback: continue without raw mode in non-TTY environments
     let _guard = match raw_mode::RawModeGuard::enable() {
         Ok(guard) => Some(guard),
-        Err(_) => None,  // Non-TTY environment, continue without raw mode
+        Err(e) => {
+            eprintln!("Warning: Raw mode not available: {}. Input may be slow.", e);
+            None
+        }
     };
 
     // ===== 2. EAGER SPAWN SEQUENCE (SSH-LIKE) =====
@@ -149,6 +153,27 @@ async fn main() -> Result<()> {
     // User input is buffered and sent (type-ahead)
 
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(32);
+
+    // SIGWINCH handler for dynamic terminal resize
+    let resize_tx = stdin_tx.clone();
+    tokio::spawn(async move {
+        match signal(SignalKind::window_change()) {
+            Ok(mut stream) => {
+                loop {
+                    stream.recv().await;
+                    if let Ok((cols, rows)) = size() {
+                        let resize_msg = NetworkMessage::Resize { rows, cols };
+                        if let Ok(encoded) = MessageCodec::encode(&resize_msg) {
+                            let _ = resize_tx.send(encoded).await;
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // SIGWINCH not available on this platform (e.g., Windows)
+            }
+        }
+    });
     let mut stdin_task = tokio::task::spawn_blocking(move || {
         let mut stdin = std::io::stdin();
         let mut buf = [0u8; 1024];
