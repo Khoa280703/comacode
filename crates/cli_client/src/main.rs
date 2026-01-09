@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
     // stdin_task: different behavior based on raw mode availability
     let mut stdin_task = if raw_mode_enabled {
         // === RAW MODE: byte-by-byte for interactive shell ===
-        // Send immediately for real-time feedback, detect /exit on newline
+        // Send raw bytes, PTY handles everything including backspace
         tokio::task::spawn_blocking(move || {
             let mut stdin = std::io::stdin();
             let mut buf = [0u8; 1024];
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
                     Ok(n) => {
                         let data = &buf[..n];
 
-                        // Send raw bytes immediately (real-time interaction)
+                        // Send raw bytes immediately - PTY handles all control chars
                         let msg = NetworkMessage::Input {
                             data: data.to_vec(),
                         };
@@ -217,14 +217,14 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Accumulate for /exit detection with backspace handling
+                        // Track for /exit detection (with backspace handling)
                         for &byte in data {
                             match byte {
                                 0x08 | 0x7F => { // Backspace (BS or DEL)
                                     line_buf.pop();
                                 }
-                                b'\n' | b'\r' => { // Line ending - check for /exit BEFORE processing this byte
-                                    // Check if current line_buf (without this newline) is /exit
+                                b'\n' | b'\r' => { // Line ending - check for /exit
+                                    // Check if current line_buf (without newline) is /exit
                                     if line_buf == b"/exit" {
                                         // Send Close message and exit gracefully
                                         let close_msg = NetworkMessage::Close;
@@ -234,17 +234,14 @@ async fn main() -> Result<()> {
                                         std::thread::sleep(std::time::Duration::from_millis(100));
                                         return;
                                     }
-                                    // Not /exit, continue normal processing
-                                    line_buf.push(byte);
-                                    let pos = line_buf.iter().position(|&b| b == b'\n' || b == b'\r');
-                                    if let Some(p) = pos {
-                                        // Clear processed part for next line
-                                        let skip = if p + 1 < line_buf.len() && line_buf[p + 1] == b'\n' { 2 } else { 1 };
-                                        line_buf = line_buf[p + skip..].to_vec();
-                                    }
+                                    // Clear line_buf for next line
+                                    line_buf.clear();
                                 }
-                                _ => {
-                                    line_buf.push(byte);
+                                _ => { // Regular char - add to buffer
+                                    // Only buffer reasonable length to prevent unbounded growth
+                                    if line_buf.len() < 1024 {
+                                        line_buf.push(byte);
+                                    }
                                 }
                             }
                         }
