@@ -25,8 +25,10 @@ pub struct PtySession {
     #[allow(dead_code)]
     size: (u16, u16),
     /// Writer handle
+    #[allow(dead_code)]
     writer: Box<dyn std::io::Write + Send>,
-    /// Output stream sender
+    /// Output stream sender (legacy, replaced by channel-based streaming)
+    #[allow(dead_code)]
     output_tx: tokio::sync::mpsc::Sender<Bytes>,
 }
 
@@ -197,6 +199,7 @@ impl PtySession {
     /// Get output stream sender for external forwarding
     ///
     /// This allows the QUIC server to subscribe to PTY output.
+    #[allow(dead_code)]
     pub fn output_sender(&self) -> tokio::sync::mpsc::Sender<Bytes> {
         self.output_tx.clone()
     }

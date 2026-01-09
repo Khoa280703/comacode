@@ -120,6 +120,7 @@ impl SessionManager {
     }
 
     /// Get output sender for a session (for forwarding PTY output)
+    #[allow(dead_code)]
     pub async fn get_session_output(&self, id: u64) -> Option<tokio::sync::mpsc::Sender<bytes::Bytes>> {
         let sessions = self.sessions.lock().await;
         if let Some(session) = sessions.get(&id) {

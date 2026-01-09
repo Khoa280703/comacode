@@ -444,6 +444,7 @@ impl QuicServer {
     ///
     /// Shared helper for Input and Command message handlers.
     /// Creates PTY session, applies resize, spawns output pump task.
+    #[allow(dead_code)]
     async fn spawn_session_with_config(
         session_mgr: &Arc<SessionManager>,
         pending_resize: Option<(u16, u16)>,
