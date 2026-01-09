@@ -147,7 +147,7 @@ f2392f9 refactor(terminal): phase 02 client cleanup + SIGWINCH support
 
 ### Commit
 ```
-[COMMIT_HASH] refactor(terminal): phase 03 server cleanup + spawn helper
+eb8df14 refactor(terminal): phase 03 server cleanup
 ```
 
 ---
