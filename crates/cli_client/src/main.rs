@@ -215,23 +215,29 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Accumulate for /exit detection
-                        line_buf.extend_from_slice(data);
-
-                        // Check for /exit after any line ending (\n or \r)
-                        let has_line_end = data.contains(&b'\n') || data.contains(&b'\r');
-                        if has_line_end {
-                            // Find position of first line ending
-                            let pos = line_buf.iter().position(|&b| b == b'\n' || b == b'\r');
-                            if let Some(p) = pos {
-                                let line = &line_buf[..p];
-                                if line == b"/exit" {
-                                    std::thread::sleep(std::time::Duration::from_secs(2));
-                                    break;
+                        // Accumulate for /exit detection with backspace handling
+                        for &byte in data {
+                            match byte {
+                                0x08 | 0x7F => { // Backspace (BS or DEL)
+                                    line_buf.pop();
                                 }
-                                // Clear processed part (skip line ending + potential \n from \r\n)
-                                let skip = if p + 1 < line_buf.len() && line_buf[p + 1] == b'\n' { 2 } else { 1 };
-                                line_buf = line_buf[p + skip..].to_vec();
+                                b'\n' | b'\r' => { // Line ending - check for /exit
+                                    line_buf.push(byte);
+                                    let pos = line_buf.iter().position(|&b| b == b'\n' || b == b'\r');
+                                    if let Some(p) = pos {
+                                        let line = &line_buf[..p];
+                                        if line == b"/exit" {
+                                            std::thread::sleep(std::time::Duration::from_secs(2));
+                                            return;
+                                        }
+                                        // Clear processed part
+                                        let skip = if p + 1 < line_buf.len() && line_buf[p + 1] == b'\n' { 2 } else { 1 };
+                                        line_buf = line_buf[p + skip..].to_vec();
+                                    }
+                                }
+                                _ => {
+                                    line_buf.push(byte);
+                                }
                             }
                         }
                     }
