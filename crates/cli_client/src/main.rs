@@ -192,47 +192,44 @@ async fn main() -> Result<()> {
 
     // stdin_task: different behavior based on raw mode availability
     let mut stdin_task = if raw_mode_enabled {
-        // === RAW MODE: buffer lines, send only complete lines ===
-        // This allows /exit interception before sending to server
+        // === RAW MODE: byte-by-byte for interactive shell ===
+        // Send immediately for real-time feedback, detect /exit on newline
         tokio::task::spawn_blocking(move || {
             let mut stdin = std::io::stdin();
             let mut buf = [0u8; 1024];
-            let mut line_buf = Vec::new(); // Buffer until newline
+            let mut line_buf = Vec::new(); // Accumulate for /exit detection
 
             loop {
                 match stdin.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = &buf[..n];
+                        let has_newline = data.contains(&b'\n');
 
-                        // Extend buffer with new data
+                        // Send raw bytes immediately (real-time interaction)
+                        let msg = NetworkMessage::Input {
+                            data: data.to_vec(),
+                        };
+                        if let Ok(encoded) = MessageCodec::encode(&msg) {
+                            if stdin_tx.blocking_send(encoded).is_err() {
+                                break;
+                            }
+                        }
+
+                        // Accumulate for /exit detection
                         line_buf.extend_from_slice(data);
 
-                        // Process complete lines (ending with \n)
-                        while let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
-                            let line_with_newline = line_buf[..=pos].to_vec();
-                            let remaining = line_buf[pos + 1..].to_vec();
-
-                            // Check for /exit command
-                            let line = &line_with_newline[..pos]; // without newline
-                            if line == b"/exit" {
-                                // Exit without sending to server
-                                std::thread::sleep(std::time::Duration::from_secs(2));
-                                return;
-                            }
-
-                            // Send complete line
-                            let msg = NetworkMessage::Input {
-                                data: line_with_newline,
-                            };
-                            if let Ok(encoded) = MessageCodec::encode(&msg) {
-                                if stdin_tx.blocking_send(encoded).is_err() {
-                                    return;
+                        // Check for /exit only after newline
+                        if has_newline {
+                            if let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
+                                let line = &line_buf[..pos];
+                                if line == b"/exit" {
+                                    std::thread::sleep(std::time::Duration::from_secs(2));
+                                    break;
                                 }
+                                // Clear processed part
+                                line_buf = line_buf[pos + 1..].to_vec();
                             }
-
-                            // Keep remaining data for next iteration
-                            line_buf = remaining;
                         }
                     }
                     Err(_) => break,
