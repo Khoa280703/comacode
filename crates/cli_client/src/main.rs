@@ -113,15 +113,27 @@ async fn main() -> Result<()> {
     println!("Authenticated");
 
     // ===== 1. BANNER & RAW MODE =====
-    let _ = std::io::stdout().write_all(b"\x1b]0;Comacode Remote Session\x07");
+    let _ = std::io::stdout().write_all(b"\x1b]0;[COMACODE] Remote Session\x07");
+
+    // Get current time for banner
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(now as i64, 0)
+        .unwrap_or_default()
+        .format("%Y-%m-%d %H:%M:%S UTC");
+
     let banner = format!(
         "\r\n\
-        \x1b[1;32m╔════════════════════════════════════════╗\x1b[0m\r\n\
-        \x1b[1;32m║       COMACODE REMOTE SHELL           ║\x1b[0m\r\n\
-        \x1b[1;32m╚════════════════════════════════════════╝\x1b[0m\r\n\
-        \x1b[90m  Host: {}\x1b[0m\r\n\
-        \x1b[90m  Press /exit to disconnect\x1b[0m\r\n\r\n",
-        args.connect
+        \x1b[1;36m╔═══════════════════════════════════════════════════════╗\x1b[0m\r\n\
+        \x1b[1;36m║\x1b[1;33m         ⚡ COMACODE REMOTE TERMINAL ⚡\x1b[1;36m              ║\x1b[0m\r\n\
+        \x1b[1;36m╠═══════════════════════════════════════════════════════╣\x1b[0m\r\n\
+        \x1b[1;36m║\x1b[0m \x1b[90mHost:\x1b[0m     {:<48} \x1b[1;36m║\x1b[0m\r\n\
+        \x1b[1;36m║\x1b[0m \x1b[90mConnected:\x1b[0m {:<44} \x1b[1;36m║\x1b[0m\r\n\
+        \x1b[1;36m║\x1b[0m \x1b[90mExit cmd:\x1b[0m  \x1b[33m/exit\x1b[0m \x1b[90m(disconnects gracefully)\x1b[0m      \x1b[1;36m║\x1b[0m\r\n\
+        \x1b[1;36m╚═══════════════════════════════════════════════════════╝\x1b[0m\r\n\r\n",
+        args.connect, datetime
     );
     let _ = std::io::stdout().write_all(banner.as_bytes());
     let _ = std::io::stdout().flush();
@@ -175,19 +187,29 @@ async fn main() -> Result<()> {
         }
     });
     let mut stdin_task = tokio::task::spawn_blocking(move || {
-        let mut stdin = std::io::stdin();
-        let mut buf = [0u8; 1024];
+        use std::io::BufRead;
+
+        // When raw mode is unavailable, use line-buffered reading
+        // This allows /exit command interception to work correctly
+        let stdin = std::io::stdin();
+        let reader = stdin.lock();
+        let mut lines = reader.lines();
+
         loop {
-            match stdin.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    // Check /exit
-                    if String::from_utf8_lossy(&buf[..n]).trim() == "/exit" {
+            match lines.next() {
+                None => break, // EOF
+                Some(Ok(line)) => {
+                    // Check for /exit command
+                    if line.trim() == "/exit" {
+                        // Give server time to process pending commands before closing
+                        // Shell commands can take time to execute and send output
+                        std::thread::sleep(std::time::Duration::from_secs(2));
                         break;
                     }
-                    // Send raw bytes
+                    // Send line with newline (remote shell expects it)
+                    let full_line = format!("{}\n", line);
                     let msg = NetworkMessage::Input {
-                        data: buf[..n].to_vec(),
+                        data: full_line.into_bytes(),
                     };
                     if let Ok(encoded) = MessageCodec::encode(&msg) {
                         if stdin_tx.blocking_send(encoded).is_err() {
@@ -195,7 +217,7 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                Err(_) => break,
+                Some(Err(_)) => break,
             }
         }
     });
@@ -227,7 +249,9 @@ async fn main() -> Result<()> {
             }
         }
         if stdin_eof && stdin_rx.is_empty() {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            // Give server time to send final responses (command output, etc.)
+            // Commands can take time to execute
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             if stdin_rx.is_empty() {
                 break;
             }
