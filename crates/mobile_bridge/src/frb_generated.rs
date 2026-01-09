@@ -28,7 +28,9 @@
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
-use mobile_bridge::api::*;
+use crate::api::*;
+// Import types from comacode_core that are used in the API
+use comacode_core::{TerminalCommand, TerminalEvent, QrPayload};
 
 // Section: boilerplate
 
@@ -71,7 +73,7 @@ fn wire__mobile_bridge__api__add_impl(
             let api_b = <i32>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::add(api_a, api_b))?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::add(api_a, api_b))?;
                 Ok(output_ok)
             })())
         },
@@ -107,7 +109,7 @@ fn wire__mobile_bridge__api__connect_to_host_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::connect_to_host(
+                        let output_ok = crate::api::connect_to_host(
                             api_host,
                             api_port,
                             api_auth_token,
@@ -146,7 +148,7 @@ fn wire__mobile_bridge__api__create_command_impl(
             let api_text = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::create_command(api_text))?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::create_command(api_text))?;
                 Ok(output_ok)
             })())
         },
@@ -177,7 +179,7 @@ fn wire__mobile_bridge__api__create_terminal_config_impl(
             let api_cols = <u16>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::create_terminal_config(
+                let output_ok = Result::<_, ()>::Ok(crate::api::create_terminal_config(
                     api_rows, api_cols,
                 ))?;
                 Ok(output_ok)
@@ -212,7 +214,7 @@ fn wire__mobile_bridge__api__decode_message_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::decode_message(api_data).await?;
+                        let output_ok = crate::api::decode_message(api_data).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -247,7 +249,7 @@ fn wire__mobile_bridge__api__disconnect_from_host_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::disconnect_from_host().await?;
+                        let output_ok = crate::api::disconnect_from_host().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -283,7 +285,7 @@ fn wire__mobile_bridge__api__encode_command_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::encode_command(api_cmd).await?;
+                        let output_ok = crate::api::encode_command(api_cmd).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -318,7 +320,7 @@ fn wire__mobile_bridge__api__encode_ping_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::encode_ping().await?;
+                        let output_ok = crate::api::encode_ping().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -356,7 +358,7 @@ fn wire__mobile_bridge__api__encode_resize_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            mobile_bridge::api::encode_resize(api_rows, api_cols).await?;
+                            crate::api::encode_resize(api_rows, api_cols).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -389,7 +391,7 @@ fn wire__mobile_bridge__api__event_output_impl(
             let api_data = <Vec<u8>>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::event_output(api_data))?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::event_output(api_data))?;
                 Ok(output_ok)
             })())
         },
@@ -419,7 +421,7 @@ fn wire__mobile_bridge__api__event_output_str_impl(
             let api_s = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::event_output_str(api_s))?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::event_output_str(api_s))?;
                 Ok(output_ok)
             })())
         },
@@ -466,7 +468,7 @@ fn wire__mobile_bridge__api__get_command_id_impl(
                 }
                 let api_cmd_guard = api_cmd_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::get_command_id(&*api_cmd_guard))?;
+                    Result::<_, ()>::Ok(crate::api::get_command_id(&*api_cmd_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -513,7 +515,7 @@ fn wire__mobile_bridge__api__get_command_text_impl(
                 }
                 let api_cmd_guard = api_cmd_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::get_command_text(&*api_cmd_guard))?;
+                    Result::<_, ()>::Ok(crate::api::get_command_text(&*api_cmd_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -559,7 +561,7 @@ fn wire__mobile_bridge__api__get_command_timestamp_impl(
                     }
                 }
                 let api_cmd_guard = api_cmd_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::get_command_timestamp(
+                let output_ok = Result::<_, ()>::Ok(crate::api::get_command_timestamp(
                     &*api_cmd_guard,
                 ))?;
                 Ok(output_ok)
@@ -608,7 +610,7 @@ fn wire__mobile_bridge__api__get_event_data_impl(
                 }
                 let api_event_guard = api_event_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::get_event_data(&*api_event_guard))?;
+                    Result::<_, ()>::Ok(crate::api::get_event_data(&*api_event_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -654,7 +656,7 @@ fn wire__mobile_bridge__api__get_event_error_message_impl(
                     }
                 }
                 let api_event_guard = api_event_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::get_event_error_message(
+                let output_ok = Result::<_, ()>::Ok(crate::api::get_event_error_message(
                     &*api_event_guard,
                 ))?;
                 Ok(output_ok)
@@ -702,7 +704,7 @@ fn wire__mobile_bridge__api__get_event_exit_code_impl(
                     }
                 }
                 let api_event_guard = api_event_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::get_event_exit_code(
+                let output_ok = Result::<_, ()>::Ok(crate::api::get_event_exit_code(
                     &*api_event_guard,
                 ))?;
                 Ok(output_ok)
@@ -752,7 +754,7 @@ fn wire__mobile_bridge__api__get_qr_fingerprint_impl(
                     }
                 }
                 let api_payload_guard = api_payload_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::get_qr_fingerprint(
+                let output_ok = Result::<_, ()>::Ok(crate::api::get_qr_fingerprint(
                     &*api_payload_guard,
                 ))?;
                 Ok(output_ok)
@@ -803,7 +805,7 @@ fn wire__mobile_bridge__api__get_qr_ip_impl(
                 }
                 let api_payload_guard = api_payload_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::get_qr_ip(&*api_payload_guard))?;
+                    Result::<_, ()>::Ok(crate::api::get_qr_ip(&*api_payload_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -852,7 +854,7 @@ fn wire__mobile_bridge__api__get_qr_port_impl(
                 }
                 let api_payload_guard = api_payload_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::get_qr_port(&*api_payload_guard))?;
+                    Result::<_, ()>::Ok(crate::api::get_qr_port(&*api_payload_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -900,7 +902,7 @@ fn wire__mobile_bridge__api__get_qr_protocol_version_impl(
                     }
                 }
                 let api_payload_guard = api_payload_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::get_qr_protocol_version(
+                let output_ok = Result::<_, ()>::Ok(crate::api::get_qr_protocol_version(
                     &*api_payload_guard,
                 ))?;
                 Ok(output_ok)
@@ -951,7 +953,7 @@ fn wire__mobile_bridge__api__get_qr_token_impl(
                 }
                 let api_payload_guard = api_payload_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::get_qr_token(&*api_payload_guard))?;
+                    Result::<_, ()>::Ok(crate::api::get_qr_token(&*api_payload_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -981,7 +983,7 @@ fn wire__mobile_bridge__api__greet_impl(
             let api_name = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(mobile_bridge::api::greet(api_name))?;
+                let output_ok = Result::<_, ()>::Ok(crate::api::greet(api_name))?;
                 Ok(output_ok)
             })())
         },
@@ -1014,7 +1016,7 @@ fn wire__mobile_bridge__api__is_connected_impl(
                 transform_result_sse::<_, ()>(
                     (move || async move {
                         let output_ok =
-                            Result::<_, ()>::Ok(mobile_bridge::api::is_connected().await)?;
+                            Result::<_, ()>::Ok(crate::api::is_connected().await)?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1064,7 +1066,7 @@ fn wire__mobile_bridge__api__is_event_error_impl(
                 }
                 let api_event_guard = api_event_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::is_event_error(&*api_event_guard))?;
+                    Result::<_, ()>::Ok(crate::api::is_event_error(&*api_event_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -1111,7 +1113,7 @@ fn wire__mobile_bridge__api__is_event_exit_impl(
                 }
                 let api_event_guard = api_event_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::is_event_exit(&*api_event_guard))?;
+                    Result::<_, ()>::Ok(crate::api::is_event_exit(&*api_event_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -1158,7 +1160,7 @@ fn wire__mobile_bridge__api__is_event_output_impl(
                 }
                 let api_event_guard = api_event_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(mobile_bridge::api::is_event_output(&*api_event_guard))?;
+                    Result::<_, ()>::Ok(crate::api::is_event_output(&*api_event_guard))?;
                 Ok(output_ok)
             })())
         },
@@ -1190,7 +1192,7 @@ fn wire__mobile_bridge__api__parse_qr_payload_impl(
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
-                    let output_ok = mobile_bridge::api::parse_qr_payload(api_json)?;
+                    let output_ok = crate::api::parse_qr_payload(api_json)?;
                     Ok(output_ok)
                 })())
             }
@@ -1223,7 +1225,7 @@ fn wire__mobile_bridge__api__receive_terminal_event_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::receive_terminal_event().await?;
+                        let output_ok = crate::api::receive_terminal_event().await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1260,7 +1262,7 @@ fn wire__mobile_bridge__api__resize_pty_impl(
             move |context| async move {
                 transform_result_sse::<_, String>(
                     (move || async move {
-                        let output_ok = mobile_bridge::api::resize_pty(api_rows, api_cols).await?;
+                        let output_ok = crate::api::resize_pty(api_rows, api_cols).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1297,7 +1299,7 @@ fn wire__mobile_bridge__api__send_terminal_command_impl(
                 transform_result_sse::<_, String>(
                     (move || async move {
                         let output_ok =
-                            mobile_bridge::api::send_terminal_command(api_command).await?;
+                            crate::api::send_terminal_command(api_command).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1777,7 +1779,7 @@ mod io {
     };
     use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
-    use mobile_bridge::api::*;
+    use crate::api::*;
 
     // Section: boilerplate
 
@@ -1844,7 +1846,7 @@ mod web {
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
     use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
-    use mobile_bridge::api::*;
+    use crate::api::*;
 
     // Section: boilerplate
 

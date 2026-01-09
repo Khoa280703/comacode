@@ -14,3 +14,4 @@ clap = { version = "4.5", features = ["derive"] }
 tokio = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
+crossterm = "0.28"

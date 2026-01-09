@@ -1,7 +1,7 @@
 # Known Issues & Technical Debt
 
 **Status**: MVP Complete, tracking post-MVP improvements
-**Updated**: 2026-01-07 (Post-Phase 06 - Flutter UI)
+**Updated**: 2026-01-08 (Post-Phase 05.1 - Terminal Streaming Integration)
 **Parent Plan**: 260106-2127-comacode-mvp
 
 ---
@@ -190,7 +190,7 @@ let client_arc = QUIC_CLIENT.get()
 
 **Severity**: High (blocks Flutter integration)
 **Location**: `crates/mobile_bridge/src/quic_client.rs:229-253`
-**Status**: ✅ **COMPLETED** (2026-01-07)
+**Status**: ✅ **COMPLETED** (2026-01-08)
 
 **Problem**:
 ```rust
@@ -210,12 +210,12 @@ pub async fn send_command(&self, command: String) -> Result<(), String> {
 **Fix Applied**:
 - ✅ Implemented actual QUIC stream reading in `receive_event()`
 - ✅ Implemented actual QUIC stream writing in `send_command()`
-- ✅ Flutter Terminal UI polls events via Timer.periodic
-- ✅ Bidirectional communication working
+- ✅ Server side: `pump_pty_to_quic()` with tokio utilities
+- ✅ Bidirectional PTY ↔ QUIC communication working
 
-**See**: Phase 06 Flutter UI - Terminal widget
+**See**: Phase 05.1 Terminal Streaming Integration
 
-**Completed by**: Phase 06
+**Completed by**: Phase 05.1
 
 ---
 
@@ -530,11 +530,11 @@ bool _isValidQrPayload(String json) {
 | Generic error messages | P2 | 15 min | No | Add host:port context |
 | Constant-time comparison | P3 | 30 min | No | Use `subtle` crate |
 
-### Completed (2026-01-07)
+### Completed (2026-01-08)
 - ✅ **Issue #3**: QUIC Client Implementation
 - ✅ **Issue #4**: Flutter Bridge Validation
 - ✅ **Issue #5**: UB in FFI Bridge (OnceCell fix)
-- ✅ **Issue #6**: Stream I/O Implementation
+- ✅ **Issue #6**: Stream I/O Implementation (Phase 05.1)
 - ✅ **Issue #7**: Fingerprint Leakage in Logs
 
 ---
@@ -586,9 +586,10 @@ bool _isValidQrPayload(String json) {
 
 ---
 
-**Last updated**: 2026-01-07 (Post-Phase 06 - Flutter UI)
+**Last updated**: 2026-01-08 (Post-Phase 05.1 - Terminal Streaming Integration)
 **Next review**: Trước khi implement Phase 07
 **Completed plans**:
 - `plans/260107-1553-solve-quinn-quic-client/plan.md` (QUIC Client)
 - `plans/260107-1648-fix-critical-ub-fingerprint-leak/plan.md` (Bugfix)
 - `plans/260106-2127-comacode-mvp/phase-06-flutter-ui.md` (Flutter UI)
+- `plans/260108-0907-phase-051-terminal-integration/plan.md` (Terminal Streaming)

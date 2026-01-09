@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::protocol::MessageCodec;
-use crate::types::{NetworkMessage, TerminalCommand, TerminalEvent};
+use crate::types::{NetworkMessage, TerminalEvent};
 use crate::{CoreError, Result};
 
 /// Pump data from PTY to QUIC stream
@@ -57,7 +57,7 @@ where
     }
 
     // Finish the stream gracefully
-    send.finish().await?;
+    let _ = send.finish();
     Ok(())
 }
 
@@ -88,13 +88,7 @@ where
     loop {
         // Read length prefix (4 bytes, big endian)
         recv.read_exact(&mut len_buf).await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    CoreError::Connection("Stream closed by peer".to_string())
-                } else {
-                    CoreError::Io(e)
-                }
-            })?;
+            .map_err(|_| CoreError::Connection("Stream closed by peer".to_string()))?;
 
         let len = u32::from_be_bytes(len_buf) as usize;
 
@@ -108,7 +102,8 @@ where
 
         // Read payload
         let mut data = vec![0u8; len];
-        recv.read_exact(&mut data).await?;
+        recv.read_exact(&mut data).await
+            .map_err(|_| CoreError::Connection("Stream closed while reading payload".to_string()))?;
 
         // Decode message
         let msg = MessageCodec::decode(&data)?;
@@ -127,7 +122,7 @@ where
                 // Respond to ping with pong
                 tracing::trace!("Received ping with timestamp {}, sending pong", timestamp);
                 if let Some(send) = &send {
-                    let pong = NetworkMessage::pong();
+                    let pong = NetworkMessage::pong(timestamp);
                     let encoded = MessageCodec::encode(&pong)?;
                     let mut send = send.lock().await;
                     send.write_all(&encoded).await
@@ -137,7 +132,7 @@ where
                     tracing::warn!("Received ping but no send stream available to respond");
                 }
             }
-            NetworkMessage::Pong { timestamp } => {
+            NetworkMessage::Pong { timestamp: _ } => {
                 tracing::trace!("Received pong");
             }
             NetworkMessage::Close => {

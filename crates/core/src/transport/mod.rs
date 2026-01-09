@@ -5,6 +5,8 @@
 //! - Keep-alive for NAT traversal
 //! - Flow control settings
 
+pub mod stream;
+
 use quinn::{ClientConfig, ServerConfig, TransportConfig};
 use std::sync::Arc;
 use std::time::Duration;

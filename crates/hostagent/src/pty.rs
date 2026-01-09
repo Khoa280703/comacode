@@ -35,7 +35,10 @@ unsafe impl Send for PtySession {}
 
 impl PtySession {
     /// Spawn new PTY session with channel-based output streaming
-    pub fn spawn(id: u64, config: TerminalConfig) -> Result<Arc<Mutex<Self>>> {
+    ///
+    /// Returns `(Arc<Mutex<PtySession>>, Receiver<Bytes>)` where the receiver
+    /// can be converted to AsyncRead for QUIC forwarding.
+    pub fn spawn(id: u64, config: TerminalConfig) -> Result<(Arc<Mutex<Self>>, tokio::sync::mpsc::Receiver<Bytes>)> {
         let pty_system = native_pty_system();
 
         let pty_size = PtySize {
@@ -64,7 +67,7 @@ impl PtySession {
         let writer = pty_pair.master.take_writer()?;
 
         // Create bounded output stream (channel capacity = 1024 messages)
-        let (output_stream, mut output_rx) = OutputStream::new(1024);
+        let (output_stream, output_rx) = OutputStream::new(1024);
         let output_tx = output_stream.sender();
 
         // PTY Reader Task: Uses spawn_blocking for blocking I/O
@@ -109,17 +112,6 @@ impl PtySession {
             Ok::<(), anyhow::Error>(())
         });
 
-        // Output forwarder task: Channel → External consumer
-        // For now, this just consumes the output to prevent channel overflow
-        // In real usage, QUIC server will subscribe to this channel
-        tokio::spawn(async move {
-            while let Some(data) = output_rx.recv().await {
-                tracing::trace!("PTY {} output: {} bytes", id, data.len());
-                // TODO: Forward to QUIC stream via session manager in phase 03
-            }
-            tracing::debug!("Output forwarder task ended for session {}", id);
-        });
-
         // Log reader task completion
         tokio::spawn(async move {
             match pty_reader.await {
@@ -143,7 +135,7 @@ impl PtySession {
             id,
             config.shell
         );
-        Ok(session)
+        Ok((session, output_rx))
     }
 
     /// Get session ID
@@ -187,7 +179,11 @@ impl PtySession {
 
     /// Check if process is still alive
     pub fn is_alive(&mut self) -> bool {
-        self.child.try_wait().is_err()
+        match self.child.try_wait() {
+            Ok(None) => true,   // Process still running
+            Ok(Some(_)) => false, // Process exited
+            Err(_) => false,    // Error - treat as dead
+        }
     }
 
     /// Kill child process explicitly

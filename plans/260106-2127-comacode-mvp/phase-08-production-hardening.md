@@ -259,6 +259,65 @@ After MVP release, gather feedback and plan Phase 2 features:
 - Relay server for remote access
 - Plugin system
 
+---
+
+## Performance Optimization: Raw Input Protocol
+
+### Context: CLI Client Raw Mode (from Phase 08+)
+
+When implementing raw mode TUI for `cli_client`, current approach wraps each input in `NetworkMessage::Command`:
+
+```rust
+// Current: Every keypress → encode → decode overhead
+let text = String::from_utf8_lossy(&buf[..n]).to_string();
+let cmd = NetworkMessage::Command(TerminalCommand::new(text));
+let encoded = MessageCodec::encode(&cmd)?;  // Overhead!
+send_clone.write_all(&encoded).await;
+```
+
+**Problem**: For interactive programs (vim, htop), this creates unnecessary encode/decode overhead for every keypress.
+
+### Solution: Add `NetworkMessage::RawInput` Variant
+
+```rust
+// crates/core/src/types/message.rs
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NetworkMessage {
+    // ... existing variants ...
+
+    /// Raw input bytes for true passthrough (Phase 08+ optimization)
+    /// Used for raw mode TUI - bypasses TerminalCommand wrapper
+    RawInput {
+        /// Raw bytes from stdin (including control chars like 0x03 for Ctrl+C)
+        data: Vec<u8>,
+    },
+}
+```
+
+**Benefits**:
+- Zero-copy for raw input
+- No String allocation per keypress
+- Direct PTY injection on server side
+- Latency reduction for interactive programs
+
+**Server handling**:
+```rust
+// crates/hostagent/src/quic_server.rs
+NetworkMessage::RawInput { data } => {
+    // Write directly to PTY, no parsing needed
+    if let Some(id) = session_id {
+        let _ = session_mgr.write_to_session(id, &data).await;
+    }
+}
+```
+
+**Tasks** (Phase 08+):
+- [ ] Add `RawInput` variant to `NetworkMessage`
+- [ ] Update cli_client to use `RawInput` in raw mode
+- [ ] Update server to handle `RawInput`
+- [ ] Benchmark latency improvement
+- [ ] Fallback to `Command` for non-raw mode
+
 ## Resources
 - [Flutter deployment](https://docs.flutter.dev/deployment)
 - [Rust packaging](https://forge.rust-lang.org/infra/packaging.html)

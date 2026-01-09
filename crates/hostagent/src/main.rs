@@ -9,6 +9,7 @@ mod quic_server;
 mod ratelimit;
 mod session;
 mod snapshot;
+mod web_ui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -36,6 +37,14 @@ struct Args {
     /// Log level (trace, debug, info, warn, error)
     #[arg(short, long, default_value = "info")]
     log_level: String,
+
+    /// Disable browser auto-open (for web UI)
+    #[arg(long, default_value = "false")]
+    no_browser: bool,
+
+    /// Use terminal QR instead of web dashboard
+    #[arg(long, default_value = "false")]
+    qr_terminal: bool,
 }
 
 #[tokio::main]
@@ -82,8 +91,46 @@ async fn main() -> Result<()> {
         actual_port = 8443;
     }
 
-    // Display QR code for mobile pairing
-    display_qr_code(&local_ip, actual_port, &cert_fingerprint, &token.to_hex());
+    // Create QR payload
+    let qr_payload = QrPayload::new(
+        local_ip.to_string(),
+        actual_port,
+        cert_fingerprint.clone(),
+        token.to_hex(),
+    );
+
+    // Level 2: Web Dashboard (default)
+    if !args.qr_terminal {
+        // Create web server
+        let web_server = web_ui::WebServer::new();
+        let web_state = web_server.state();
+
+        // Set QR payload for web UI
+        web_state.set_qr_payload(qr_payload.clone()).await;
+
+        // Start web server (binds to 127.0.0.1 only)
+        let web_addr = web_server.start().await
+            .context("Failed to start web server")?;
+
+        info!("Web dashboard available at http://{}", web_addr);
+
+        // Open browser if not disabled
+        if !args.no_browser {
+            let url = format!("http://{}", web_addr);
+            if let Err(e) = web_ui::WebServer::open_browser(&url) {
+                warn!("Failed to open browser: {}", e);
+                println!("Open this URL in your browser: {}", url);
+            }
+        }
+
+        println!("============================================");
+        println!("Web Dashboard: http://{}", web_addr);
+        println!("Scan QR code in browser to connect");
+        println!("============================================");
+    } else {
+        // Level 1: Terminal QR (legacy)
+        display_qr_code(&local_ip, actual_port, &cert_fingerprint, &token.to_hex());
+    }
 
     // Spawn server task
     let server_handle = tokio::spawn(async move {

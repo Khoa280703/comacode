@@ -8,12 +8,15 @@
 //! The fingerprint is normalized (case-insensitive, separator-agnostic) before comparison.
 
 use comacode_core::{TerminalEvent, AuthToken};
+use comacode_core::protocol::MessageCodec;
+use comacode_core::types::{NetworkMessage, TerminalCommand};
+use quinn::{ClientConfig, Endpoint, Connection, RecvStream, SendStream};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{info, error, debug};
-
-// Quinn imports
-use quinn::{ClientConfig, Endpoint, Connection};
 
 // Rustls imports for custom certificate verification
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -159,6 +162,12 @@ pub struct QuicClient {
     connection: Option<Connection>,
     /// Expected server fingerprint for TOFU verification
     server_fingerprint: String,
+    /// QUIC send stream for commands
+    send_stream: Option<Arc<Mutex<SendStream>>>,
+    /// QUIC receive stream for terminal events
+    recv_stream: Option<Arc<Mutex<RecvStream>>>,
+    /// Background task for receiving terminal events
+    recv_task: Option<JoinHandle<()>>,
 }
 
 impl QuicClient {
@@ -172,6 +181,9 @@ impl QuicClient {
             endpoint,
             connection: None,
             server_fingerprint,
+            send_stream: None,
+            recv_stream: None,
+            recv_task: None,
         }
     }
 
@@ -196,7 +208,7 @@ impl QuicClient {
         }
 
         // Validate auth token format
-        let _token = AuthToken::from_hex(&auth_token)
+        let token = AuthToken::from_hex(&auth_token)
             .map_err(|e| format!("Invalid auth token: {}", e))?;
 
         info!("Connecting to {}:{} with TOFU fingerprint verification...", host, port);
@@ -209,18 +221,13 @@ impl QuicClient {
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
 
-        // Step 2: Wrap into Quinn config
+        // Step 2: Wrap into Quinn config using configure_client (Phase 05.1)
         let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(rustls_config)
             .map_err(|e| format!("Failed to create QUIC crypto config: {}", e))?;
 
-        let mut client_config = ClientConfig::new(Arc::new(quic_crypto));
+        let client_config = comacode_core::transport::configure_client(Arc::new(quic_crypto));
 
-        // Step 3: Configure transport (timeout, keep-alive)
-        let mut transport_config = quinn::TransportConfig::default();
-        transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-        client_config.transport_config(Arc::new(transport_config));
-
-        // Step 4: Connect to server
+        // Step 3: Connect to server
         let addr = format!("{}:{}", host, port)
             .parse::<std::net::SocketAddr>()
             .map_err(|e| format!("Invalid address: {}", e))?;
@@ -235,47 +242,147 @@ impl QuicClient {
 
         info!("QUIC connection established to {}:{}", host, port);
 
-        // TODO: Handshake protocol (send auth token) in later phase
+        // Step 4: Open bidirectional stream (Phase 05.1)
+        let (mut send, mut recv) = connection.open_bi().await
+            .map_err(|e| format!("Failed to open stream: {}", e))?;
+
+        // Step 5: Send Hello message with auth token
+        let hello_msg = NetworkMessage::hello(Some(token));
+        let encoded = MessageCodec::encode(&hello_msg)
+            .map_err(|e| format!("Failed to encode hello: {}", e))?;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send hello: {}", e))?;
+
+        // Step 6: Receive Hello ACK
+        let mut read_buf = vec![0u8; 1024];
+        let n = recv.read(&mut read_buf).await
+            .map_err(|e| format!("Failed to read hello response: {}", e))?
+            .ok_or_else(|| format!("Connection closed while waiting for hello"))?;
+
+        if n == 0 {
+            return Err("Server closed connection".to_string());
+        }
+
+        let response = MessageCodec::decode(&read_buf[..n])
+            .map_err(|e| format!("Failed to decode hello response: {}", e))?;
+
+        match response {
+            NetworkMessage::Hello { .. } => {
+                info!("Handshake successful");
+            }
+            _ => {
+                return Err("Unexpected response from server".to_string());
+            }
+        }
+
+        // Step 7: Store streams for subsequent operations
+        let send_shared = Arc::new(Mutex::new(send));
+        let recv_shared = Arc::new(Mutex::new(recv));
+
+        self.send_stream = Some(send_shared.clone());
+        self.recv_stream = Some(recv_shared.clone());
+
+        // Step 8: Spawn background receive task (Phase 05.1)
+        // Note: For now, we don't implement background receiving
+        // The receive_event() method will read directly from the stream
         self.connection = Some(connection);
         Ok(())
     }
 
     /// Receive next terminal event from server
     ///
-    /// TODO: Implement actual QUIC stream reading
+    /// Phase 05.1: Reads from QUIC stream and returns terminal events
     pub async fn receive_event(&self) -> Result<TerminalEvent, String> {
-        if self.connection.is_none() {
-            return Err("Not connected".to_string());
+        let recv_stream = self.recv_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let mut recv = recv_stream.lock().await;
+        let mut read_buf = vec![0u8; 8192];
+
+        // Read from stream
+        let n = recv.read(&mut read_buf).await
+            .map_err(|e| format!("Failed to read from stream: {}", e))?
+            .ok_or_else(|| format!("Connection closed"))?;
+
+        if n == 0 {
+            return Ok(TerminalEvent::output_str(""));
         }
 
-        // TODO: Actually receive from QUIC stream
-        // For now, return empty output
-        Ok(TerminalEvent::output_str(""))
+        // Decode message
+        let msg = MessageCodec::decode(&read_buf[..n])
+            .map_err(|e| format!("Failed to decode message: {}", e))?;
+
+        match msg {
+            NetworkMessage::Event(event) => Ok(event),
+            NetworkMessage::Input { .. } | NetworkMessage::Command(_) => {
+                // Input/Command messages from server (unlikely in receive path)
+                Ok(TerminalEvent::output_str(""))
+            }
+            NetworkMessage::Hello { .. } | NetworkMessage::Ping { .. } | NetworkMessage::Pong { .. } => {
+                Ok(TerminalEvent::output_str(""))
+            }
+            NetworkMessage::Resize { .. } => Ok(TerminalEvent::output_str("")),
+            NetworkMessage::RequestSnapshot => Ok(TerminalEvent::output_str("")),
+            NetworkMessage::Snapshot { .. } => Ok(TerminalEvent::output_str("")),
+            NetworkMessage::Close => Ok(TerminalEvent::output_str("")),
+        }
     }
 
     /// Send command to remote terminal
     ///
-    /// TODO: Implement actual QUIC stream writing
+    /// Phase 05.1: Sends command via QUIC stream
     pub async fn send_command(&self, command: String) -> Result<(), String> {
-        if self.connection.is_none() {
-            return Err("Not connected".to_string());
-        }
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
 
-        // TODO: Actually send via QUIC stream
-        info!("QUIC client: would send command: {}", command);
+        let cmd_msg = NetworkMessage::Command(TerminalCommand::new(command));
+        let encoded = MessageCodec::encode(&cmd_msg)
+            .map_err(|e| format!("Failed to encode command: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send command: {}", e))?;
+
+        debug!("Sent command via QUIC");
+        Ok(())
+    }
+
+    /// Send raw input bytes to remote terminal (pure passthrough)
+    ///
+    /// Phase 08: Send raw keystrokes directly to PTY without String conversion.
+    /// Use this for proper Ctrl+C, backspace, and other control characters.
+    pub async fn send_raw_input(&self, data: Vec<u8>) -> Result<(), String> {
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let input_msg = NetworkMessage::Input { data };
+        let encoded = MessageCodec::encode(&input_msg)
+            .map_err(|e| format!("Failed to encode input: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send input: {}", e))?;
+
+        debug!("Sent raw input via QUIC");
         Ok(())
     }
 
     /// Resize PTY (for screen rotation support)
     ///
-    /// Phase 06: Send resize event via QUIC to update PTY size on server
+    /// Phase 05.1: Send resize event via QUIC to update PTY size on server
     pub async fn resize_pty(&self, rows: u16, cols: u16) -> Result<(), String> {
-        if self.connection.is_none() {
-            return Err("Not connected".to_string());
-        }
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
 
-        // TODO: Send NetworkMessage::Resize via QUIC stream
-        info!("QUIC client: resize PTY to {}x{}", rows, cols);
+        let resize_msg = NetworkMessage::Resize { rows, cols };
+        let encoded = MessageCodec::encode(&resize_msg)
+            .map_err(|e| format!("Failed to encode resize: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send resize: {}", e))?;
+
+        debug!("Sent resize {}x{} via QUIC", rows, cols);
         Ok(())
     }
 
@@ -285,6 +392,9 @@ impl QuicClient {
             conn.close(0u32.into(), b"Client disconnect");
         }
         self.connection = None;
+        self.send_stream = None;
+        self.recv_stream = None;
+        self.recv_task = None;
         Ok(())
     }
 

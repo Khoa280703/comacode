@@ -19,6 +19,15 @@ pub enum NetworkMessage {
     /// Terminal command from client
     Command(TerminalCommand),
 
+    /// Raw input bytes for pure passthrough (Phase 08+)
+    /// Client sends raw keystrokes, server writes directly to PTY
+    /// PTY handles echo & signal generation (Ctrl+C = SIGINT)
+    /// This avoids String conversion overhead and preserves control bytes
+    Input {
+        /// Raw bytes from stdin (including control chars like 0x03 for Ctrl+C)
+        data: Vec<u8>,
+    },
+
     /// Terminal event from host
     Event(TerminalEvent),
 

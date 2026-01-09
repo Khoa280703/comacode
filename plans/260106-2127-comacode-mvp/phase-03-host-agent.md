@@ -1,12 +1,13 @@
 ---
 title: "Phase 03: Host Agent (PC Binary)"
 description: "Standalone PC application that manages PTY and exposes terminal via QUIC"
-status: pending
+status: completed
 priority: P0
 effort: 12h
 branch: main
 tags: [rust, pty, host, quic-server]
 created: 2026-01-06
+completed: 2026-01-06
 ---
 
 # Phase 03: Host Agent (PC Binary)

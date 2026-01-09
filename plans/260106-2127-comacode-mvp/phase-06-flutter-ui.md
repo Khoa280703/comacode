@@ -1,13 +1,14 @@
 ---
 title: "Phase 06: Flutter UI"
 description: "Mobile app UI với QR scanner, terminal display, và kết nối QUIC backend"
-status: pending
+status: completed
 priority: P0
 effort: 20h
 branch: main
 tags: [flutter, ui, terminal, qr-scanner, state-management]
 created: 2026-01-07
 updated: 2026-01-07
+completed: 2026-01-07
 changelog:
   - "2026-01-07: Refactor BridgeWrapper from static to Riverpod provider (Critical fix)"
   - "2026-01-07: Add resizePty() method for screen rotation support"

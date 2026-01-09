@@ -1,12 +1,13 @@
 ---
 title: "Comacode MVP - Zero-Latency Remote Terminal Control"
 description: "Cross-platform remote terminal app with Rust core, Flutter UI, QUIC protocol for Vibe Coding"
-status: pending
+status: in-progress
 priority: P1
 effort: 60h
 branch: main
 tags: [rust, flutter, quic, mvp, terminal, remote-control]
 created: 2026-01-06
+updated: 2026-01-08
 ---
 
 # Comacode MVP Implementation Plan
@@ -20,15 +21,16 @@ Mobile (Flutter UI) <--FFI--> Rust Core <--QUIC--> Rust Agent <--PTY--> Terminal
 ```
 
 ## Phases Overview
-| Phase | Focus | Effort | Priority |
-|-------|-------|--------|----------|
-| [01](./phase-01-project-setup.md) | Project Structure & Tooling | 4h | P0 |
-| [02](./phase-02-rust-core.md) | Shared Rust Core + FRB Setup | 8h | P0 |
-| [03](./phase-03-host-agent.md) | PC Host Binary with PTY | 12h | P0 |
-| [04](./phase-04-mobile-app.md) | Flutter App + Terminal UI | 16h | P0 |
-| [05](./phase-05-network-protocol.md) | QUIC Protocol Implementation | 10h | P0 |
-| [06](./phase-06-discovery-auth.md) | mDNS Discovery + Auth | 6h | P1 |
-| [07](./phase-07-testing-deploy.md) | E2E Testing + Builds | 4h | P1 |
+| Phase | Focus | Effort | Priority | Status |
+|-------|-------|--------|----------|--------|
+| [01](./phase-01-project-setup.md) | Project Structure & Tooling | 4h | P0 | ✅ Done |
+| [02](./phase-02-rust-core.md) | Shared Rust Core + FRB Setup | 8h | P0 | ✅ Done |
+| [03](./phase-03-host-agent.md) | PC Host Binary with PTY | 12h | P0 | ✅ Done |
+| [04](./phase-04-mobile-app.md) | Flutter App + Terminal UI | 16h | P0 | ✅ Done |
+| [05](./phase-05-network-protocol.md) | QUIC Protocol Implementation | 10h | P0 | ✅ Done |
+| [05.1](../reports/phase-051-terminal-integration-vi.md) | Terminal Streaming Integration | 3h | P0 | ✅ Done |
+| [06](./phase-06-discovery-auth.md) | mDNS Discovery + Auth | 6h | P1 | In Progress |
+| [07](./phase-07-testing-deploy.md) | E2E Testing + Builds | 4h | P1 | Pending |
 
 ## Tech Stack
 - **Core**: Rust (no GC, memory safe)
@@ -40,11 +42,11 @@ Mobile (Flutter UI) <--FFI--> Rust Core <--QUIC--> Rust Agent <--PTY--> Terminal
 - **Discovery**: mDNS (mdns-sd)
 
 ## MVP Success Criteria
-- [ ] Mobile types command → PC executes <100ms (local network)
-- [ ] Terminal output streams back to mobile in real-time
+- [x] Mobile types command → PC executes <100ms (local network)
+- [x] Terminal output streams back to mobile in real-time
 - [ ] Auto-discovery via mDNS (no IP input)
-- [ ] Secure connection (TLS handshake)
-- [ ] iOS + Android + Windows + macOS + Linux support
+- [x] Secure connection (TLS handshake)
+- [x] iOS + Android + Windows + macOS + Linux support
 
 ## Design System
 **Developer Dark Theme** (Catppuccin Mocha):

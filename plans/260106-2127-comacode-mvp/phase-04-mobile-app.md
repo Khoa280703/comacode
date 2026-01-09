@@ -1,13 +1,14 @@
 ---
 title: "Phase 04: Mobile App (Flutter) - REVISED"
 description: "iOS/Android app with terminal UI, QR scanner, secure storage, connects via QUIC"
-status: pending
+status: completed
 priority: P0
 effort: 20h
 branch: main
 tags: [flutter, ui, terminal, quic-client, qr-scanner]
 created: 2026-01-06
 updated: 2026-01-07
+completed: 2026-01-07
 ---
 
 # Phase 04: Mobile App (Flutter) - REVISED

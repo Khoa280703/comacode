@@ -100,6 +100,25 @@ pub async fn send_terminal_command(command: String) -> Result<(), String> {
     client.send_command(command).await
 }
 
+/// Send raw input bytes to remote terminal (pure passthrough)
+///
+/// Phase 08: Send raw keystrokes directly to PTY without String conversion.
+/// Use this for proper Ctrl+C, backspace, and other control characters.
+///
+/// # Arguments
+/// * `data` - Raw bytes from stdin (including control chars like 0x03 for Ctrl+C)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn send_raw_input(data: Vec<u8>) -> Result<(), String> {
+    let client_arc = QUIC_CLIENT.get()
+        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
+
+    let client = client_arc.lock().await;
+    client.send_raw_input(data).await
+}
+
 /// Resize PTY (for screen rotation support)
 ///
 /// Phase 06: Send resize event to update PTY size on server.
@@ -176,6 +195,16 @@ pub fn get_command_timestamp(cmd: &TerminalCommand) -> u64 {
 #[frb]
 pub async fn encode_command(cmd: TerminalCommand) -> Result<Vec<u8>, String> {
     MessageCodec::encode(&NetworkMessage::Command(cmd))
+        .map_err(|e| e.to_string())
+}
+
+/// Encode raw input bytes for network transmission (pure passthrough)
+///
+/// Phase 08: Encode raw keystrokes without String conversion.
+/// Use this for proper Ctrl+C, backspace, and other control characters.
+#[frb]
+pub async fn encode_input(data: Vec<u8>) -> Result<Vec<u8>, String> {
+    MessageCodec::encode(&NetworkMessage::Input { data })
         .map_err(|e| e.to_string())
 }
 

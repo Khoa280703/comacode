@@ -14,7 +14,7 @@ path = "src/main.rs"
 # Core shared logic
 comacode-core = { path = "../core" }
 # Workspace dependencies
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "full"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -36,3 +36,16 @@ nonzero_ext = { workspace = true }
 # Certificate & QR (Phase E04)
 dirs = { workspace = true }
 sha2 = { workspace = true }
+# Web UI (Level 2)
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+qrcode-generator = "4.1"
+open = "5.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-stream = "0.3"
+futures = "0.3"
+# PTY Adapter (Phase 05.1)
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }

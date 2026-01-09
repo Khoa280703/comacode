@@ -1,13 +1,13 @@
 ---
-title: "Phase 07: Service Discovery & Authentication"
-description: "mDNS discovery and secure authentication for zero-config setup"
-status: pending
+title: "Phase 07: mDNS Service Discovery"
+description: "mDNS auto-discovery for zero-config host detection"
+status: in-progress
 priority: P1
-effort: 6-8h
+effort: 4-6h
 branch: main
-tags: [mdns, authentication, ux, discovery]
+tags: [mdns, discovery, zero-config, ux]
 created: 2026-01-06
-updated: 2026-01-07
+updated: 2026-01-08
 ---
 
 # Phase 07: Service Discovery & Authentication
