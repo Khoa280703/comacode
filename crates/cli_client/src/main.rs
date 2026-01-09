@@ -205,16 +205,6 @@ async fn main() -> Result<()> {
                     Ok(n) => {
                         let data = &buf[..n];
 
-                        // Send raw bytes immediately (real-time interaction)
-                        let msg = NetworkMessage::Input {
-                            data: data.to_vec(),
-                        };
-                        if let Ok(encoded) = MessageCodec::encode(&msg) {
-                            if stdin_tx.blocking_send(encoded).is_err() {
-                                break;
-                            }
-                        }
-
                         // Accumulate for /exit detection with backspace handling
                         for &byte in data {
                             match byte {
@@ -227,7 +217,12 @@ async fn main() -> Result<()> {
                                     if let Some(p) = pos {
                                         let line = &line_buf[..p];
                                         if line == b"/exit" {
-                                            std::thread::sleep(std::time::Duration::from_secs(2));
+                                            // Send Close message to server (don't send /exit to PTY)
+                                            let close_msg = NetworkMessage::Close;
+                                            if let Ok(encoded) = MessageCodec::encode(&close_msg) {
+                                                let _ = stdin_tx.blocking_send(encoded);
+                                            }
+                                            std::thread::sleep(std::time::Duration::from_millis(100));
                                             return;
                                         }
                                         // Clear processed part
@@ -237,6 +232,22 @@ async fn main() -> Result<()> {
                                 }
                                 _ => {
                                     line_buf.push(byte);
+                                }
+                            }
+                        }
+
+                        // Check if this chunk contains /exit + newline - don't send if it does
+                        let is_exit_command = data.windows(5).any(|w| w == b"/exit") &&
+                            (data.contains(&b'\n') || data.contains(&b'\r'));
+
+                        if !is_exit_command {
+                            // Send raw bytes immediately (real-time interaction)
+                            let msg = NetworkMessage::Input {
+                                data: data.to_vec(),
+                            };
+                            if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                if stdin_tx.blocking_send(encoded).is_err() {
+                                    break;
                                 }
                             }
                         }
