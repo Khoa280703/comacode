@@ -15,7 +15,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 # Networking
 quinn = { workspace = true }
-rustls = { workspace = true }
+rustls = { workspace = true, features = ["ring"] }
 # Async
 tokio = { workspace = true, features = ["sync"] }
 async-trait = "0.1"
