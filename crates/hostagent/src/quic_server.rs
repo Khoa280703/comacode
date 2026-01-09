@@ -358,6 +358,10 @@ impl QuicServer {
                     config.env.push(("COLUMNS".to_string(), cols.to_string()));
                     config.env.push(("LINES".to_string(), rows.to_string()));
                     config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+                    // Set dumb TERM to prevent zsh from sending complex escape sequences
+                    config.env.push(("TERM".to_string(), "dumb".to_string()));
+                    // Disable bracketed paste mode (ESC [ ?2004h)
+                    config.env.push(("DISABLE_BRACKETED_PASTE".to_string(), "1".to_string()));
 
                     // Create PTY session
                     match session_mgr.create_session(config).await {
