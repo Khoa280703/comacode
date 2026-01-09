@@ -304,6 +304,18 @@ impl QuicServer {
                     }
 
                     if let Some(id) = session_id {
+                        // Log input for debugging (trace level - not noisy)
+                        if let Ok(text) = std::str::from_utf8(&data) {
+                            let printable: String = text.chars().filter(|c| c.is_ascii() && !c.is_ascii_control()).collect();
+                            if !printable.is_empty() {
+                                tracing::trace!("Input: session={:?} data={:?}", id, printable);
+                            } else if data.contains(&b'\n') {
+                                tracing::trace!("Input: session={:?} data=<newline>", id);
+                            } else if data.contains(&b'\r') {
+                                tracing::trace!("Input: session={:?} data=<CR>", id);
+                            }
+                        }
+
                         // Write raw bytes directly to PTY
                         if let Err(e) = session_mgr.write_to_session(id, &data).await {
                             tracing::error!("Failed to write input to PTY: {}", e);
