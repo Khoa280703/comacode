@@ -204,16 +204,24 @@ async fn main() -> Result<()> {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = &buf[..n];
+                        let has_newline = data.contains(&b'\n');
 
-                        // Check for /exit in accumulated line
+                        // Accumulate and check for /exit only on newline
                         line_buf.extend_from_slice(data);
-                        if line_buf.contains(&b'/') && line_buf.windows(5).any(|w| w == b"/exit") {
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            break;
-                        }
-                        // Clear line buffer on newline
-                        if data.contains(&b'\n') {
-                            line_buf.clear();
+
+                        if has_newline {
+                            // Extract current line (up to newline)
+                            if let Some(pos) = line_buf.iter().position(|&b| b == b'\n') {
+                                let current_line = &line_buf[..pos];
+                                // Check for /exit command (only on complete line)
+                                if current_line == b"/exit" || current_line.starts_with(b"/exit\n") {
+                                    // Don't send /exit to server, just exit
+                                    std::thread::sleep(std::time::Duration::from_secs(2));
+                                    break;
+                                }
+                                // Keep data after newline for next iteration
+                                line_buf = line_buf[pos + 1..].to_vec();
+                            }
                         }
 
                         // Send raw bytes
