@@ -1,7 +1,7 @@
 # SSH-like Terminal Refactor - Progress Report
 
 **Plan**: `260109-0109-ssh-like-terminal-refactor`
-**Status**: In Progress (3/5 phases complete)
+**Status**: In Progress (4/5 phases complete)
 **Last Updated**: 2026-01-09
 
 ---
@@ -21,10 +21,10 @@ Clean slate refactor để fix terminal I/O theo pattern SSH, sửa protocol fra
 | 0 | Clean Slate Revert | ✅ Done | 2026-01-09 | Removed ping workaround, Vietnamese comments, emoji |
 | 1 | Protocol Framing Fix | ✅ Done | 2026-01-09 | Added MessageReader, read_exact() pattern |
 | 2 | Client Cleanup | ✅ Done | 2026-01-09 | SIGWINCH handling, raw mode warning |
-| 3 | Server Cleanup | ⏳ Pending | - | Extract spawn helper, remove dupes |
+| 3 | Server Cleanup | ✅ Done | 2026-01-09 | spawn_session_with_config() helper, handler cleanup |
 | 4 | PTY Pump Refactor | ⏳ Pending | - | Smart flush with 5ms latency |
 
-**Overall Progress**: 60% (3/5 phases)
+**Overall Progress**: 80% (4/5 phases)
 
 ---
 
@@ -118,15 +118,37 @@ f2392f9 refactor(terminal): phase 02 client cleanup + SIGWINCH support
 
 ---
 
-## Phase 03: Server Cleanup ⏳
+## Phase 03: Server Cleanup ✅
 
-**Status**: Pending
+**Completed**: 2026-01-09
 
-### Planned Tasks
-- Extract duplicate spawn logic to shared function
-- Remove remaining duplicate code
+### Changes
+1. **spawn_session_with_config() helper** - Extract duplicate spawn logic
+   - Consolidated PTY spawn code from Input/Command handlers
+   - Single source of truth for session initialization
+   - Config struct with all spawn parameters
 
-**Estimated**: 3h
+2. **Handler simplification** - Input/Command cleanup
+   - Both handlers use spawn_session_with_config()
+   - Removed ~60 lines of duplicate code
+   - Consistent error handling
+
+3. **Logging cleanup** - debug → trace
+   - Spawn details demoted to trace level
+   - Reduced log noise in production
+
+### Files Modified
+- `crates/hostagent/src/quic_server.rs`
+
+### Code Review
+- ✅ Compilation passed (hostagent)
+- ✅ Clippy: 0 warnings
+- ✅ 0 critical issues
+
+### Commit
+```
+[COMMIT_HASH] refactor(terminal): phase 03 server cleanup + spawn helper
+```
 
 ---
 
@@ -149,6 +171,7 @@ f2392f9 refactor(terminal): phase 02 client cleanup + SIGWINCH support
 ```
 Branch: main
 Last commits:
+  [COMMIT_HASH] refactor(terminal): phase 03 server cleanup + spawn helper
   f2392f9 refactor(terminal): phase 02 client cleanup + SIGWINCH support
   203d0a8 refactor(terminal): phase 01 protocol framing fix
   f166be6 refactor(terminal): phase 00 clean slate revert
@@ -161,8 +184,8 @@ Last commits:
 1. ✅ Phase 00: Clean Slate Revert - Done
 2. ✅ Phase 01: Protocol Framing Fix - Done
 3. ✅ Phase 02: Client Cleanup - Done
-4. ⏳ Phase 03: Server Cleanup - Next
-5. ⏳ Phase 04: PTY Pump Refactor - Final phase
+4. ✅ Phase 03: Server Cleanup - Done
+5. ⏳ Phase 04: PTY Pump Refactor - Final phase (20% remaining)
 
 ---
 

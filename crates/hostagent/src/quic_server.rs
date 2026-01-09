@@ -227,7 +227,7 @@ impl QuicServer {
                 }
             };
 
-            tracing::debug!("Received message: {:?}", std::mem::discriminant(&msg));
+            tracing::trace!("Received message: {:?}", std::mem::discriminant(&msg));
 
             // Handle message
             match msg {
@@ -288,56 +288,14 @@ impl QuicServer {
                         }
                     } else {
                         // Spawn new session with terminal configuration
-                        let mut config = comacode_core::terminal::TerminalConfig::default();
-
-                        // Apply terminal size from earlier Resize message
-                        if let Some((rows, cols)) = pending_resize {
-                            config.rows = rows;
-                            config.cols = cols;
-                            // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
-                            config.env.push(("COLUMNS".to_string(), cols.to_string()));
-                            config.env.push(("LINES".to_string(), rows.to_string()));
-                            // Hide % marker if Zsh thinks line is incomplete
-                            config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
-                        }
-
-                        match session_mgr.create_session(config).await {
-                            Ok(id) => {
-                                session_id = Some(id);
-                                tracing::info!("Created session {} for connection", id);
-
-                                // Resize PTY to match terminal size
-                                // This syncs the PTY driver with env vars
-                                if let Some((rows, cols)) = pending_resize {
-                                    tracing::info!("Resize PTY: {}x{}", rows, cols);
-                                    let _ = session_mgr.resize_session(id, rows, cols).await;
-                                }
-
-                                // Spawn PTY→QUIC pump task
-                                if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
-                                    let send_clone = send_shared.clone();
-                                    pty_task = Some(tokio::spawn(async move {
-                                        let mut send_lock = send_clone.lock().await;
-                                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
-                                            tracing::error!("PTY→QUIC pump error: {}", e);
-                                        }
-                                        tracing::debug!("PTY→QUIC pump completed");
-                                    }));
-                                    tracing::info!("PTY→QUIC pump task spawned for session {}", id);
-                                } else {
-                                    tracing::warn!("Failed to get PTY reader for session {}", id);
-                                }
-
-                                // Write initial data if non-empty
-                                // Empty Input = eager spawn trigger, don't write to PTY
-                                if !data.is_empty() {
-                                    let _ = session_mgr.write_to_session(id, &data).await;
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to create session: {}", e);
-                            }
-                        }
+                        let _ = Self::spawn_session_with_config(
+                            &session_mgr,
+                            pending_resize,
+                            &mut pty_task,
+                            &mut session_id,
+                            &send_shared,
+                            &data,
+                        ).await;
                     }
                 }
                 NetworkMessage::Command(cmd) => {
@@ -349,55 +307,20 @@ impl QuicServer {
                         break;
                     }
 
-                    // Forward command text to PTY
                     if let Some(id) = session_id {
                         if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
                             tracing::error!("Failed to write to PTY: {}", e);
                         }
                     } else {
                         // Spawn new session with terminal configuration (legacy Command path)
-                        let mut config = comacode_core::terminal::TerminalConfig::default();
-
-                        if let Some((rows, cols)) = pending_resize.take() {
-                            config.rows = rows;
-                            config.cols = cols;
-                            // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
-                            config.env.push(("COLUMNS".to_string(), cols.to_string()));
-                            config.env.push(("LINES".to_string(), rows.to_string()));
-                            config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
-                        }
-
-                        match session_mgr.create_session(config).await {
-                            Ok(id) => {
-                                session_id = Some(id);
-                                tracing::info!("Created session {} for connection (legacy Command)", id);
-
-                                // Resize PTY to match terminal size
-                                if let Some((rows, cols)) = pending_resize {
-                                    let _ = session_mgr.resize_session(id, rows, cols).await;
-                                }
-
-                                if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
-                                    let send_clone = send_shared.clone();
-                                    pty_task = Some(tokio::spawn(async move {
-                                        let mut send_lock = send_clone.lock().await;
-                                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
-                                            tracing::error!("PTY→QUIC pump error: {}", e);
-                                        }
-                                        tracing::debug!("PTY→QUIC pump completed");
-                                    }));
-                                    tracing::info!("PTY→QUIC pump task spawned for session {}", id);
-                                }
-
-                                // Forward command only if non-empty
-                                if !cmd.text.is_empty() {
-                                    let _ = session_mgr.write_to_session(id, cmd.text.as_bytes()).await;
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to create session: {}", e);
-                            }
-                        }
+                        let _ = Self::spawn_session_with_config(
+                            &session_mgr,
+                            pending_resize,
+                            &mut pty_task,
+                            &mut session_id,
+                            &send_shared,
+                            cmd.text.as_bytes(),
+                        ).await;
                     }
                 }
                 NetworkMessage::Ping { timestamp } => {
@@ -438,6 +361,72 @@ impl QuicServer {
         }
 
         Ok(())
+    }
+
+    /// Spawn session with terminal configuration
+    ///
+    /// Shared helper for Input and Command message handlers.
+    /// Creates PTY session, applies resize, spawns output pump task.
+    async fn spawn_session_with_config(
+        session_mgr: &Arc<SessionManager>,
+        pending_resize: Option<(u16, u16)>,
+        pty_task: &mut Option<tokio::task::JoinHandle<()>>,
+        session_id: &mut Option<u64>,
+        send_shared: &Arc<Mutex<quinn::SendStream>>,
+        initial_data: &[u8],
+    ) -> Result<()> {
+        let mut config = comacode_core::terminal::TerminalConfig::default();
+
+        // Apply terminal size from earlier Resize message
+        if let Some((rows, cols)) = pending_resize {
+            config.rows = rows;
+            config.cols = cols;
+            // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
+            config.env.push(("COLUMNS".to_string(), cols.to_string()));
+            config.env.push(("LINES".to_string(), rows.to_string()));
+            // Hide % marker if Zsh thinks line is incomplete
+            config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+        }
+
+        match session_mgr.create_session(config).await {
+            Ok(id) => {
+                *session_id = Some(id);
+                tracing::info!("Created session {} for connection", id);
+
+                // Resize PTY to match terminal size
+                // This syncs the PTY driver with env vars
+                if let Some((rows, cols)) = pending_resize {
+                    tracing::info!("Resize PTY: {}x{}", rows, cols);
+                    let _ = session_mgr.resize_session(id, rows, cols).await;
+                }
+
+                // Spawn PTY->QUIC pump task
+                if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
+                    let send_clone = send_shared.clone();
+                    *pty_task = Some(tokio::spawn(async move {
+                        let mut send_lock = send_clone.lock().await;
+                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
+                            tracing::error!("PTY->QUIC pump error: {}", e);
+                        }
+                        tracing::debug!("PTY->QUIC pump completed");
+                    }));
+                    tracing::info!("PTY->QUIC pump task spawned for session {}", id);
+                } else {
+                    tracing::warn!("Failed to get PTY reader for session {}", id);
+                }
+
+                // Write initial data if non-empty
+                if !initial_data.is_empty() {
+                    let _ = session_mgr.write_to_session(id, initial_data).await;
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to create session: {}", e);
+                Err(e)
+            }
+        }
     }
 
     /// Send message to stream

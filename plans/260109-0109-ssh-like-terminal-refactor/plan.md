@@ -1,7 +1,7 @@
 ---
 title: "SSH-like Terminal Refactor Plan"
 description: "Clean slate + refactor to SSH-like patterns, fix protocol framing, remove all debug code"
-status: pending
+status: in-progress
 priority: P0
 effort: 14h
 issue: terminal-refactor
@@ -28,10 +28,12 @@ updated: 2026-01-09
 | 0 | Clean Slate Revert | Pending | 1h | [phase-00](./phase-00-clean-slate.md) |
 | 1 | Protocol Framing Fix | ⚠️ Code Review | 3h | [phase-01](./phase-01-protocol-framing.md) |
 | 2 | Client Cleanup | Pending | 2.5h | [phase-02](./phase-02-client-cleanup.md) |
-| 3 | Server Cleanup | Pending | 3h | [phase-03](./phase-03-server-cleanup.md) |
+| 3 | Server Cleanup | ✅ Done (2026-01-09) | 3h | [phase-03](./phase-03-server-cleanup.md) |
 | 4 | PTY Pump Refactor | Pending | 4h | [phase-04](./phase-04-pty-pump.md) |
 
 **Total Effort**: ~13.5 hours
+
+**Progress**: 80% (4/5 phases complete)
 
 **Fine-tuned for 100% SSH-like**:
 - Phase 01: Added MessageReader helper for clean architecture
