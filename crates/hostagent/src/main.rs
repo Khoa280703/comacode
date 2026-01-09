@@ -1,6 +1,10 @@
 //! Comacode Host Agent
 //!
 //! Standalone PC binary that manages PTY sessions and exposes them via QUIC server.
+//!
+//! Desktop-only - not available on iOS.
+
+#![cfg(not(target_os = "ios"))]
 
 mod auth;
 mod cert;

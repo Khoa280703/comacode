@@ -18,8 +18,8 @@ tokio = { workspace = true, features = ["sync", "full"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-# Terminal
-portable-pty = { workspace = true }
+# Terminal (not available on iOS)
+portable-pty = { workspace = true, optional = true }
 # Bytes for zero-copy
 bytes = "1.8"
 # QUIC networking
@@ -49,3 +49,7 @@ futures = "0.3"
 # PTY Adapter (Phase 05.1)
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
+
+[features]
+default = ["pty"]
+pty = ["portable-pty"]

@@ -10,7 +10,8 @@
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
-		4F045C992F10FED400C92E9B /* mobile_bridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F045C982F10FED400C92E9B /* mobile_bridge.framework */; };
+		4F045C9B2F115D3800C92E9B /* mobile_bridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F045C982F10FED400C92E9B /* mobile_bridge.framework */; };
+		4F045C9C2F115D3800C92E9B /* mobile_bridge.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4F045C982F10FED400C92E9B /* mobile_bridge.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		73E97AAB058C6AD9E0FDBBD7 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 029F3F5794CDD3298872788D /* Pods_RunnerTests.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
@@ -28,6 +29,20 @@
 			remoteInfo = Runner;
 		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		4F045C9D2F115D3800C92E9B /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				4F045C9C2F115D3800C92E9B /* mobile_bridge.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		029F3F5794CDD3298872788D /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -71,7 +86,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CCE29B8BA0CF7153AF30EE2C /* Pods_Runner.framework in Frameworks */,
-				4F045C992F10FED400C92E9B /* mobile_bridge.framework in Frameworks */,
+				4F045C9B2F115D3800C92E9B /* mobile_bridge.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,10 +202,11 @@
 				9740EEB61CF901F6004384FC /* Run Script */,
 				97C146EA1CF9000F007C117D /* Sources */,
 				97C146EB1CF9000F007C117D /* Frameworks */,
+				4F045C9D2F115D3800C92E9B /* Embed Frameworks */,
 				97C146EC1CF9000F007C117D /* Resources */,
-				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 				932CD22574C21FB446EF48B4 /* [CP] Embed Pods Frameworks */,
 				BC376A97DB0059BAFCDFD7C6 /* [CP] Copy Pods Resources */,
+				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 			);
 			buildRules = (
 			);
