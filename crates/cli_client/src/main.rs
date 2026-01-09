@@ -216,9 +216,6 @@ async fn main() -> Result<()> {
 
                         // Send filtered bytes
                         if !filtered_data.is_empty() {
-                            // DEBUG: Log bytes being sent
-                            eprintln!("[DEBUG] Sending to PTY: {:?}", filtered_data);
-
                             let msg = NetworkMessage::Input {
                                 data: filtered_data,
                             };

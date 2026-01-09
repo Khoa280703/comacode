@@ -304,9 +304,6 @@ impl QuicServer {
                     }
 
                     if let Some(id) = session_id {
-                        // DEBUG: Log raw bytes being written to PTY
-                        eprintln!("[SERVER DEBUG] Writing to PTY session {}: {:02X?}", id, data);
-
                         // Write raw bytes directly to PTY
                         if let Err(e) = session_mgr.write_to_session(id, &data).await {
                             tracing::error!("Failed to write input to PTY: {}", e);
