@@ -1,7 +1,7 @@
 # SSH-like Terminal Refactor - Progress Report
 
 **Plan**: `260109-0109-ssh-like-terminal-refactor`
-**Status**: In Progress (2/5 phases complete)
+**Status**: In Progress (3/5 phases complete)
 **Last Updated**: 2026-01-09
 
 ---
@@ -20,11 +20,11 @@ Clean slate refactor để fix terminal I/O theo pattern SSH, sửa protocol fra
 |-------|------|--------|------|-------|
 | 0 | Clean Slate Revert | ✅ Done | 2026-01-09 | Removed ping workaround, Vietnamese comments, emoji |
 | 1 | Protocol Framing Fix | ✅ Done | 2026-01-09 | Added MessageReader, read_exact() pattern |
-| 2 | Client Cleanup | ⏳ Pending | - | SIGWINCH handling, remove debug code |
+| 2 | Client Cleanup | ✅ Done | 2026-01-09 | SIGWINCH handling, raw mode warning |
 | 3 | Server Cleanup | ⏳ Pending | - | Extract spawn helper, remove dupes |
 | 4 | PTY Pump Refactor | ⏳ Pending | - | Smart flush with 5ms latency |
 
-**Overall Progress**: 40% (2/5 phases)
+**Overall Progress**: 60% (3/5 phases)
 
 ---
 
@@ -86,22 +86,35 @@ Protocol framing bug: `read()` trả về partial data → `MessageCodec::decode
 
 ### Commit
 ```
-(Pending commit after user approval)
+203d0a8 refactor(terminal): phase 01 protocol framing fix
 ```
 
 ---
 
-## Phase 02: Client Cleanup ⏳
+## Phase 02: Client Cleanup ✅
 
-**Status**: Pending
+**Completed**: 2026-01-09
 
-### Planned Tasks
-- Remove remaining Vietnamese comments
-- Add SIGWINCH handling for dynamic terminal resize
-- Fix /exit command handling
-- Fix terminal reset sequence
+### Changes
+1. **Raw mode warning** - Hiển thị error details khi raw mode fail
+2. **SIGWINCH handler** - Dynamic terminal resize support
+   - Spawns async task để listen cho window change signals
+   - Gửi Resize message tự động khi user resize terminal
+   - Hỗ trợ vim/htop resize dynamics
 
-**Estimated**: 2.5h
+### Files Modified
+- `crates/cli_client/src/main.rs`
+- Added import: `tokio::signal::unix::{signal, SignalKind}`
+
+### Test Results
+- ✅ Compilation passed (cli_client)
+- ✅ Clippy: 0 warnings
+- ✅ Code review: 0 critical issues
+
+### Commit
+```
+f2392f9 refactor(terminal): phase 02 client cleanup + SIGWINCH support
+```
 
 ---
 
@@ -135,19 +148,21 @@ Protocol framing bug: `read()` trả về partial data → `MessageCodec::decode
 
 ```
 Branch: main
-Modified files (staged):
-  - crates/cli_client/src/main.rs
-  - crates/cli_client/src/message_reader.rs (new)
-  - crates/hostagent/src/quic_server.rs
+Last commits:
+  f2392f9 refactor(terminal): phase 02 client cleanup + SIGWINCH support
+  203d0a8 refactor(terminal): phase 01 protocol framing fix
+  f166be6 refactor(terminal): phase 00 clean slate revert
 ```
 
 ---
 
 ## Next Steps
 
-1. Commit Phase 01 changes
-2. Start Phase 02: Client Cleanup
-3. Add SIGWINCH handling for dynamic resize
+1. ✅ Phase 00: Clean Slate Revert - Done
+2. ✅ Phase 01: Protocol Framing Fix - Done
+3. ✅ Phase 02: Client Cleanup - Done
+4. ⏳ Phase 03: Server Cleanup - Next
+5. ⏳ Phase 04: PTY Pump Refactor - Final phase
 
 ---
 
@@ -156,3 +171,5 @@ Modified files (staged):
 - [Plan](../260109-0109-ssh-like-terminal-refactor/plan.md)
 - [Phase 01](../260109-0109-ssh-like-terminal-refactor/phase-01-protocol-framing.md)
 - [Phase 02](../260109-0109-ssh-like-terminal-refactor/phase-02-client-cleanup.md)
+- [Phase 03](../260109-0109-ssh-like-terminal-refactor/phase-03-server-cleanup.md)
+- [Phase 04](../260109-0109-ssh-like-terminal-refactor/phase-04-pty-pump.md)
