@@ -84,7 +84,7 @@ impl PtySession {
                 // Blocking read - blocks this thread but NOT the Tokio runtime
                 match reader.read(&mut buf) {
                     Ok(0) => {
-                        tracing::debug!("PTY reader EOF for session {}", session_id);
+                        tracing::trace!("PTY reader EOF for session {}", session_id);
                         break;
                     }
                     Ok(n) => {
@@ -115,7 +115,7 @@ impl PtySession {
         // Log reader task completion
         tokio::spawn(async move {
             match pty_reader.await {
-                Ok(Ok(_)) => tracing::debug!("PTY reader task completed for session {}", session_id),
+                Ok(Ok(_)) => tracing::trace!("PTY reader task completed for session {}", session_id),
                 Ok(Err(e)) => tracing::error!("PTY reader task error for session {}: {}", session_id, e),
                 Err(e) => tracing::error!("PTY reader task panicked for session {}: {}", session_id, e),
             }

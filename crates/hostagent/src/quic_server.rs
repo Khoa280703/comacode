@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use comacode_core::{
     protocol::MessageCodec,
-    transport::{configure_server, stream::pump_pty_to_quic},
+    transport::{configure_server, pump_pty_to_quic_smart, BufferConfig},
     types::NetworkMessage,
 };
 use quinn::{Endpoint, TokioRuntime};
@@ -189,10 +189,18 @@ impl QuicServer {
         rate_limiter: Arc<RateLimiterStore>,
         peer_addr: SocketAddr,
     ) -> Result<()> {
+        /// Session state for SSH-like explicit protocol
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum SessionState {
+            Authenticated,
+            PtyAllocated,
+            ShellStarted,
+        }
+
+        let mut session_state = SessionState::Authenticated;
         let mut session_id: Option<u64> = None;
         let mut authenticated = false;
         let mut pty_task: Option<tokio::task::JoinHandle<()>> = None;
-        let mut pending_resize: Option<(u16, u16)> = None; // Store (rows, cols) before session created
 
         // Share send stream for PTY output forwarding
         let send_shared = Arc::new(Mutex::new(send));
@@ -287,16 +295,12 @@ impl QuicServer {
                         break;
                     }
 
-                    // Log input for debugging (printable chars only)
-                    if let Ok(text) = std::str::from_utf8(&data) {
-                        let printable: String = text.chars().filter(|c| c.is_ascii() && !c.is_ascii_control()).collect();
-                        if !printable.is_empty() {
-                            tracing::info!("Input: session={:?} data={:?}", session_id, printable);
-                        } else if data.contains(&b'\n') {
-                            tracing::info!("Input: session={:?} data=<newline>", session_id);
-                        } else if data.contains(&b'\r') {
-                            tracing::info!("Input: session={:?} data=<CR>", session_id);
-                        }
+                    // Only accept Input after shell started (explicit protocol)
+                    if session_state != SessionState::ShellStarted {
+                        tracing::warn!("Input received before shell started, ignoring");
+                        // In explicit protocol, Input is only valid after StartShell
+                        // Legacy implicit spawn is removed
+                        continue;
                     }
 
                     if let Some(id) = session_id {
@@ -304,16 +308,6 @@ impl QuicServer {
                         if let Err(e) = session_mgr.write_to_session(id, &data).await {
                             tracing::error!("Failed to write input to PTY: {}", e);
                         }
-                    } else {
-                        // Spawn new session with terminal configuration
-                        let _ = Self::spawn_session_with_config(
-                            &session_mgr,
-                            pending_resize,
-                            &mut pty_task,
-                            &mut session_id,
-                            &send_shared,
-                            &data,
-                        ).await;
                     }
                 }
                 NetworkMessage::Command(cmd) => {
@@ -325,20 +319,86 @@ impl QuicServer {
                         break;
                     }
 
+                    // Only accept Command after shell started (explicit protocol)
+                    if session_state != SessionState::ShellStarted {
+                        tracing::warn!("Command received before shell started, ignoring");
+                        continue;
+                    }
+
                     if let Some(id) = session_id {
                         if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
                             tracing::error!("Failed to write to PTY: {}", e);
                         }
+                    }
+                }
+                NetworkMessage::RequestPty { rows, cols, shell, env } => {
+                    // SSH-like explicit PTY allocation
+                    if !authenticated {
+                        tracing::warn!("RequestPty received before authentication from {}", peer_addr);
+                        break;
+                    }
+
+                    if session_state != SessionState::Authenticated {
+                        tracing::warn!("RequestPty received in invalid state: {:?}", session_state);
+                        break;
+                    }
+
+                    // Build terminal config
+                    let mut config = comacode_core::terminal::TerminalConfig::default();
+                    config.rows = rows;
+                    config.cols = cols;
+                    config.env.extend(env);
+                    if let Some(s) = shell {
+                        config.shell = s;
+                    }
+                    // Env vars for proper terminal behavior
+                    config.env.push(("COLUMNS".to_string(), cols.to_string()));
+                    config.env.push(("LINES".to_string(), rows.to_string()));
+                    config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+
+                    // Create PTY session
+                    match session_mgr.create_session(config).await {
+                        Ok(id) => {
+                            session_id = Some(id);
+                            session_state = SessionState::PtyAllocated;
+                            tracing::debug!("PTY allocated for session {} ({}x{})", id, rows, cols);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to allocate PTY: {}", e);
+                            break;
+                        }
+                    }
+                }
+                NetworkMessage::StartShell => {
+                    // SSH-like explicit shell start
+                    if !authenticated {
+                        tracing::warn!("StartShell received before authentication from {}", peer_addr);
+                        break;
+                    }
+
+                    if session_state != SessionState::PtyAllocated {
+                        tracing::warn!("StartShell received in invalid state: {:?}", session_state);
+                        break;
+                    }
+
+                    let id = session_id.expect("session_id must be set after RequestPty");
+
+                    // Spawn PTY->QUIC pump task with smart buffering
+                    if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
+                        let send_clone = send_shared.clone();
+                        pty_task = Some(tokio::spawn(async move {
+                            let mut send_lock = send_clone.lock().await;
+                            let config = BufferConfig::interactive(); // Low latency for interactive shell
+                            if let Err(e) = pump_pty_to_quic_smart(pty_reader, &mut *send_lock, config).await {
+                                tracing::error!("PTY->QUIC pump error: {}", e);
+                            }
+                            tracing::debug!("PTY->QUIC pump completed");
+                        }));
+                        session_state = SessionState::ShellStarted;
+                        tracing::debug!("Shell started for session {}, PTY->QUIC pump spawned", id);
                     } else {
-                        // Spawn new session with terminal configuration (legacy Command path)
-                        let _ = Self::spawn_session_with_config(
-                            &session_mgr,
-                            pending_resize,
-                            &mut pty_task,
-                            &mut session_id,
-                            &send_shared,
-                            cmd.text.as_bytes(),
-                        ).await;
+                        tracing::error!("Failed to get PTY reader for session {}", id);
+                        break;
                     }
                 }
                 NetworkMessage::Ping { timestamp } => {
@@ -348,15 +408,14 @@ impl QuicServer {
                     Self::send_message(&mut *send_lock, &response).await?;
                 }
                 NetworkMessage::Resize { rows, cols } => {
+                    // Dynamic terminal resize after session started
                     if let Some(id) = session_id {
                         if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
                             tracing::error!("Failed to resize PTY: {}", e);
                         }
-                    } else {
-                        // Store pending resize for when session is created
-                        pending_resize = Some((rows, cols));
-                        tracing::debug!("Stored pending resize: {}x{}", rows, cols);
                     }
+                    // In explicit protocol, Resize before PTY allocation is ignored
+                    // Use RequestPty with correct size instead
                 }
                 NetworkMessage::Close => {
                     tracing::info!("Received Close message");
@@ -418,12 +477,13 @@ impl QuicServer {
                     let _ = session_mgr.resize_session(id, rows, cols).await;
                 }
 
-                // Spawn PTY->QUIC pump task
+                // Spawn PTY->QUIC pump task with smart buffering
                 if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
                     let send_clone = send_shared.clone();
                     *pty_task = Some(tokio::spawn(async move {
                         let mut send_lock = send_clone.lock().await;
-                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
+                        let config = BufferConfig::interactive();
+                        if let Err(e) = pump_pty_to_quic_smart(pty_reader, &mut *send_lock, config).await {
                             tracing::error!("PTY->QUIC pump error: {}", e);
                         }
                         tracing::debug!("PTY->QUIC pump completed");

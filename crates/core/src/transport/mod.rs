@@ -7,6 +7,8 @@
 
 pub mod stream;
 
+pub use stream::{BufferConfig, pump_pty_to_quic, pump_pty_to_quic_smart};
+
 use quinn::{ClientConfig, ServerConfig, TransportConfig};
 use std::sync::Arc;
 use std::time::Duration;

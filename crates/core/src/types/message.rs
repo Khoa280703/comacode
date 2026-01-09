@@ -40,6 +40,21 @@ pub enum NetworkMessage {
     /// Resize terminal request
     Resize { rows: u16, cols: u16 },
 
+    /// Explicit PTY allocation request (SSH-like protocol)
+    /// Client sends this after Hello to allocate PTY with correct size
+    RequestPty {
+        rows: u16,
+        cols: u16,
+        /// Optional: override default shell
+        shell: Option<String>,
+        /// Optional: additional env vars
+        env: Vec<(String, String)>,
+    },
+
+    /// Explicit shell start command (SSH-like protocol)
+    /// Client sends this after RequestPty to start the shell
+    StartShell,
+
     /// Request full terminal snapshot (client → host)
     RequestSnapshot,
 
@@ -104,6 +119,31 @@ impl NetworkMessage {
     /// Create resize message
     pub fn resize(rows: u16, cols: u16) -> Self {
         Self::Resize { rows, cols }
+    }
+
+    /// Create RequestPty message (SSH-like explicit PTY allocation)
+    pub fn request_pty(rows: u16, cols: u16) -> Self {
+        Self::RequestPty {
+            rows,
+            cols,
+            shell: None,
+            env: vec![],
+        }
+    }
+
+    /// Create RequestPty message with custom shell and env vars
+    pub fn request_pty_with_config(rows: u16, cols: u16, shell: Option<String>, env: Vec<(String, String)>) -> Self {
+        Self::RequestPty {
+            rows,
+            cols,
+            shell,
+            env,
+        }
+    }
+
+    /// Create StartShell message (SSH-like explicit shell start)
+    pub fn start_shell() -> Self {
+        Self::StartShell
     }
 
     /// Create request snapshot message
@@ -205,6 +245,39 @@ mod tests {
     fn test_hello_with_auth_token_serialization() {
         let token = AuthToken::generate();
         let msg = NetworkMessage::hello(Some(token));
+
+        let serialized = postcard::to_allocvec(&msg).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_request_pty_message() {
+        let msg = NetworkMessage::request_pty(24, 80);
+        assert!(matches!(msg, NetworkMessage::RequestPty { .. }));
+
+        let serialized = postcard::to_allocvec(&msg).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_request_pty_with_config_message() {
+        let shell = Some("/bin/bash".to_string());
+        let env = vec![("TERM".to_string(), "xterm-256color".to_string())];
+        let msg = NetworkMessage::request_pty_with_config(24, 80, shell, env);
+
+        assert!(matches!(msg, NetworkMessage::RequestPty { rows: 24, cols: 80, .. }));
+
+        let serialized = postcard::to_allocvec(&msg).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_start_shell_message() {
+        let msg = NetworkMessage::start_shell();
+        assert!(matches!(msg, NetworkMessage::StartShell));
 
         let serialized = postcard::to_allocvec(&msg).unwrap();
         let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();

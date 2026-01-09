@@ -148,17 +148,19 @@ async fn main() -> Result<()> {
         }
     };
 
-    // ===== 2. EAGER SPAWN SEQUENCE (SSH-LIKE) =====
-    // Send Resize -> Empty Input to spawn session
-    if let Ok((cols, rows)) = size() {
-        let resize = NetworkMessage::Resize { rows, cols };
-        send.write_all(&MessageCodec::encode(&resize)?).await?;
-    }
+    // ===== 2. EXPLICIT SPAWN SEQUENCE (SSH-LIKE) =====
+    // Protocol: Hello → RequestPty → StartShell (explicit, no implicit triggers)
 
-    // Trigger Spawn: Send empty Input to spawn session on server
-    let spawn_trigger = NetworkMessage::Input { data: vec![] };
-    send.write_all(&MessageCodec::encode(&spawn_trigger)?)
-        .await?;
+    // Get terminal size for PTY allocation
+    let (rows, cols) = size().unwrap_or((24, 80));
+
+    // RequestPty: Allocate PTY with correct size
+    let request_pty = NetworkMessage::request_pty(rows, cols);
+    send.write_all(&MessageCodec::encode(&request_pty)?).await?;
+
+    // StartShell: Start the shell process
+    let start_shell = NetworkMessage::start_shell();
+    send.write_all(&MessageCodec::encode(&start_shell)?).await?;
 
     // ===== 3. INTERACTIVE LOOP =====
     // Spawn stdin task immediately - no need to wait for prompt

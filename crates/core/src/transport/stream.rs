@@ -12,6 +12,53 @@ use crate::protocol::MessageCodec;
 use crate::types::{NetworkMessage, TerminalEvent};
 use crate::{CoreError, Result};
 
+/// Smart buffering configuration for PTY→QUIC streaming
+///
+/// Balances latency (interactive typing) vs throughput (bulk output).
+#[derive(Debug, Clone, Copy)]
+pub struct BufferConfig {
+    /// Maximum batch size before forcing flush
+    pub max_batch_size: usize,
+
+    /// Maximum time to wait before flushing (milliseconds)
+    pub max_flush_delay_ms: u64,
+
+    /// Flush immediately on newline (for interactive mode)
+    pub flush_on_newline: bool,
+}
+
+impl Default for BufferConfig {
+    fn default() -> Self {
+        Self {
+            max_batch_size: 16 * 1024,  // 16KB
+            max_flush_delay_ms: 10,     // 10ms
+            flush_on_newline: true,     // Interactive-friendly
+        }
+    }
+}
+
+impl BufferConfig {
+    /// Interactive mode: low latency, small batches
+    /// Best for: shell interaction, command typing
+    pub fn interactive() -> Self {
+        Self {
+            max_batch_size: 4 * 1024,   // 4KB
+            max_flush_delay_ms: 5,      // 5ms
+            flush_on_newline: true,
+        }
+    }
+
+    /// Bulk mode: high throughput, large batches
+    /// Best for: cat large files, logs, install scripts
+    pub fn bulk() -> Self {
+        Self {
+            max_batch_size: 64 * 1024,  // 64KB
+            max_flush_delay_ms: 50,     // 50ms
+            flush_on_newline: false,
+        }
+    }
+}
+
 /// Pump data from PTY to QUIC stream
 ///
 /// This is the CRITICAL function for terminal I/O.
@@ -61,6 +108,106 @@ where
     Ok(())
 }
 
+/// Pump data from PTY to QUIC stream with smart buffering
+///
+/// Optimizes throughput vs latency trade-off by batching small reads.
+/// Uses tokio::select! to avoid blocking on read when timeout expires.
+///
+/// Flush conditions:
+/// - Size threshold reached (max_batch_size)
+/// - Newline detected (if flush_on_newline=true)
+/// - Timeout exceeded (max_flush_delay_ms) - CRITICAL: checked via select!
+///
+/// # Arguments
+/// * `pty` - Async reader from PTY
+/// * `send` - QUIC send stream
+/// * `config` - Buffering strategy
+pub async fn pump_pty_to_quic_smart<R>(
+    mut pty: R,
+    send: &mut SendStream,
+    config: BufferConfig,
+) -> Result<()>
+where
+    R: AsyncReadExt + Unpin + Send,
+{
+    let mut read_buf = vec![0u8; 8192];
+    let mut batch_buf = Vec::with_capacity(config.max_batch_size);
+
+    loop {
+        // Calculate timeout: only flush if we have buffered data
+        let flush_timeout = if !batch_buf.is_empty() {
+            std::time::Duration::from_millis(config.max_flush_delay_ms)
+        } else {
+            // No data buffered, wait indefinitely for new data
+            std::time::Duration::from_secs(3600)
+        };
+
+        tokio::select! {
+            // Case 1: PTY has data
+            result = pty.read(&mut read_buf) => {
+                let n = result?;
+                if n == 0 {
+                    // EOF - flush remaining and exit
+                    if !batch_buf.is_empty() {
+                        send_batch(&batch_buf, send).await?;
+                    }
+                    break;
+                }
+
+                // Check for newline in this chunk
+                let chunk_has_newline = read_buf[..n].contains(&b'\n');
+
+                // Accumulate data
+                if batch_buf.len() + n <= config.max_batch_size {
+                    batch_buf.extend_from_slice(&read_buf[..n]);
+                } else {
+                    // Batch full - send current, start new
+                    if !batch_buf.is_empty() {
+                        send_batch(&batch_buf, send).await?;
+                    }
+                    batch_buf = read_buf[..n].to_vec();
+                }
+
+                // Immediate flush conditions (no waiting)
+                let should_flush = if config.flush_on_newline && chunk_has_newline {
+                    true  // Interactive mode - flush on newline
+                } else if batch_buf.len() >= config.max_batch_size {
+                    true  // Size threshold - flush to avoid oversized batches
+                } else {
+                    false
+                };
+
+                if should_flush {
+                    send_batch(&batch_buf, send).await?;
+                    batch_buf.clear();
+                }
+            }
+
+            // Case 2: Timeout expired - flush buffered data
+            _ = tokio::time::sleep(flush_timeout), if !batch_buf.is_empty() => {
+                send_batch(&batch_buf, send).await?;
+                batch_buf.clear();
+            }
+        }
+    }
+
+    let _ = send.finish();
+    Ok(())
+}
+
+/// Helper: send a batch of data as a single NetworkMessage
+async fn send_batch(data: &[u8], send: &mut SendStream) -> Result<()> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    let msg = NetworkMessage::Event(TerminalEvent::Output {
+        data: data.to_vec(),
+    });
+    let encoded = MessageCodec::encode(&msg)?;
+    send.write_all(&encoded).await?;
+    Ok(())
+}
+
 /// Pump data from QUIC stream to PTY
 ///
 /// Reads NetworkMessages from QUIC stream and writes commands to PTY.
@@ -72,7 +219,7 @@ where
 ///
 /// # Message Handling
 /// - Command: Write text to PTY
-/// - Resize: Handle terminal resize (TODO)
+/// - Resize: Handle terminal resize (implemented in server)
 /// - Ping: Respond with Pong (if send stream provided)
 /// - Other: Ignore with debug log
 pub async fn pump_quic_to_pty<W>(
