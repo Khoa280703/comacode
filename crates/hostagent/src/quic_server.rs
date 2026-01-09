@@ -5,14 +5,15 @@
 use anyhow::{Context, Result};
 use comacode_core::{
     protocol::MessageCodec,
+    transport::{configure_server, stream::pump_pty_to_quic},
     types::NetworkMessage,
 };
-use quinn::{Endpoint, ServerConfig, TokioRuntime};
+use quinn::{Endpoint, TokioRuntime};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 use rcgen::KeyPair;
 
 use crate::auth::TokenStore;
@@ -48,10 +49,10 @@ impl QuicServer {
         let key_for_config = PrivateKeyDer::Pkcs8(key_der.clone().into());
         let key_for_return = PrivateKeyDer::Pkcs8(key_der.into());
 
-        // Configure TLS - use cloned key
+        // Configure TLS using transport module (Phase 05.1)
         let cert_vec = vec![cert.clone()];
-        let cfg = ServerConfig::with_single_cert(cert_vec, key_for_config)
-            .context("Failed to configure TLS")?;
+        let cfg = configure_server(cert_vec, key_for_config)
+            .context("Failed to configure server")?;
 
         // Bind UDP socket
         let socket = std::net::UdpSocket::bind(bind_addr)
@@ -190,6 +191,11 @@ impl QuicServer {
     ) -> Result<()> {
         let mut session_id: Option<u64> = None;
         let mut authenticated = false;
+        let mut pty_task: Option<tokio::task::JoinHandle<()>> = None;
+        let mut pending_resize: Option<(u16, u16)> = None; // Store (rows, cols) before session created
+
+        // Share send stream for PTY output forwarding
+        let send_shared = Arc::new(Mutex::new(send));
 
         // Message receive loop
         let mut read_buf = vec![0u8; 1024];
@@ -229,7 +235,8 @@ impl QuicServer {
                                 let _ = rate_limiter.record_auth_failure(peer_addr.ip()).await;
 
                                 // Send error response and close
-                                let _ = Self::send_message(&mut send, &NetworkMessage::hello(None)).await;
+                                let mut send_lock = send_shared.lock().await;
+                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
                                 break;
                             }
 
@@ -242,42 +249,136 @@ impl QuicServer {
                             if let Err(e) = msg.validate_handshake() {
                                 tracing::error!("Handshake validation failed: {}", e);
                                 // Send error and close
-                                let _ = Self::send_message(&mut send, &NetworkMessage::hello(None)).await;
+                                let mut send_lock = send_shared.lock().await;
+                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
                                 break;
                             }
 
                             // Respond with Hello
                             let response = NetworkMessage::hello(None);
-                            Self::send_message(&mut send, &response).await?;
+                            let mut send_lock = send_shared.lock().await;
+                            Self::send_message(&mut *send_lock, &response).await?;
                         }
-                        NetworkMessage::Command(cmd) => {
-                            // Require authentication before creating session
+                        NetworkMessage::Input { data } => {
+                            // Raw input bytes - pure passthrough to PTY
+                            // PTY handles echo & signal generation (Ctrl+C = SIGINT)
                             if !authenticated {
-                                tracing::warn!("Command received before authentication from {}", peer_addr);
+                                tracing::warn!("Input received before authentication from {}", peer_addr);
                                 break;
                             }
 
-                            // Forward command to PTY
                             if let Some(id) = session_id {
-                                if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
-                                    tracing::error!("Failed to write to PTY: {}", e);
+                                // Write raw bytes directly to PTY
+                                if let Err(e) = session_mgr.write_to_session(id, &data).await {
+                                    tracing::error!("Failed to write input to PTY: {}", e);
                                 }
                             } else {
-                                // Create new session
-                                let config = comacode_core::terminal::TerminalConfig::default();
+                                // Spawn new session with terminal configuration
+                                let mut config = comacode_core::terminal::TerminalConfig::default();
+
+                                // Apply terminal size from earlier Resize message
+                                if let Some((rows, cols)) = pending_resize {
+                                    config.rows = rows;
+                                    config.cols = cols;
+                                    // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
+                                    config.env.push(("COLUMNS".to_string(), cols.to_string()));
+                                    config.env.push(("LINES".to_string(), rows.to_string()));
+                                    // Hide % marker if Zsh thinks line is incomplete
+                                    config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+                                }
+
                                 match session_mgr.create_session(config).await {
                                     Ok(id) => {
                                         session_id = Some(id);
                                         tracing::info!("Created session {} for connection", id);
 
-                                        // Get output sender for this session
-                                        // Note: For MVP, output forwarding is limited due to SendStream ownership
-                                        // Full bi-directional streaming will be implemented in Phase 05
-                                        let _output_tx = session_mgr.get_session_output(id).await;
-                                        tracing::info!("PTY output forwarding via poll mode (Phase 05 will add streaming)");
+                                        // Resize PTY to match terminal size
+                                        // This syncs the PTY driver with env vars
+                                        if let Some((rows, cols)) = pending_resize {
+                                            tracing::info!("Resize PTY: {}x{}", rows, cols);
+                                            let _ = session_mgr.resize_session(id, rows, cols).await;
+                                        }
 
-                                        // Forward command
-                                        let _ = session_mgr.write_to_session(id, cmd.text.as_bytes()).await;
+                                        // Spawn PTY→QUIC pump task
+                                        if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
+                                            let send_clone = send_shared.clone();
+                                            pty_task = Some(tokio::spawn(async move {
+                                                let mut send_lock = send_clone.lock().await;
+                                                if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
+                                                    tracing::error!("PTY→QUIC pump error: {}", e);
+                                                }
+                                                tracing::debug!("PTY→QUIC pump completed");
+                                            }));
+                                            tracing::info!("PTY→QUIC pump task spawned for session {}", id);
+                                        } else {
+                                            tracing::warn!("Failed to get PTY reader for session {}", id);
+                                        }
+
+                                        // Write initial data if non-empty
+                                        // Empty Input = eager spawn trigger, don't write to PTY
+                                        if !data.is_empty() {
+                                            let _ = session_mgr.write_to_session(id, &data).await;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to create session: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        NetworkMessage::Command(cmd) => {
+                            // Legacy: Command with String text
+                            // Still supported for backward compatibility
+                            // Use Input instead for raw byte passthrough
+                            if !authenticated {
+                                tracing::warn!("Command received before authentication from {}", peer_addr);
+                                break;
+                            }
+
+                            // Forward command text to PTY
+                            if let Some(id) = session_id {
+                                if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
+                                    tracing::error!("Failed to write to PTY: {}", e);
+                                }
+                            } else {
+                                // Spawn new session with terminal configuration (legacy Command path)
+                                let mut config = comacode_core::terminal::TerminalConfig::default();
+
+                                if let Some((rows, cols)) = pending_resize.take() {
+                                    config.rows = rows;
+                                    config.cols = cols;
+                                    // Env vars: Zsh reads COLUMNS/LINES before querying PTY driver
+                                    config.env.push(("COLUMNS".to_string(), cols.to_string()));
+                                    config.env.push(("LINES".to_string(), rows.to_string()));
+                                    config.env.push(("PROMPT_EOL_MARK".to_string(), "".to_string()));
+                                }
+
+                                match session_mgr.create_session(config).await {
+                                    Ok(id) => {
+                                        session_id = Some(id);
+                                        tracing::info!("Created session {} for connection (legacy Command)", id);
+
+                                        // Resize PTY to match terminal size
+                                        if let Some((rows, cols)) = pending_resize {
+                                            let _ = session_mgr.resize_session(id, rows, cols).await;
+                                        }
+
+                                        if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
+                                            let send_clone = send_shared.clone();
+                                            pty_task = Some(tokio::spawn(async move {
+                                                let mut send_lock = send_clone.lock().await;
+                                                if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
+                                                    tracing::error!("PTY→QUIC pump error: {}", e);
+                                                }
+                                                tracing::debug!("PTY→QUIC pump completed");
+                                            }));
+                                            tracing::info!("PTY→QUIC pump task spawned for session {}", id);
+                                        }
+
+                                        // Forward command only if non-empty
+                                        if !cmd.text.is_empty() {
+                                            let _ = session_mgr.write_to_session(id, cmd.text.as_bytes()).await;
+                                        }
                                     }
                                     Err(e) => {
                                         tracing::error!("Failed to create session: {}", e);
@@ -288,13 +389,18 @@ impl QuicServer {
                         NetworkMessage::Ping { timestamp } => {
                             // Respond with Pong
                             let response = NetworkMessage::pong(timestamp);
-                            Self::send_message(&mut send, &response).await?;
+                            let mut send_lock = send_shared.lock().await;
+                            Self::send_message(&mut *send_lock, &response).await?;
                         }
                         NetworkMessage::Resize { rows, cols } => {
                             if let Some(id) = session_id {
                                 if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
                                     tracing::error!("Failed to resize PTY: {}", e);
                                 }
+                            } else {
+                                // Store pending resize for when session is created
+                                pending_resize = Some((rows, cols));
+                                tracing::debug!("Stored pending resize: {}x{}", rows, cols);
                             }
                         }
                         NetworkMessage::Close => {
@@ -317,6 +423,11 @@ impl QuicServer {
         // Cleanup session on disconnect
         if let Some(id) = session_id {
             let _ = session_mgr.cleanup_session(id).await;
+        }
+
+        // Wait for PTY pump task to complete
+        if let Some(task) = pty_task {
+            let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
         }
 
         Ok(())

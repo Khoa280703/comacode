@@ -1,42 +1,36 @@
-//! Minimal QUIC client để test Comacode backend
-//!
-//! Features:
-//! - Connect to hostagent via QUIC
-//! - Send/receive NetworkMessage
-//! - Interactive command mode
-//! - Test auth + rate limiting + TOFU
+//! QUIC client for Comacode remote terminal
+//! Features: SSH-like raw mode, eager spawn, proper resize
+
+mod raw_mode;
 
 use anyhow::Result;
 use clap::Parser;
-use comacode_core::{AuthToken, MessageCodec, NetworkMessage};
-use quinn::{Endpoint, ClientConfig};
-use rustls::ClientConfig as RustlsClientConfig;
-use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSignatureValid};
+use comacode_core::{AuthToken, MessageCodec, NetworkMessage, TerminalEvent};
+use crossterm::terminal::size;
+use quinn::{ClientConfig, Endpoint};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::ring::default_provider;
+use rustls::ClientConfig as RustlsClientConfig;
 use rustls::DigitallySignedStruct;
 use rustls::SignatureScheme;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
+// CLI argument parser and TLS verification
 #[derive(Parser, Debug)]
 struct Args {
-    /// Host address to connect to
     #[arg(short, long, default_value = "127.0.0.1:8443")]
     connect: SocketAddr,
-
-    /// Auth token (REQUIRED - copy from hostagent output)
     #[arg(short, long)]
     token: String,
-
-    /// Skip certificate verification (TESTING ONLY)
     #[arg(long, default_value_t = false)]
     insecure: bool,
 }
 
-/// Certificate verifier that skips verification (TESTING ONLY)
 #[derive(Debug)]
 struct SkipVerification;
-
 impl ServerCertVerifier for SkipVerification {
     fn verify_server_cert(
         &self,
@@ -48,7 +42,6 @@ impl ServerCertVerifier for SkipVerification {
     ) -> Result<ServerCertVerified, rustls::Error> {
         Ok(ServerCertVerified::assertion())
     }
-
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
@@ -57,7 +50,6 @@ impl ServerCertVerifier for SkipVerification {
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
-
     fn verify_tls13_signature(
         &self,
         _message: &[u8],
@@ -66,7 +58,6 @@ impl ServerCertVerifier for SkipVerification {
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
-
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         vec![
             SignatureScheme::RSA_PKCS1_SHA1,
@@ -88,114 +79,150 @@ impl ServerCertVerifier for SkipVerification {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Install default crypto provider cho rustls 0.23
-    default_provider().install_default().expect("Failed to install crypto provider");
-
+    default_provider()
+        .install_default()
+        .expect("Failed to install crypto provider");
     let args = Args::parse();
 
-    println!("🔧 Comacode CLI Client");
-    println!("📡 Connecting to {}...", args.connect);
-
-    // Validate token format (must be 64 hex chars)
-    let token = AuthToken::from_hex(&args.token)
-        .map_err(|_| anyhow::anyhow!("Invalid token format. Expected 64 hex characters from hostagent."))?;
-
-    // Create QUIC endpoint
+    println!("Comacode CLI Client v{}", env!("CARGO_PKG_VERSION"));
+    println!("Connecting to {}...", args.connect);
+    let token = AuthToken::from_hex(&args.token).map_err(|_| anyhow::anyhow!("Invalid token"))?;
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
-
-    // Configure TLS (skip verification for testing)
     if !args.insecure {
-        return Err(anyhow::anyhow!("Proper verification not implemented, use --insecure for testing"));
+        return Err(anyhow::anyhow!("Use --insecure"));
     }
-
-    // Build rustls client config with custom certificate verifier
     let crypto = RustlsClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(SkipVerification))
         .with_no_client_auth();
+    let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap();
+    endpoint.set_default_client_config(ClientConfig::new(Arc::new(quic_crypto)));
 
-    // Convert to quinn-compatible config
-    let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-        .map_err(|e| anyhow::anyhow!("Failed to create QUIC config: {}", e))?;
-
-    let config = ClientConfig::new(Arc::new(quic_crypto));
-    endpoint.set_default_client_config(config);
-
-    // Connect to host
     let connecting = endpoint.connect(args.connect, "comacode.local")?;
     let connection = connecting.await?;
-
-    println!("✅ Connected to {}", args.connect);
-
-    // Open bidirectional stream
     let (mut send, mut recv) = connection.open_bi().await?;
-    println!("📡 Stream opened");
 
-    // Send Hello with validated token (already validated above)
+    // Handshake
     let hello = NetworkMessage::hello(Some(token));
-    let encoded = MessageCodec::encode(&hello)?;
-    send.write_all(&encoded).await?;
-    println!("🤝 Handshake sent");
-
-    // Read Hello response
+    send.write_all(&MessageCodec::encode(&hello)?).await?;
     let mut buf = vec![0u8; 4096];
     let n = match recv.read(&mut buf).await? {
         Some(n) => n,
-        None => return Err(anyhow::anyhow!("Connection closed during handshake")),
+        None => return Err(anyhow::anyhow!("Closed")),
     };
-    let response = MessageCodec::decode(&buf[..n])?;
-    println!("✅ Handshake complete: {:?}", std::mem::discriminant(&response));
+    let _ = MessageCodec::decode(&buf[..n])?;
+    println!("Authenticated");
 
-    // Test: Send Ping and wait for Pong
-    let ping = NetworkMessage::ping();
-    send.write_all(&MessageCodec::encode(&ping)?).await?;
-    println!("📝 Ping sent");
+    // ===== 1. BANNER & RAW MODE =====
+    let _ = std::io::stdout().write_all(b"\x1b]0;Comacode Remote Session\x07");
+    let banner = format!(
+        "\r\n\
+        \x1b[1;32m╔════════════════════════════════════════╗\x1b[0m\r\n\
+        \x1b[1;32m║       COMACODE REMOTE SHELL           ║\x1b[0m\r\n\
+        \x1b[1;32m╚════════════════════════════════════════╝\x1b[0m\r\n\
+        \x1b[90m  Host: {}\x1b[0m\r\n\
+        \x1b[90m  Press /exit to disconnect\x1b[0m\r\n\r\n",
+        args.connect
+    );
+    let _ = std::io::stdout().write_all(banner.as_bytes());
+    let _ = std::io::stdout().flush();
 
-    // Read response with timeout
-    let start = std::time::Instant::now();
-    let timeout_duration = std::time::Duration::from_secs(5);
-    let mut received_pong = false;
+    // Enable raw mode for terminal input
+    // Fallback: continue without raw mode in non-TTY environments
+    let _guard = match raw_mode::RawModeGuard::enable() {
+        Ok(guard) => Some(guard),
+        Err(_) => None,  // Non-TTY environment, continue without raw mode
+    };
 
-    while start.elapsed() < timeout_duration {
-        match recv.read(&mut buf).await? {
-            Some(n) if n > 0 => {
-                match MessageCodec::decode(&buf[..n]) {
-                    Ok(msg) => match msg {
-                        NetworkMessage::Pong { timestamp } => {
-                            println!("✅ Received Pong (timestamp: {})", timestamp);
-                            received_pong = true;
+    // ===== 2. EAGER SPAWN SEQUENCE (SSH-LIKE) =====
+    // Send Resize -> Empty Input to spawn session
+    if let Ok((cols, rows)) = size() {
+        let resize = NetworkMessage::Resize { rows, cols };
+        send.write_all(&MessageCodec::encode(&resize)?).await?;
+    }
+
+    // Trigger Spawn: Send empty Input to spawn session on server
+    let spawn_trigger = NetworkMessage::Input { data: vec![] };
+    send.write_all(&MessageCodec::encode(&spawn_trigger)?)
+        .await?;
+
+    // ===== 3. INTERACTIVE LOOP =====
+    // Spawn stdin task immediately - no need to wait for prompt
+    // User input is buffered and sent (type-ahead)
+
+    let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(32);
+    let mut stdin_task = tokio::task::spawn_blocking(move || {
+        let mut stdin = std::io::stdin();
+        let mut buf = [0u8; 1024];
+        loop {
+            match stdin.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    // Check /exit
+                    if String::from_utf8_lossy(&buf[..n]).trim() == "/exit" {
+                        break;
+                    }
+                    // Send raw bytes
+                    let msg = NetworkMessage::Input {
+                        data: buf[..n].to_vec(),
+                    };
+                    if let Ok(encoded) = MessageCodec::encode(&msg) {
+                        if stdin_tx.blocking_send(encoded).is_err() {
                             break;
                         }
-                        _ => {
-                            println!("📨 Received: {:?}", std::mem::discriminant(&msg));
-                        }
-                    },
-                    Err(_) => {
-                        // Not a valid message
-                        println!("📨 Raw data: {} bytes", n);
                     }
                 }
+                Err(_) => break,
             }
-            Some(_) | None => {
-                if received_pong {
-                    break;
+        }
+    });
+
+    let mut recv_buf = vec![0u8; 8192];
+    let mut stdin_eof = false;
+
+    loop {
+        tokio::select! {
+            _ = &mut stdin_task => { stdin_eof = true; }
+            Some(encoded) = stdin_rx.recv() => {
+                if send.write_all(&encoded).await.is_err() { break; }
+            }
+            result = recv.read(&mut recv_buf) => {
+                match result {
+                    Ok(Some(n)) => {
+                        // Decode length-prefixed message from buffer
+                        if let Ok(msg) = MessageCodec::decode(&recv_buf[..n]) {
+                            match msg {
+                                NetworkMessage::Event(TerminalEvent::Output { data }) => {
+                                    let mut stdout = std::io::stdout();
+                                    let _ = stdout.write_all(&data);
+                                    let _ = stdout.flush();
+                                }
+                                NetworkMessage::Close => break,
+                                _ => {}
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
                 }
-                // Continue waiting
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+        if stdin_eof && stdin_rx.is_empty() {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if stdin_rx.is_empty() {
+                break;
             }
         }
     }
 
-    if received_pong {
-        println!("✅ Ping/Pong test successful!");
-    } else {
-        println!("⚠️  No Pong received (timeout)");
-    }
+    stdin_task.abort();
 
-    // Send Close to gracefully end connection
-    let close = NetworkMessage::Close;
-    send.write_all(&MessageCodec::encode(&close)?).await?;
-    println!("📡 Closing connection");
+    // Reset Terminal
+    let _ = std::io::stdout().write_all(b"\x1b]0;\x07\x1b[!p\x1bc\r\nConnection closed.\r\n");
+    let _ = std::io::stdout().flush();
+    let _ = send
+        .write_all(&MessageCodec::encode(&NetworkMessage::Close)?)
+        .await;
 
     Ok(())
 }
