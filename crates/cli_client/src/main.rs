@@ -190,64 +190,59 @@ async fn main() -> Result<()> {
         }
     });
 
-    // stdin_task: different behavior based on raw mode availability
+    // stdin_task: Passive Observer pattern - send everything for PTY echo, only intercept Enter for /exit
     let mut stdin_task = if raw_mode_enabled {
         // === RAW MODE: byte-by-byte for interactive shell ===
-        // Send immediately for real-time feedback, detect /exit on newline
         tokio::task::spawn_blocking(move || {
             let mut stdin = std::io::stdin();
             let mut buf = [0u8; 1024];
-            let mut line_buf = Vec::new(); // Accumulate for /exit detection
+            let mut command_buffer = Vec::new(); // Buffer để theo dõi lệnh gõ
 
             loop {
                 match stdin.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => break, // EOF
                     Ok(n) => {
-                        let data = &buf[..n];
+                        let input = &buf[..n];
 
-                        // Accumulate for /exit detection with backspace handling
-                        for &byte in data {
-                            match byte {
-                                0x08 | 0x7F => { // Backspace (BS or DEL)
-                                    line_buf.pop();
-                                }
-                                b'\n' | b'\r' => { // Line ending - check for /exit
-                                    line_buf.push(byte);
-                                    let pos = line_buf.iter().position(|&b| b == b'\n' || b == b'\r');
-                                    if let Some(p) = pos {
-                                        let line = &line_buf[..p];
-                                        if line == b"/exit" {
-                                            // Send Close message to server (don't send /exit to PTY)
-                                            let close_msg = NetworkMessage::Close;
-                                            if let Ok(encoded) = MessageCodec::encode(&close_msg) {
-                                                let _ = stdin_tx.blocking_send(encoded);
-                                            }
-                                            std::thread::sleep(std::time::Duration::from_millis(100));
-                                            return;
-                                        }
-                                        // Clear processed part
-                                        let skip = if p + 1 < line_buf.len() && line_buf[p + 1] == b'\n' { 2 } else { 1 };
-                                        line_buf = line_buf[p + skip..].to_vec();
+                        // Duyệt từng byte để xử lý logic "/exit"
+                        for &b in input {
+                            if b == b'\r' || b == b'\n' {
+                                // Khi nhấn Enter: Kiểm tra xem có phải lệnh /exit không
+                                let cmd = String::from_utf8_lossy(&command_buffer).trim().to_string();
+                                if cmd == "/exit" {
+                                    // User đã thấy "/exit" trên màn hình (do các ký tự trước đã gửi đi)
+                                    // KHÔNG gửi phím Enter này -> Shell không execute lệnh rác
+                                    // Gửi Close message để disconnect gracefully
+                                    let close_msg = NetworkMessage::Close;
+                                    if let Ok(encoded) = MessageCodec::encode(&close_msg) {
+                                        let _ = stdin_tx.blocking_send(encoded);
                                     }
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                    return;
                                 }
-                                _ => {
-                                    line_buf.push(byte);
+
+                                // Không phải lệnh exit -> Reset buffer và Gửi Enter đi
+                                command_buffer.clear();
+                                let msg = NetworkMessage::Input { data: vec![b] };
+                                if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                    if stdin_tx.blocking_send(encoded).is_err() { return; }
                                 }
                             }
-                        }
-
-                        // Check if this chunk contains /exit + newline - don't send if it does
-                        let is_exit_command = data.windows(5).any(|w| w == b"/exit") &&
-                            (data.contains(&b'\n') || data.contains(&b'\r'));
-
-                        if !is_exit_command {
-                            // Send raw bytes immediately (real-time interaction)
-                            let msg = NetworkMessage::Input {
-                                data: data.to_vec(),
-                            };
-                            if let Ok(encoded) = MessageCodec::encode(&msg) {
-                                if stdin_tx.blocking_send(encoded).is_err() {
-                                    break;
+                            else if b == 0x7F || b == 0x08 {
+                                // Handle Backspace (để user có thể sửa lệnh /exot -> /exit)
+                                command_buffer.pop();
+                                // Vẫn gửi Backspace sang PTY để xóa trên màn hình
+                                let msg = NetworkMessage::Input { data: vec![b] };
+                                if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                    if stdin_tx.blocking_send(encoded).is_err() { return; }
+                                }
+                            }
+                            else {
+                                // Ký tự thường: Lưu vào buffer + Gửi đi ngay (PTY sẽ echo)
+                                command_buffer.push(b);
+                                let msg = NetworkMessage::Input { data: vec![b] };
+                                if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                    if stdin_tx.blocking_send(encoded).is_err() { return; }
                                 }
                             }
                         }
