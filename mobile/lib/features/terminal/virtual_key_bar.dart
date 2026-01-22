@@ -51,7 +51,7 @@ class VirtualKeyBar extends StatelessWidget {
             color: CatppuccinMocha.teal,
             onPressed: onKeyPressed,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           _ArrowButton(label: '↑', keySequence: '\x1b[A', onPressed: onKeyPressed),
           _ArrowButton(label: '↓', keySequence: '\x1b[B', onPressed: onKeyPressed),
           _ArrowButton(label: '←', keySequence: '\x1b[D', onPressed: onKeyPressed),
@@ -65,7 +65,6 @@ class VirtualKeyBar extends StatelessWidget {
             tooltip: 'Toggle keyboard',
             onPressed: onToggleKeyboard,
           ),
-          const SizedBox(width: 8),
         ],
       ),
     );
@@ -91,26 +90,26 @@ class _KeyButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 4),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: () => onPressed(keySequence),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(4),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               border: Border.all(
                 color: color.withValues(alpha: 0.5),
                 width: 1,
               ),
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
               label,
               style: TextStyle(
                 color: color,
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -139,23 +138,23 @@ class _ArrowButton extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 4),
       child: InkWell(
         onTap: () => onPressed(keySequence),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(4),
         child: Container(
-          width: 44,
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          width: 38,
+          padding: const EdgeInsets.symmetric(vertical: 4),
           decoration: BoxDecoration(
             border: Border.all(
               color: CatppuccinMocha.mauve.withValues(alpha: 0.5),
               width: 1,
             ),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(4),
           ),
           child: Center(
             child: Text(
               label,
               style: TextStyle(
                 color: CatppuccinMocha.mauve,
-                fontSize: 14,
+                fontSize: 12,
               ),
             ),
           ),
@@ -185,10 +184,10 @@ class _ToggleButton extends StatelessWidget {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(6),
           child: Icon(
             icon,
-            size: 20,
+            size: 18,
             color: CatppuccinMocha.subtext0,
           ),
         ),

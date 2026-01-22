@@ -1,16 +1,18 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 import 'core/theme.dart';
 import 'features/connection/home_page.dart';
-import 'bridge/frb_generated.dart';
+import 'features/terminal/terminal_page.dart';
+import 'bridge/third_party/mobile_bridge/frb_generated.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Static library (.a) is linked via -force_load, symbols are in main process
-  await RustLib.init();
+  await RustLib.init(
+    externalLibrary: ExternalLibrary.process(iKnowHowToUseIt: true),
+  );
 
   runApp(
     const ProviderScope(
@@ -31,6 +33,9 @@ class ComacodeApp extends StatelessWidget {
       darkTheme: CatppuccinMocha.darkTheme,
       themeMode: ThemeMode.dark,
       home: const HomePage(),
+      routes: {
+        '/terminal': (context) => const TerminalPage(),
+      },
     );
   }
 }

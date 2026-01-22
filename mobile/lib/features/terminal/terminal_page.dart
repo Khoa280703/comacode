@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../connection/connection_providers.dart';
 import '../../bridge/bridge_wrapper.dart';
-import '../../bridge/third_party/mobile_bridge/api.dart';
+import '../../bridge/ffi_helpers.dart';
 import '../../core/theme.dart';
 import 'virtual_key_bar.dart';
 
@@ -203,8 +203,7 @@ class TerminalWidget extends ConsumerStatefulWidget {
 class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
-  final List<String> _output = [];
-  final bool _isConnected = true; // State is managed externally
+  String _output = ''; // Single buffer for all output
   Timer? _eventLoopTimer;
   bool _isDisposed = false; // Track disposal state
 
@@ -221,9 +220,12 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
   /// - Memory leaks from uncanceled timers
   void _startEventLoop() {
     _eventLoopTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      // Early exit if disposed or not connected
-      if (_isDisposed || !_isConnected || !mounted) {
-        timer.cancel();
+      // Check actual connection state from provider
+      final connectionState = ref.read(connectionStateProvider);
+      if (_isDisposed || !connectionState.isConnected || !mounted) {
+        if (!connectionState.isConnected) {
+          timer.cancel();
+        }
         return;
       }
 
@@ -235,17 +237,19 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
         if (_isDisposed || !mounted) return;
 
         setState(() {
-          if (isEventOutput(event: event)) {
-            final data = getEventData(event: event);
-            _output.add(String.fromCharCodes(data));
+          if (isEventOutput(event)) {
+            final data = getEventData(event);
+            // Append to buffer, strip ANSI escape sequences for display
+            final text = String.fromCharCodes(data);
+            _output += _sanitizeTerminalOutput(text);
             _scrollToBottom();
-          } else if (isEventError(event: event)) {
-            final message = getEventErrorMessage(event: event);
-            _output.add('\x1b[31mError: $message\x1b[0m');
+          } else if (isEventError(event)) {
+            final message = getEventErrorMessage(event);
+            _output += 'Error: $message\n';
             _scrollToBottom();
-          } else if (isEventExit(event: event)) {
-            final code = getEventExitCode(event: event);
-            _output.add('\r\nProcess exited with code $code\r\n');
+          } else if (isEventExit(event)) {
+            final code = getEventExitCode(event);
+            _output += '\nProcess exited with code $code\n';
             _scrollToBottom();
           }
         });
@@ -263,23 +267,120 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_isDisposed || !mounted) return;
       if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 50),
-          curve: Curves.easeOut,
-        );
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       }
     });
   }
 
+  /// Sanitize terminal output - strip ANSI and control chars
+  String _sanitizeTerminalOutput(String text) {
+    // Strip ANSI escape sequences (CSI, OSC, application mode, character set)
+    text = text.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
+    text = text.replaceAll(RegExp(r'\x1b\][^\x07\x1b]*[\x07\x1b\\]'), '');
+    text = text.replaceAll(RegExp(r'\x1b[=>]'), '');
+    text = text.replaceAll(RegExp(r'\x1b\([0B]'), '');
+
+    // Process \r (carriage return) - handle \r\n as single newline first
+    // Split into lines, then handle \r within each line
+    final lines = text.split('\n');
+    final processed = <String>[];
+
+    for (final line in lines) {
+      // Within each line, \r means "overwrite" - keep last segment
+      final crSegments = line.split('\r');
+      if (crSegments.isNotEmpty) {
+        // Take the last segment (the visible content after all \r overwrites)
+        processed.add(crSegments.last);
+      }
+    }
+
+    // Remove trailing empty lines
+    while (processed.isNotEmpty && processed.last.trim().isEmpty) {
+      processed.removeLast();
+    }
+
+    // Remove other control chars except \n, \t
+    final buffer = StringBuffer();
+    for (var i = 0; i < processed.length; i++) {
+      final line = processed[i];
+      for (var j = 0; j < line.length; j++) {
+        final code = line.codeUnitAt(j);
+        if (code == 0x09 || code >= 0x20) {
+          buffer.writeCharCode(code);
+        }
+      }
+      // Add newline between lines
+      if (i < processed.length - 1) {
+        buffer.writeCharCode(0x0A);
+      }
+    }
+
+    return buffer.toString();
+  }
+
+  /// Count actual lines in output for display
+  int get _lineCount {
+    if (_output.isEmpty) return 0;
+    return '\n'.allMatches(_output).length + 1;
+  }
+
+  /// Get readable representation of virtual key for logging
+  String _getReadableKey(String key) {
+    if (key.isEmpty) return '<empty>';
+    if (key == '\x1b') return '<ESC>';
+    if (key == '\t') return '<TAB>';
+    if (key == '\r') return '<CR>';
+    if (key == '\n') return '<LF>';
+    if (key.startsWith('\x1b[')) {
+      // Arrow keys: \x1b[A, \x1b[B, \x1b[C, \x1b[D
+      final arrow = key.substring(2);
+      return '<${_arrowName(arrow)}>';
+    }
+    // Control characters
+    if (key.codeUnitAt(0) < 32) {
+      return '<Ctrl-${String.fromCharCode(key.codeUnitAt(0) + 64)}>';
+    }
+    // Truncate if too long
+    if (key.length > 20) {
+      return '${key.substring(0, 20)}...';
+    }
+    return key;
+  }
+
+  String _arrowName(String code) {
+    switch (code) {
+      case 'A': return 'Arrow Up';
+      case 'B': return 'Arrow Down';
+      case 'C': return 'Arrow Right';
+      case 'D': return 'Arrow Left';
+      default: return 'Unknown';
+    }
+  }
+
   /// Send input to terminal
-  void _sendInput() {
+  Future<void> _sendInput(BuildContext context) async {
     final text = _inputController.text;
     if (text.isEmpty) return;
 
     final bridge = ref.read(bridgeWrapperProvider);
-    bridge.sendCommand('$text\r'); // Use string interpolation
-    _inputController.clear();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      // Debug logging
+      debugPrint('🟢 [Terminal] Sending command: "$text"');
+      await bridge.sendCommand('$text\r');
+      debugPrint('✅ [Terminal] Command sent successfully');
+      _inputController.clear();
+    } catch (e) {
+      debugPrint('❌ [Terminal] Failed to send command: $e');
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Failed to send command: $e'),
+            backgroundColor: CatppuccinMocha.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -295,12 +396,45 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        // Connection status bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          color: CatppuccinMocha.surface0,
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: CatppuccinMocha.green,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Connected',
+                style: TextStyle(
+                  color: CatppuccinMocha.subtext0,
+                  fontSize: 12,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$_lineCount lines',
+                style: TextStyle(
+                  color: CatppuccinMocha.subtext0,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
         // Terminal output
         Expanded(
           child: GestureDetector(
             onLongPress: () {
               // Copy all output to clipboard
-              Clipboard.setData(ClipboardData(text: _output.join()));
+              Clipboard.setData(ClipboardData(text: _output));
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Copied to clipboard'),
@@ -311,19 +445,27 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
             child: Container(
               color: CatppuccinMocha.terminalBackground,
               padding: const EdgeInsets.all(8),
-              child: ListView.builder(
+              child: SingleChildScrollView(
                 controller: _scrollController,
-                itemCount: _output.length,
-                itemBuilder: (context, index) {
-                  return Text(
-                    _output[index],
-                    style: TextStyle(
-                      color: CatppuccinMocha.terminalForeground,
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                    ),
-                  );
-                },
+                child: _output.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Waiting for terminal output...\nType a command and press Send',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: CatppuccinMocha.subtext0,
+                            fontSize: 14,
+                          ),
+                        ),
+                      )
+                    : Text(
+                        _output,
+                        style: TextStyle(
+                          color: CatppuccinMocha.terminalForeground,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
               ),
             ),
           ),
@@ -359,12 +501,18 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
                     hintText: 'Enter command...',
                     hintStyle: TextStyle(color: Color(0xFF6C7086)),
                   ),
-                  onSubmitted: (_) => _sendInput(),
+                  onChanged: (value) {
+                    debugPrint('⌨️  [Terminal] Key pressed: "$value"');
+                  },
+                  onSubmitted: (value) {
+                    debugPrint('⏎ [Terminal] Enter pressed: "$value"');
+                    _sendInput(context);
+                  },
                 ),
               ),
               IconButton(
                 icon: Icon(Icons.send, color: CatppuccinMocha.mauve),
-                onPressed: _sendInput,
+                onPressed: () => _sendInput(context),
               ),
             ],
           ),
@@ -372,9 +520,27 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
 
         // Virtual keyboard
         VirtualKeyBar(
-          onKeyPressed: (key) {
+          onKeyPressed: (key) async {
+            // Log virtual key press with readable representation
+            final readable = _getReadableKey(key);
+            debugPrint('🔘 [Terminal] Virtual key pressed: $readable');
             final bridge = ref.read(bridgeWrapperProvider);
-            bridge.sendCommand(key);
+            final messenger = ScaffoldMessenger.of(context);
+            try {
+              debugPrint('📤 [Terminal] Sending virtual key...');
+              await bridge.sendCommand(key);
+              debugPrint('✅ [Terminal] Virtual key sent');
+            } catch (e) {
+              debugPrint('❌ [Terminal] Failed to send key: $e');
+              if (mounted) {
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to send key: $e'),
+                    backgroundColor: CatppuccinMocha.red,
+                  ),
+                );
+              }
+            }
           },
           onToggleKeyboard: () {
             // Toggle virtual keyboard visibility (optional enhancement)

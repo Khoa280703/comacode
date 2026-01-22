@@ -10,7 +10,6 @@ import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
-import 'third_party/mobile_bridge/api.dart';
 
 /// Main entrypoint of the Rust API
 class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
@@ -65,7 +64,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 1332657661;
+  int get rustContentHash => 1376706272;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -76,82 +75,120 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  int mobileBridgeApiAdd({required int a, required int b});
+  int crateApiAdd({required int a, required int b});
 
-  Future<void> mobileBridgeApiConnectToHost({
+  Future<void> crateApiConnectToHost({
     required String host,
     required int port,
     required String authToken,
     required String fingerprint,
   });
 
-  TerminalCommand mobileBridgeApiCreateCommand({required String text});
+  TerminalCommand crateApiCreateCommand({required String text});
 
-  TerminalConfig mobileBridgeApiCreateTerminalConfig({
+  TerminalConfig crateApiCreateTerminalConfig({
     required int rows,
     required int cols,
   });
 
-  Future<String> mobileBridgeApiDecodeMessage({required List<int> data});
+  Future<String> crateApiDecodeMessage({required List<int> data});
 
-  Future<void> mobileBridgeApiDisconnectFromHost();
+  Future<void> crateApiDisconnectFromHost();
 
-  Future<Uint8List> mobileBridgeApiEncodeCommand({
-    required TerminalCommand cmd,
-  });
+  Future<Uint8List> crateApiEncodeCommand({required TerminalCommand cmd});
 
-  Future<Uint8List> mobileBridgeApiEncodePing();
+  Future<Uint8List> crateApiEncodeInput({required List<int> data});
 
-  Future<Uint8List> mobileBridgeApiEncodeResize({
+  Future<Uint8List> crateApiEncodePing();
+
+  Future<Uint8List> crateApiEncodeResize({
     required int rows,
     required int cols,
   });
 
-  TerminalEvent mobileBridgeApiEventOutput({required List<int> data});
+  TerminalEvent crateApiEventOutput({required List<int> data});
 
-  TerminalEvent mobileBridgeApiEventOutputStr({required String s});
+  TerminalEvent crateApiEventOutputStr({required String s});
 
-  BigInt mobileBridgeApiGetCommandId({required TerminalCommand cmd});
+  Future<BigInt> crateApiFileEventBufferLen();
 
-  String mobileBridgeApiGetCommandText({required TerminalCommand cmd});
+  Future<FileWatcherEventData> crateApiFileWatcherEventDataDefault();
 
-  BigInt mobileBridgeApiGetCommandTimestamp({required TerminalCommand cmd});
+  BigInt crateApiGetCommandId({required TerminalCommand cmd});
 
-  Uint8List mobileBridgeApiGetEventData({required TerminalEvent event});
+  String crateApiGetCommandText({required TerminalCommand cmd});
 
-  String mobileBridgeApiGetEventErrorMessage({required TerminalEvent event});
+  BigInt crateApiGetCommandTimestamp({required TerminalCommand cmd});
 
-  int mobileBridgeApiGetEventExitCode({required TerminalEvent event});
+  BigInt? crateApiGetDirEntryModified({required DirEntry entry});
 
-  String mobileBridgeApiGetQrFingerprint({required QrPayload payload});
+  String crateApiGetDirEntryName({required DirEntry entry});
 
-  String mobileBridgeApiGetQrIp({required QrPayload payload});
+  String crateApiGetDirEntryPath({required DirEntry entry});
 
-  int mobileBridgeApiGetQrPort({required QrPayload payload});
+  String? crateApiGetDirEntryPermissions({required DirEntry entry});
 
-  int mobileBridgeApiGetQrProtocolVersion({required QrPayload payload});
+  BigInt? crateApiGetDirEntrySize({required DirEntry entry});
 
-  String mobileBridgeApiGetQrToken({required QrPayload payload});
+  Uint8List crateApiGetEventData({required TerminalEvent event});
 
-  String mobileBridgeApiGreet({required String name});
+  String crateApiGetEventErrorMessage({required TerminalEvent event});
 
-  Future<bool> mobileBridgeApiIsConnected();
+  int crateApiGetEventExitCode({required TerminalEvent event});
 
-  bool mobileBridgeApiIsEventError({required TerminalEvent event});
+  String crateApiGetQrFingerprint({required QrPayload payload});
 
-  bool mobileBridgeApiIsEventExit({required TerminalEvent event});
+  String crateApiGetQrIp({required QrPayload payload});
 
-  bool mobileBridgeApiIsEventOutput({required TerminalEvent event});
+  int crateApiGetQrPort({required QrPayload payload});
 
-  Future<QrPayload> mobileBridgeApiParseQrPayload({required String json});
+  int crateApiGetQrProtocolVersion({required QrPayload payload});
 
-  Future<TerminalEvent> mobileBridgeApiReceiveTerminalEvent();
+  String crateApiGetQrToken({required QrPayload payload});
 
-  Future<void> mobileBridgeApiResizePty({required int rows, required int cols});
+  String crateApiGreet({required String name});
 
-  Future<void> mobileBridgeApiSendTerminalCommand({required String command});
+  Future<bool> crateApiIsConnected();
+
+  bool crateApiIsDirEntryDir({required DirEntry entry});
+
+  bool crateApiIsDirEntrySymlink({required DirEntry entry});
+
+  bool crateApiIsEventError({required TerminalEvent event});
+
+  bool crateApiIsEventExit({required TerminalEvent event});
+
+  bool crateApiIsEventOutput({required TerminalEvent event});
+
+  Future<QrPayload> crateApiParseQrPayload({required String json});
+
+  Future<(int, List<DirEntry>, bool)?> crateApiReceiveDirChunk();
+
+  Future<FileWatcherEventData?> crateApiReceiveFileEvent();
+
+  Future<TerminalEvent> crateApiReceiveTerminalEvent();
+
+  Future<void> crateApiRequestListDir({required String path});
+
+  Future<void> crateApiRequestUnwatchDir({required String watcherId});
+
+  Future<void> crateApiRequestWatchDir({required String path});
+
+  Future<void> crateApiResizePty({required int rows, required int cols});
+
+  Future<void> crateApiSendRawInput({required List<int> data});
+
+  Future<void> crateApiSendTerminalCommand({required String command});
 
   Future<TerminalConfig> crateApiTerminalConfigDefault();
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_DirEntry;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_DirEntry;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_DirEntryPtr;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_QrPayload;
@@ -189,7 +226,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  int mobileBridgeApiAdd({required int a, required int b}) {
+  int crateApiAdd({required int a, required int b}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
@@ -202,18 +239,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_i_32,
           decodeErrorData: null,
         ),
-        constMeta: kMobileBridgeApiAddConstMeta,
+        constMeta: kCrateApiAddConstMeta,
         argValues: [a, b],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiAddConstMeta =>
+  TaskConstMeta get kCrateApiAddConstMeta =>
       const TaskConstMeta(debugName: "add", argNames: ["a", "b"]);
 
   @override
-  Future<void> mobileBridgeApiConnectToHost({
+  Future<void> crateApiConnectToHost({
     required String host,
     required int port,
     required String authToken,
@@ -238,21 +275,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiConnectToHostConstMeta,
+        constMeta: kCrateApiConnectToHostConstMeta,
         argValues: [host, port, authToken, fingerprint],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiConnectToHostConstMeta =>
-      const TaskConstMeta(
-        debugName: "connect_to_host",
-        argNames: ["host", "port", "authToken", "fingerprint"],
-      );
+  TaskConstMeta get kCrateApiConnectToHostConstMeta => const TaskConstMeta(
+    debugName: "connect_to_host",
+    argNames: ["host", "port", "authToken", "fingerprint"],
+  );
 
   @override
-  TerminalCommand mobileBridgeApiCreateCommand({required String text}) {
+  TerminalCommand crateApiCreateCommand({required String text}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
@@ -265,18 +301,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
               sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand,
           decodeErrorData: null,
         ),
-        constMeta: kMobileBridgeApiCreateCommandConstMeta,
+        constMeta: kCrateApiCreateCommandConstMeta,
         argValues: [text],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiCreateCommandConstMeta =>
+  TaskConstMeta get kCrateApiCreateCommandConstMeta =>
       const TaskConstMeta(debugName: "create_command", argNames: ["text"]);
 
   @override
-  TerminalConfig mobileBridgeApiCreateTerminalConfig({
+  TerminalConfig crateApiCreateTerminalConfig({
     required int rows,
     required int cols,
   }) {
@@ -292,21 +328,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_terminal_config,
           decodeErrorData: null,
         ),
-        constMeta: kMobileBridgeApiCreateTerminalConfigConstMeta,
+        constMeta: kCrateApiCreateTerminalConfigConstMeta,
         argValues: [rows, cols],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiCreateTerminalConfigConstMeta =>
+  TaskConstMeta get kCrateApiCreateTerminalConfigConstMeta =>
       const TaskConstMeta(
         debugName: "create_terminal_config",
         argNames: ["rows", "cols"],
       );
 
   @override
-  Future<String> mobileBridgeApiDecodeMessage({required List<int> data}) {
+  Future<String> crateApiDecodeMessage({required List<int> data}) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -323,18 +359,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_String,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiDecodeMessageConstMeta,
+        constMeta: kCrateApiDecodeMessageConstMeta,
         argValues: [data],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiDecodeMessageConstMeta =>
+  TaskConstMeta get kCrateApiDecodeMessageConstMeta =>
       const TaskConstMeta(debugName: "decode_message", argNames: ["data"]);
 
   @override
-  Future<void> mobileBridgeApiDisconnectFromHost() {
+  Future<void> crateApiDisconnectFromHost() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -350,20 +386,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiDisconnectFromHostConstMeta,
+        constMeta: kCrateApiDisconnectFromHostConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiDisconnectFromHostConstMeta =>
+  TaskConstMeta get kCrateApiDisconnectFromHostConstMeta =>
       const TaskConstMeta(debugName: "disconnect_from_host", argNames: []);
 
   @override
-  Future<Uint8List> mobileBridgeApiEncodeCommand({
-    required TerminalCommand cmd,
-  }) {
+  Future<Uint8List> crateApiEncodeCommand({required TerminalCommand cmd}) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -383,22 +417,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiEncodeCommandConstMeta,
+        constMeta: kCrateApiEncodeCommandConstMeta,
         argValues: [cmd],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiEncodeCommandConstMeta =>
+  TaskConstMeta get kCrateApiEncodeCommandConstMeta =>
       const TaskConstMeta(debugName: "encode_command", argNames: ["cmd"]);
 
   @override
-  Future<Uint8List> mobileBridgeApiEncodePing() {
+  Future<Uint8List> crateApiEncodeInput({required List<int> data}) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -410,27 +445,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiEncodePingConstMeta,
-        argValues: [],
+        constMeta: kCrateApiEncodeInputConstMeta,
+        argValues: [data],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiEncodePingConstMeta =>
-      const TaskConstMeta(debugName: "encode_ping", argNames: []);
+  TaskConstMeta get kCrateApiEncodeInputConstMeta =>
+      const TaskConstMeta(debugName: "encode_input", argNames: ["data"]);
 
   @override
-  Future<Uint8List> mobileBridgeApiEncodeResize({
-    required int rows,
-    required int cols,
-  }) {
+  Future<Uint8List> crateApiEncodePing() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_u_16(rows, serializer);
-          sse_encode_u_16(cols, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -442,555 +472,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiEncodeResizeConstMeta,
-        argValues: [rows, cols],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiEncodeResizeConstMeta =>
-      const TaskConstMeta(
-        debugName: "encode_resize",
-        argNames: ["rows", "cols"],
-      );
-
-  @override
-  TerminalEvent mobileBridgeApiEventOutput({required List<int> data}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiEventOutputConstMeta,
-        argValues: [data],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiEventOutputConstMeta =>
-      const TaskConstMeta(debugName: "event_output", argNames: ["data"]);
-
-  @override
-  TerminalEvent mobileBridgeApiEventOutputStr({required String s}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(s, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiEventOutputStrConstMeta,
-        argValues: [s],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiEventOutputStrConstMeta =>
-      const TaskConstMeta(debugName: "event_output_str", argNames: ["s"]);
-
-  @override
-  BigInt mobileBridgeApiGetCommandId({required TerminalCommand cmd}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand(
-            cmd,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetCommandIdConstMeta,
-        argValues: [cmd],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetCommandIdConstMeta =>
-      const TaskConstMeta(debugName: "get_command_id", argNames: ["cmd"]);
-
-  @override
-  String mobileBridgeApiGetCommandText({required TerminalCommand cmd}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand(
-            cmd,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetCommandTextConstMeta,
-        argValues: [cmd],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetCommandTextConstMeta =>
-      const TaskConstMeta(debugName: "get_command_text", argNames: ["cmd"]);
-
-  @override
-  BigInt mobileBridgeApiGetCommandTimestamp({required TerminalCommand cmd}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand(
-            cmd,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_64,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetCommandTimestampConstMeta,
-        argValues: [cmd],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetCommandTimestampConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_command_timestamp",
-        argNames: ["cmd"],
-      );
-
-  @override
-  Uint8List mobileBridgeApiGetEventData({required TerminalEvent event}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
-            event,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_prim_u_8_strict,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetEventDataConstMeta,
-        argValues: [event],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetEventDataConstMeta =>
-      const TaskConstMeta(debugName: "get_event_data", argNames: ["event"]);
-
-  @override
-  String mobileBridgeApiGetEventErrorMessage({required TerminalEvent event}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
-            event,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetEventErrorMessageConstMeta,
-        argValues: [event],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetEventErrorMessageConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_event_error_message",
-        argNames: ["event"],
-      );
-
-  @override
-  int mobileBridgeApiGetEventExitCode({required TerminalEvent event}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
-            event,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_i_32,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetEventExitCodeConstMeta,
-        argValues: [event],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetEventExitCodeConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_event_exit_code",
-        argNames: ["event"],
-      );
-
-  @override
-  String mobileBridgeApiGetQrFingerprint({required QrPayload payload}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
-            payload,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetQrFingerprintConstMeta,
-        argValues: [payload],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetQrFingerprintConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_qr_fingerprint",
-        argNames: ["payload"],
-      );
-
-  @override
-  String mobileBridgeApiGetQrIp({required QrPayload payload}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
-            payload,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetQrIpConstMeta,
-        argValues: [payload],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetQrIpConstMeta =>
-      const TaskConstMeta(debugName: "get_qr_ip", argNames: ["payload"]);
-
-  @override
-  int mobileBridgeApiGetQrPort({required QrPayload payload}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
-            payload,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_16,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetQrPortConstMeta,
-        argValues: [payload],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetQrPortConstMeta =>
-      const TaskConstMeta(debugName: "get_qr_port", argNames: ["payload"]);
-
-  @override
-  int mobileBridgeApiGetQrProtocolVersion({required QrPayload payload}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
-            payload,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_u_32,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetQrProtocolVersionConstMeta,
-        argValues: [payload],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetQrProtocolVersionConstMeta =>
-      const TaskConstMeta(
-        debugName: "get_qr_protocol_version",
-        argNames: ["payload"],
-      );
-
-  @override
-  String mobileBridgeApiGetQrToken({required QrPayload payload}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
-            payload,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGetQrTokenConstMeta,
-        argValues: [payload],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGetQrTokenConstMeta =>
-      const TaskConstMeta(debugName: "get_qr_token", argNames: ["payload"]);
-
-  @override
-  String mobileBridgeApiGreet({required String name}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiGreetConstMeta,
-        argValues: [name],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiGreetConstMeta =>
-      const TaskConstMeta(debugName: "greet", argNames: ["name"]);
-
-  @override
-  Future<bool> mobileBridgeApiIsConnected() {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 24,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiIsConnectedConstMeta,
+        constMeta: kCrateApiEncodePingConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiIsConnectedConstMeta =>
-      const TaskConstMeta(debugName: "is_connected", argNames: []);
+  TaskConstMeta get kCrateApiEncodePingConstMeta =>
+      const TaskConstMeta(debugName: "encode_ping", argNames: []);
 
   @override
-  bool mobileBridgeApiIsEventError({required TerminalEvent event}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
-            event,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiIsEventErrorConstMeta,
-        argValues: [event],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiIsEventErrorConstMeta =>
-      const TaskConstMeta(debugName: "is_event_error", argNames: ["event"]);
-
-  @override
-  bool mobileBridgeApiIsEventExit({required TerminalEvent event}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
-            event,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiIsEventExitConstMeta,
-        argValues: [event],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiIsEventExitConstMeta =>
-      const TaskConstMeta(debugName: "is_event_exit", argNames: ["event"]);
-
-  @override
-  bool mobileBridgeApiIsEventOutput({required TerminalEvent event}) {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
-            event,
-            serializer,
-          );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
-          decodeErrorData: null,
-        ),
-        constMeta: kMobileBridgeApiIsEventOutputConstMeta,
-        argValues: [event],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiIsEventOutputConstMeta =>
-      const TaskConstMeta(debugName: "is_event_output", argNames: ["event"]);
-
-  @override
-  Future<QrPayload> mobileBridgeApiParseQrPayload({required String json}) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(json, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 28,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload,
-          decodeErrorData: sse_decode_String,
-        ),
-        constMeta: kMobileBridgeApiParseQrPayloadConstMeta,
-        argValues: [json],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiParseQrPayloadConstMeta =>
-      const TaskConstMeta(debugName: "parse_qr_payload", argNames: ["json"]);
-
-  @override
-  Future<TerminalEvent> mobileBridgeApiReceiveTerminalEvent() {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 29,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData:
-              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent,
-          decodeErrorData: sse_decode_String,
-        ),
-        constMeta: kMobileBridgeApiReceiveTerminalEventConstMeta,
-        argValues: [],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kMobileBridgeApiReceiveTerminalEventConstMeta =>
-      const TaskConstMeta(debugName: "receive_terminal_event", argNames: []);
-
-  @override
-  Future<void> mobileBridgeApiResizePty({
+  Future<Uint8List> crateApiEncodeResize({
     required int rows,
     required int cols,
   }) {
@@ -1003,7 +496,871 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiEncodeResizeConstMeta,
+        argValues: [rows, cols],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEncodeResizeConstMeta => const TaskConstMeta(
+    debugName: "encode_resize",
+    argNames: ["rows", "cols"],
+  );
+
+  @override
+  TerminalEvent crateApiEventOutput({required List<int> data}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEventOutputConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEventOutputConstMeta =>
+      const TaskConstMeta(debugName: "event_output", argNames: ["data"]);
+
+  @override
+  TerminalEvent crateApiEventOutputStr({required String s}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(s, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEventOutputStrConstMeta,
+        argValues: [s],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEventOutputStrConstMeta =>
+      const TaskConstMeta(debugName: "event_output_str", argNames: ["s"]);
+
+  @override
+  Future<BigInt> crateApiFileEventBufferLen() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 13,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_usize,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiFileEventBufferLenConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiFileEventBufferLenConstMeta =>
+      const TaskConstMeta(debugName: "file_event_buffer_len", argNames: []);
+
+  @override
+  Future<FileWatcherEventData> crateApiFileWatcherEventDataDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 14,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_file_watcher_event_data,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiFileWatcherEventDataDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiFileWatcherEventDataDefaultConstMeta =>
+      const TaskConstMeta(
+        debugName: "file_watcher_event_data_default",
+        argNames: [],
+      );
+
+  @override
+  BigInt crateApiGetCommandId({required TerminalCommand cmd}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand(
+            cmd,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetCommandIdConstMeta,
+        argValues: [cmd],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetCommandIdConstMeta =>
+      const TaskConstMeta(debugName: "get_command_id", argNames: ["cmd"]);
+
+  @override
+  String crateApiGetCommandText({required TerminalCommand cmd}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand(
+            cmd,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetCommandTextConstMeta,
+        argValues: [cmd],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetCommandTextConstMeta =>
+      const TaskConstMeta(debugName: "get_command_text", argNames: ["cmd"]);
+
+  @override
+  BigInt crateApiGetCommandTimestamp({required TerminalCommand cmd}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalCommand(
+            cmd,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetCommandTimestampConstMeta,
+        argValues: [cmd],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetCommandTimestampConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_command_timestamp",
+        argNames: ["cmd"],
+      );
+
+  @override
+  BigInt? crateApiGetDirEntryModified({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_u_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetDirEntryModifiedConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetDirEntryModifiedConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_dir_entry_modified",
+        argNames: ["entry"],
+      );
+
+  @override
+  String crateApiGetDirEntryName({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetDirEntryNameConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetDirEntryNameConstMeta =>
+      const TaskConstMeta(debugName: "get_dir_entry_name", argNames: ["entry"]);
+
+  @override
+  String crateApiGetDirEntryPath({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetDirEntryPathConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetDirEntryPathConstMeta =>
+      const TaskConstMeta(debugName: "get_dir_entry_path", argNames: ["entry"]);
+
+  @override
+  String? crateApiGetDirEntryPermissions({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetDirEntryPermissionsConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetDirEntryPermissionsConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_dir_entry_permissions",
+        argNames: ["entry"],
+      );
+
+  @override
+  BigInt? crateApiGetDirEntrySize({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_u_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetDirEntrySizeConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetDirEntrySizeConstMeta =>
+      const TaskConstMeta(debugName: "get_dir_entry_size", argNames: ["entry"]);
+
+  @override
+  Uint8List crateApiGetEventData({required TerminalEvent event}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
+            event,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetEventDataConstMeta,
+        argValues: [event],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetEventDataConstMeta =>
+      const TaskConstMeta(debugName: "get_event_data", argNames: ["event"]);
+
+  @override
+  String crateApiGetEventErrorMessage({required TerminalEvent event}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
+            event,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetEventErrorMessageConstMeta,
+        argValues: [event],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetEventErrorMessageConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_event_error_message",
+        argNames: ["event"],
+      );
+
+  @override
+  int crateApiGetEventExitCode({required TerminalEvent event}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
+            event,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_i_32,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetEventExitCodeConstMeta,
+        argValues: [event],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetEventExitCodeConstMeta => const TaskConstMeta(
+    debugName: "get_event_exit_code",
+    argNames: ["event"],
+  );
+
+  @override
+  String crateApiGetQrFingerprint({required QrPayload payload}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
+            payload,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetQrFingerprintConstMeta,
+        argValues: [payload],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetQrFingerprintConstMeta => const TaskConstMeta(
+    debugName: "get_qr_fingerprint",
+    argNames: ["payload"],
+  );
+
+  @override
+  String crateApiGetQrIp({required QrPayload payload}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
+            payload,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetQrIpConstMeta,
+        argValues: [payload],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetQrIpConstMeta =>
+      const TaskConstMeta(debugName: "get_qr_ip", argNames: ["payload"]);
+
+  @override
+  int crateApiGetQrPort({required QrPayload payload}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
+            payload,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_16,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetQrPortConstMeta,
+        argValues: [payload],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetQrPortConstMeta =>
+      const TaskConstMeta(debugName: "get_qr_port", argNames: ["payload"]);
+
+  @override
+  int crateApiGetQrProtocolVersion({required QrPayload payload}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
+            payload,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_32,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetQrProtocolVersionConstMeta,
+        argValues: [payload],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetQrProtocolVersionConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_qr_protocol_version",
+        argNames: ["payload"],
+      );
+
+  @override
+  String crateApiGetQrToken({required QrPayload payload}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
+            payload,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGetQrTokenConstMeta,
+        argValues: [payload],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGetQrTokenConstMeta =>
+      const TaskConstMeta(debugName: "get_qr_token", argNames: ["payload"]);
+
+  @override
+  String crateApiGreet({required String name}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(name, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiGreetConstMeta,
+        argValues: [name],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiGreetConstMeta =>
+      const TaskConstMeta(debugName: "greet", argNames: ["name"]);
+
+  @override
+  Future<bool> crateApiIsConnected() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 32,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIsConnectedConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIsConnectedConstMeta =>
+      const TaskConstMeta(debugName: "is_connected", argNames: []);
+
+  @override
+  bool crateApiIsDirEntryDir({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIsDirEntryDirConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIsDirEntryDirConstMeta =>
+      const TaskConstMeta(debugName: "is_dir_entry_dir", argNames: ["entry"]);
+
+  @override
+  bool crateApiIsDirEntrySymlink({required DirEntry entry}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+            entry,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIsDirEntrySymlinkConstMeta,
+        argValues: [entry],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIsDirEntrySymlinkConstMeta => const TaskConstMeta(
+    debugName: "is_dir_entry_symlink",
+    argNames: ["entry"],
+  );
+
+  @override
+  bool crateApiIsEventError({required TerminalEvent event}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
+            event,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIsEventErrorConstMeta,
+        argValues: [event],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIsEventErrorConstMeta =>
+      const TaskConstMeta(debugName: "is_event_error", argNames: ["event"]);
+
+  @override
+  bool crateApiIsEventExit({required TerminalEvent event}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
+            event,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIsEventExitConstMeta,
+        argValues: [event],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIsEventExitConstMeta =>
+      const TaskConstMeta(debugName: "is_event_exit", argNames: ["event"]);
+
+  @override
+  bool crateApiIsEventOutput({required TerminalEvent event}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent(
+            event,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiIsEventOutputConstMeta,
+        argValues: [event],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiIsEventOutputConstMeta =>
+      const TaskConstMeta(debugName: "is_event_output", argNames: ["event"]);
+
+  @override
+  Future<QrPayload> crateApiParseQrPayload({required String json}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(json, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 38,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiParseQrPayloadConstMeta,
+        argValues: [json],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiParseQrPayloadConstMeta =>
+      const TaskConstMeta(debugName: "parse_qr_payload", argNames: ["json"]);
+
+  @override
+  Future<(int, List<DirEntry>, bool)?> crateApiReceiveDirChunk() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 39,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_opt_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiReceiveDirChunkConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiReceiveDirChunkConstMeta =>
+      const TaskConstMeta(debugName: "receive_dir_chunk", argNames: []);
+
+  @override
+  Future<FileWatcherEventData?> crateApiReceiveFileEvent() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 40,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_file_watcher_event_data,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiReceiveFileEventConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiReceiveFileEventConstMeta =>
+      const TaskConstMeta(debugName: "receive_file_event", argNames: []);
+
+  @override
+  Future<TerminalEvent> crateApiReceiveTerminalEvent() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 41,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiReceiveTerminalEventConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiReceiveTerminalEventConstMeta =>
+      const TaskConstMeta(debugName: "receive_terminal_event", argNames: []);
+
+  @override
+  Future<void> crateApiRequestListDir({required String path}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 42,
             port: port_,
           );
         },
@@ -1011,18 +1368,133 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiResizePtyConstMeta,
+        constMeta: kCrateApiRequestListDirConstMeta,
+        argValues: [path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRequestListDirConstMeta =>
+      const TaskConstMeta(debugName: "request_list_dir", argNames: ["path"]);
+
+  @override
+  Future<void> crateApiRequestUnwatchDir({required String watcherId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(watcherId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 43,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiRequestUnwatchDirConstMeta,
+        argValues: [watcherId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRequestUnwatchDirConstMeta => const TaskConstMeta(
+    debugName: "request_unwatch_dir",
+    argNames: ["watcherId"],
+  );
+
+  @override
+  Future<void> crateApiRequestWatchDir({required String path}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 44,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiRequestWatchDirConstMeta,
+        argValues: [path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRequestWatchDirConstMeta =>
+      const TaskConstMeta(debugName: "request_watch_dir", argNames: ["path"]);
+
+  @override
+  Future<void> crateApiResizePty({required int rows, required int cols}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_16(rows, serializer);
+          sse_encode_u_16(cols, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 45,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiResizePtyConstMeta,
         argValues: [rows, cols],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiResizePtyConstMeta =>
+  TaskConstMeta get kCrateApiResizePtyConstMeta =>
       const TaskConstMeta(debugName: "resize_pty", argNames: ["rows", "cols"]);
 
   @override
-  Future<void> mobileBridgeApiSendTerminalCommand({required String command}) {
+  Future<void> crateApiSendRawInput({required List<int> data}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 46,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSendRawInputConstMeta,
+        argValues: [data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSendRawInputConstMeta =>
+      const TaskConstMeta(debugName: "send_raw_input", argNames: ["data"]);
+
+  @override
+  Future<void> crateApiSendTerminalCommand({required String command}) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -1031,7 +1503,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 47,
             port: port_,
           );
         },
@@ -1039,14 +1511,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kMobileBridgeApiSendTerminalCommandConstMeta,
+        constMeta: kCrateApiSendTerminalCommandConstMeta,
         argValues: [command],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kMobileBridgeApiSendTerminalCommandConstMeta =>
+  TaskConstMeta get kCrateApiSendTerminalCommandConstMeta =>
       const TaskConstMeta(
         debugName: "send_terminal_command",
         argNames: ["command"],
@@ -1061,7 +1533,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 32,
+            funcId: 48,
             port: port_,
           );
         },
@@ -1078,6 +1550,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiTerminalConfigDefaultConstMeta =>
       const TaskConstMeta(debugName: "terminal_config_default", argNames: []);
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_DirEntry => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_DirEntry => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry;
 
   RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_QrPayload => wire
@@ -1102,6 +1582,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RustArcDecrementStrongCountFnType
   get rust_arc_decrement_strong_count_TerminalEvent => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerTerminalEvent;
+
+  @protected
+  DirEntry
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DirEntryImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
 
   @protected
   QrPayload
@@ -1131,6 +1620,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirEntry
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DirEntryImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   QrPayload
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
     dynamic raw,
@@ -1155,6 +1653,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return TerminalEventImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  DirEntry
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DirEntryImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1197,9 +1704,62 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FileWatcherEventData dco_decode_box_autoadd_file_watcher_event_data(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_file_watcher_event_data(raw);
+  }
+
+  @protected
+  (int, List<DirEntry>, bool)
+  dco_decode_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as (int, List<DirEntry>, bool);
+  }
+
+  @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_u_64(raw);
+  }
+
+  @protected
+  FileWatcherEventData dco_decode_file_watcher_event_data(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return FileWatcherEventData(
+      eventType: dco_decode_String(arr[0]),
+      watcherId: dco_decode_String(arr[1]),
+      path: dco_decode_String(arr[2]),
+      fileEventType: dco_decode_String(arr[3]),
+      oldName: dco_decode_String(arr[4]),
+      timestamp: dco_decode_u_64(arr[5]),
+      error: dco_decode_String(arr[6]),
+    );
+  }
+
+  @protected
   int dco_decode_i_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  List<DirEntry>
+  dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(
+          dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry,
+        )
+        .toList();
   }
 
   @protected
@@ -1212,6 +1772,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  FileWatcherEventData? dco_decode_opt_box_autoadd_file_watcher_event_data(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_file_watcher_event_data(raw);
+  }
+
+  @protected
+  (int, List<DirEntry>, bool)?
+  dco_decode_opt_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+            raw,
+          );
+  }
+
+  @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
+  }
+
+  @protected
+  (int, List<DirEntry>, bool)
+  dco_decode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3) {
+      throw Exception('Expected 3 elements, got ${arr.length}');
+    }
+    return (
+      dco_decode_u_32(arr[0]),
+      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+        arr[1],
+      ),
+      dco_decode_bool(arr[2]),
+    );
   }
 
   @protected
@@ -1264,6 +1878,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirEntry
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DirEntryImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   QrPayload
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
     SseDeserializer deserializer,
@@ -1300,6 +1926,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DirEntry
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DirEntryImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
   QrPayload
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
     SseDeserializer deserializer,
@@ -1330,6 +1968,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return TerminalEventImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  DirEntry
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DirEntryImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1385,9 +2035,76 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FileWatcherEventData sse_decode_box_autoadd_file_watcher_event_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_file_watcher_event_data(deserializer));
+  }
+
+  @protected
+  (int, List<DirEntry>, bool)
+  sse_decode_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+      deserializer,
+    ));
+  }
+
+  @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_64(deserializer));
+  }
+
+  @protected
+  FileWatcherEventData sse_decode_file_watcher_event_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_eventType = sse_decode_String(deserializer);
+    var var_watcherId = sse_decode_String(deserializer);
+    var var_path = sse_decode_String(deserializer);
+    var var_fileEventType = sse_decode_String(deserializer);
+    var var_oldName = sse_decode_String(deserializer);
+    var var_timestamp = sse_decode_u_64(deserializer);
+    var var_error = sse_decode_String(deserializer);
+    return FileWatcherEventData(
+      eventType: var_eventType,
+      watcherId: var_watcherId,
+      path: var_path,
+      fileEventType: var_fileEventType,
+      oldName: var_oldName,
+      timestamp: var_timestamp,
+      error: var_error,
+    );
+  }
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getInt32();
+  }
+
+  @protected
+  List<DirEntry>
+  sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <DirEntry>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(
+        sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+          deserializer,
+        ),
+      );
+    }
+    return ans_;
   }
 
   @protected
@@ -1402,6 +2119,72 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  FileWatcherEventData? sse_decode_opt_box_autoadd_file_watcher_event_data(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_file_watcher_event_data(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  (int, List<DirEntry>, bool)?
+  sse_decode_opt_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+        deserializer,
+      ));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  (int, List<DirEntry>, bool)
+  sse_decode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_field0 = sse_decode_u_32(deserializer);
+    var var_field1 =
+        sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+          deserializer,
+        );
+    var var_field2 = sse_decode_bool(deserializer);
+    return (var_field0, var_field1, var_field2);
   }
 
   @protected
@@ -1450,6 +2233,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    DirEntry self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as DirEntryImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
     QrPayload self,
     SseSerializer serializer,
@@ -1489,6 +2285,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    DirEntry self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as DirEntryImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerQrPayload(
     QrPayload self,
     SseSerializer serializer,
@@ -1522,6 +2331,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as TerminalEventImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    DirEntry self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as DirEntryImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -1578,9 +2400,68 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_file_watcher_event_data(
+    FileWatcherEventData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_file_watcher_event_data(self, serializer);
+  }
+
+  @protected
+  void
+  sse_encode_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    (int, List<DirEntry>, bool) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+      self,
+      serializer,
+    );
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_file_watcher_event_data(
+    FileWatcherEventData self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.eventType, serializer);
+    sse_encode_String(self.watcherId, serializer);
+    sse_encode_String(self.path, serializer);
+    sse_encode_String(self.fileEventType, serializer);
+    sse_encode_String(self.oldName, serializer);
+    sse_encode_u_64(self.timestamp, serializer);
+    sse_encode_String(self.error, serializer);
+  }
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putInt32(self);
+  }
+
+  @protected
+  void
+  sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+    List<DirEntry> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+        item,
+        serializer,
+      );
+    }
   }
 
   @protected
@@ -1603,6 +2484,71 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_file_watcher_event_data(
+    FileWatcherEventData? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_file_watcher_event_data(self, serializer);
+    }
+  }
+
+  @protected
+  void
+  sse_encode_opt_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    (int, List<DirEntry>, bool)? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+        self,
+        serializer,
+      );
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_64(self, serializer);
+    }
+  }
+
+  @protected
+  void
+  sse_encode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    (int, List<DirEntry>, bool) self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.$1, serializer);
+    sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDirEntry(
+      self.$2,
+      serializer,
+    );
+    sse_encode_bool(self.$3, serializer);
   }
 
   @protected
@@ -1650,6 +2596,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
   }
+}
+
+@sealed
+class DirEntryImpl extends RustOpaque implements DirEntry {
+  // Not to be used by end users
+  DirEntryImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  DirEntryImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_DirEntry,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_DirEntry,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_DirEntryPtr,
+  );
 }
 
 @sealed

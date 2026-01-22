@@ -5,7 +5,10 @@
 
 import '../../api.dart';
 import '../../frb_generated.dart';
+import '../../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 
 /// Connect to remote host
 ///
@@ -19,8 +22,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// * `fingerprint` - Certificate fingerprint for TOFU verification
 ///
 /// # Behavior
-/// - First call: Initializes client and connects
-/// - Subsequent calls: Returns error if already connected
+/// - If already connected: Returns error (call disconnect first)
+/// - On success: Stores client for subsequent operations
 Future<void> connectToHost({
   required String host,
   required int port,
@@ -50,6 +53,19 @@ Future<TerminalEvent> receiveTerminalEvent() =>
 Future<void> sendTerminalCommand({required String command}) =>
     RustLib.instance.api.mobileBridgeApiSendTerminalCommand(command: command);
 
+/// Send raw input bytes to remote terminal (pure passthrough)
+///
+/// Phase 08: Send raw keystrokes directly to PTY without String conversion.
+/// Use this for proper Ctrl+C, backspace, and other control characters.
+///
+/// # Arguments
+/// * `data` - Raw bytes from stdin (including control chars like 0x03 for Ctrl+C)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> sendRawInput({required List<int> data}) =>
+    RustLib.instance.api.mobileBridgeApiSendRawInput(data: data);
+
 /// Resize PTY (for screen rotation support)
 ///
 /// Phase 06: Send resize event to update PTY size on server.
@@ -65,6 +81,8 @@ Future<void> resizePty({required int rows, required int cols}) =>
     RustLib.instance.api.mobileBridgeApiResizePty(rows: rows, cols: cols);
 
 /// Disconnect from host
+///
+/// Clears the client, allowing reconnect.
 ///
 /// # Errors
 /// Returns "Not connected" if client not initialized.
@@ -95,6 +113,13 @@ BigInt getCommandTimestamp({required TerminalCommand cmd}) =>
 /// Encode terminal command to bytes for network transmission
 Future<Uint8List> encodeCommand({required TerminalCommand cmd}) =>
     RustLib.instance.api.mobileBridgeApiEncodeCommand(cmd: cmd);
+
+/// Encode raw input bytes for network transmission (pure passthrough)
+///
+/// Phase 08: Encode raw keystrokes without String conversion.
+/// Use this for proper Ctrl+C, backspace, and other control characters.
+Future<Uint8List> encodeInput({required List<int> data}) =>
+    RustLib.instance.api.mobileBridgeApiEncodeInput(data: data);
 
 /// Encode ping message
 Future<Uint8List> encodePing() =>
@@ -167,6 +192,105 @@ bool isEventError({required TerminalEvent event}) =>
 bool isEventExit({required TerminalEvent event}) =>
     RustLib.instance.api.mobileBridgeApiIsEventExit(event: event);
 
+/// Request directory listing from server
+///
+/// Sends ListDir message. Server responds with multiple DirChunk messages.
+/// Call receive_dir_chunk() in a loop to receive all chunks.
+///
+/// # Arguments
+/// * `path` - Absolute path to list (e.g., "/tmp", "/home/user")
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestListDir({required String path}) =>
+    RustLib.instance.api.mobileBridgeApiRequestListDir(path: path);
+
+/// Receive next directory chunk from server (NON-BLOCKING)
+///
+/// Returns a chunk with entries. Call repeatedly until has_more is false.
+/// Returns None if no chunks available yet (server still processing).
+///
+/// # Returns
+/// * `Some((chunk_index, entries, has_more))` - Chunk received
+/// * `None` - No chunks available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<(int, List<DirEntry>, bool)?> receiveDirChunk() =>
+    RustLib.instance.api.mobileBridgeApiReceiveDirChunk();
+
+/// Get entry name
+String getDirEntryName({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiGetDirEntryName(entry: entry);
+
+/// Get entry path
+String getDirEntryPath({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiGetDirEntryPath(entry: entry);
+
+/// Check if entry is a directory
+bool isDirEntryDir({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiIsDirEntryDir(entry: entry);
+
+/// Check if entry is a symlink
+bool isDirEntrySymlink({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiIsDirEntrySymlink(entry: entry);
+
+/// Get entry size (bytes)
+BigInt? getDirEntrySize({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiGetDirEntrySize(entry: entry);
+
+/// Get entry modified timestamp (Unix epoch seconds)
+BigInt? getDirEntryModified({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiGetDirEntryModified(entry: entry);
+
+/// Get entry permissions string
+String? getDirEntryPermissions({required DirEntry entry}) =>
+    RustLib.instance.api.mobileBridgeApiGetDirEntryPermissions(entry: entry);
+
+/// Request server to watch a directory for changes
+///
+/// Server will push FileEvent messages when files are created/modified/deleted.
+/// Call receive_file_event() in a loop to receive watcher events.
+///
+/// # Arguments
+/// * `path` - Absolute path to watch (e.g., "/tmp", "/home/user/project")
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestWatchDir({required String path}) =>
+    RustLib.instance.api.mobileBridgeApiRequestWatchDir(path: path);
+
+/// Request server to stop watching a directory
+///
+/// # Arguments
+/// * `watcher_id` - ID of the watcher to stop (returned in WatchStarted event)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestUnwatchDir({required String watcherId}) =>
+    RustLib.instance.api.mobileBridgeApiRequestUnwatchDir(watcherId: watcherId);
+
+/// Receive next file watcher event from server (NON-BLOCKING)
+///
+/// Returns watcher events (FileEvent, WatchStarted, WatchError).
+/// Call repeatedly in a loop to process all events.
+/// Returns None if no events available yet.
+///
+/// # Returns
+/// * `Some(FileWatcherEventData)` - Event received
+/// * `None` - No events available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<FileWatcherEventData?> receiveFileEvent() =>
+    RustLib.instance.api.mobileBridgeApiReceiveFileEvent();
+
+/// Get file event buffer length (for monitoring)
+///
+/// Returns number of buffered events waiting to be processed.
+Future<BigInt> fileEventBufferLen() =>
+    RustLib.instance.api.mobileBridgeApiFileEventBufferLen();
+
 /// Simple add function for testing FFI
 int add({required int a, required int b}) =>
     RustLib.instance.api.mobileBridgeApiAdd(a: a, b: b);
@@ -175,11 +299,5 @@ int add({required int a, required int b}) =>
 String greet({required String name}) =>
     RustLib.instance.api.mobileBridgeApiGreet(name: name);
 
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<QrPayload>>
-abstract class QrPayload implements RustOpaqueInterface {}
-
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<TerminalCommand>>
-abstract class TerminalCommand implements RustOpaqueInterface {}
-
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<TerminalEvent>>
-abstract class TerminalEvent implements RustOpaqueInterface {}
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirEntry>>
+abstract class DirEntry implements RustOpaqueInterface {}

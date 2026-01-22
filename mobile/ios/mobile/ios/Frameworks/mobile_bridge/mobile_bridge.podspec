@@ -7,5 +7,5 @@ Pod::Spec.new do |s|
   s.author           = { 'Comacode Team' => 'dev@comacode.com' }
   s.source           = { :path => '.' }
   s.ios.deployment_target = '13.0'
-  s.vendored_frameworks = 'mobile_bridge.framework'
+  s.vendored_libraries = 'libmobile_bridge.a'
 end
