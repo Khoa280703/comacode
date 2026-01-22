@@ -6,6 +6,366 @@
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `get_client`, `init_crypto_provider`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+
+/// Connect to remote host
+///
+/// This is the main FFI entry point for Flutter app.
+/// Call this after scanning QR code to get connection parameters.
+///
+/// # Arguments
+/// * `host` - Server IP address
+/// * `port` - QUIC server port
+/// * `auth_token` - Authentication token from QR scan
+/// * `fingerprint` - Certificate fingerprint for TOFU verification
+///
+/// # Behavior
+/// - If already connected: Returns error (call disconnect first)
+/// - On success: Stores client for subsequent operations
+Future<void> connectToHost({
+  required String host,
+  required int port,
+  required String authToken,
+  required String fingerprint,
+}) => RustLib.instance.api.crateApiConnectToHost(
+  host: host,
+  port: port,
+  authToken: authToken,
+  fingerprint: fingerprint,
+);
+
+/// Receive next terminal event from server
+///
+/// Call this in a loop to stream terminal output.
+/// Returns when a new event is available.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<TerminalEvent> receiveTerminalEvent() =>
+    RustLib.instance.api.crateApiReceiveTerminalEvent();
+
+/// Send command to remote terminal
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> sendTerminalCommand({required String command}) =>
+    RustLib.instance.api.crateApiSendTerminalCommand(command: command);
+
+/// Send raw input bytes to remote terminal (pure passthrough)
+///
+/// Phase 08: Send raw keystrokes directly to PTY without String conversion.
+/// Use this for proper Ctrl+C, backspace, and other control characters.
+///
+/// # Arguments
+/// * `data` - Raw bytes from stdin (including control chars like 0x03 for Ctrl+C)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> sendRawInput({required List<int> data}) =>
+    RustLib.instance.api.crateApiSendRawInput(data: data);
+
+/// Resize PTY (for screen rotation support)
+///
+/// Phase 06: Send resize event to update PTY size on server.
+/// Call this when device orientation changes.
+///
+/// # Arguments
+/// * `rows` - Number of rows (characters per column)
+/// * `cols` - Number of columns (characters per row)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> resizePty({required int rows, required int cols}) =>
+    RustLib.instance.api.crateApiResizePty(rows: rows, cols: cols);
+
+/// Disconnect from host
+///
+/// Clears the client, allowing reconnect.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> disconnectFromHost() =>
+    RustLib.instance.api.crateApiDisconnectFromHost();
+
+/// Check if connected
+///
+/// Returns false if client not initialized or disconnected.
+Future<bool> isConnected() => RustLib.instance.api.crateApiIsConnected();
+
+/// Create a new terminal command
+TerminalCommand createCommand({required String text}) =>
+    RustLib.instance.api.crateApiCreateCommand(text: text);
+
+/// Get command ID
+BigInt getCommandId({required TerminalCommand cmd}) =>
+    RustLib.instance.api.crateApiGetCommandId(cmd: cmd);
+
+/// Get command text
+String getCommandText({required TerminalCommand cmd}) =>
+    RustLib.instance.api.crateApiGetCommandText(cmd: cmd);
+
+/// Get command timestamp
+BigInt getCommandTimestamp({required TerminalCommand cmd}) =>
+    RustLib.instance.api.crateApiGetCommandTimestamp(cmd: cmd);
+
+/// Encode terminal command to bytes for network transmission
+Future<Uint8List> encodeCommand({required TerminalCommand cmd}) =>
+    RustLib.instance.api.crateApiEncodeCommand(cmd: cmd);
+
+/// Encode raw input bytes for network transmission (pure passthrough)
+///
+/// Phase 08: Encode raw keystrokes without String conversion.
+/// Use this for proper Ctrl+C, backspace, and other control characters.
+Future<Uint8List> encodeInput({required List<int> data}) =>
+    RustLib.instance.api.crateApiEncodeInput(data: data);
+
+/// Encode ping message
+Future<Uint8List> encodePing() => RustLib.instance.api.crateApiEncodePing();
+
+/// Encode resize message
+Future<Uint8List> encodeResize({required int rows, required int cols}) =>
+    RustLib.instance.api.crateApiEncodeResize(rows: rows, cols: cols);
+
+/// Decode network message from bytes
+Future<String> decodeMessage({required List<int> data}) =>
+    RustLib.instance.api.crateApiDecodeMessage(data: data);
+
+/// Create terminal config with custom size
+TerminalConfig createTerminalConfig({required int rows, required int cols}) =>
+    RustLib.instance.api.crateApiCreateTerminalConfig(rows: rows, cols: cols);
+
+/// Parse QR payload JSON string
+Future<QrPayload> parseQrPayload({required String json}) =>
+    RustLib.instance.api.crateApiParseQrPayload(json: json);
+
+/// Get QR payload fields
+String getQrIp({required QrPayload payload}) =>
+    RustLib.instance.api.crateApiGetQrIp(payload: payload);
+
+int getQrPort({required QrPayload payload}) =>
+    RustLib.instance.api.crateApiGetQrPort(payload: payload);
+
+String getQrFingerprint({required QrPayload payload}) =>
+    RustLib.instance.api.crateApiGetQrFingerprint(payload: payload);
+
+String getQrToken({required QrPayload payload}) =>
+    RustLib.instance.api.crateApiGetQrToken(payload: payload);
+
+int getQrProtocolVersion({required QrPayload payload}) =>
+    RustLib.instance.api.crateApiGetQrProtocolVersion(payload: payload);
+
+/// Create output event from bytes
+TerminalEvent eventOutput({required List<int> data}) =>
+    RustLib.instance.api.crateApiEventOutput(data: data);
+
+/// Create output event from string
+TerminalEvent eventOutputStr({required String s}) =>
+    RustLib.instance.api.crateApiEventOutputStr(s: s);
+
+/// Get event data (for Output events)
+Uint8List getEventData({required TerminalEvent event}) =>
+    RustLib.instance.api.crateApiGetEventData(event: event);
+
+/// Get event error message (for Error events)
+String getEventErrorMessage({required TerminalEvent event}) =>
+    RustLib.instance.api.crateApiGetEventErrorMessage(event: event);
+
+/// Get event exit code (for Exit events)
+int getEventExitCode({required TerminalEvent event}) =>
+    RustLib.instance.api.crateApiGetEventExitCode(event: event);
+
+/// Check if event is Output
+bool isEventOutput({required TerminalEvent event}) =>
+    RustLib.instance.api.crateApiIsEventOutput(event: event);
+
+/// Check if event is Error
+bool isEventError({required TerminalEvent event}) =>
+    RustLib.instance.api.crateApiIsEventError(event: event);
+
+/// Check if event is Exit
+bool isEventExit({required TerminalEvent event}) =>
+    RustLib.instance.api.crateApiIsEventExit(event: event);
+
+/// Request directory listing from server
+///
+/// Sends ListDir message. Server responds with multiple DirChunk messages.
+/// Call receive_dir_chunk() in a loop to receive all chunks.
+///
+/// # Arguments
+/// * `path` - Absolute path to list (e.g., "/tmp", "/home/user")
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestListDir({required String path}) =>
+    RustLib.instance.api.crateApiRequestListDir(path: path);
+
+/// Receive next directory chunk from server (NON-BLOCKING)
+///
+/// Returns a chunk with entries. Call repeatedly until has_more is false.
+/// Returns None if no chunks available yet (server still processing).
+///
+/// # Returns
+/// * `Some((chunk_index, entries, has_more))` - Chunk received
+/// * `None` - No chunks available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<(int, List<DirEntry>, bool)?> receiveDirChunk() =>
+    RustLib.instance.api.crateApiReceiveDirChunk();
+
+/// Get entry name
+String getDirEntryName({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiGetDirEntryName(entry: entry);
+
+/// Get entry path
+String getDirEntryPath({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiGetDirEntryPath(entry: entry);
+
+/// Check if entry is a directory
+bool isDirEntryDir({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiIsDirEntryDir(entry: entry);
+
+/// Check if entry is a symlink
+bool isDirEntrySymlink({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiIsDirEntrySymlink(entry: entry);
+
+/// Get entry size (bytes)
+BigInt? getDirEntrySize({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiGetDirEntrySize(entry: entry);
+
+/// Get entry modified timestamp (Unix epoch seconds)
+BigInt? getDirEntryModified({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiGetDirEntryModified(entry: entry);
+
+/// Get entry permissions string
+String? getDirEntryPermissions({required DirEntry entry}) =>
+    RustLib.instance.api.crateApiGetDirEntryPermissions(entry: entry);
+
+/// Request server to watch a directory for changes
+///
+/// Server will push FileEvent messages when files are created/modified/deleted.
+/// Call receive_file_event() in a loop to receive watcher events.
+///
+/// # Arguments
+/// * `path` - Absolute path to watch (e.g., "/tmp", "/home/user/project")
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestWatchDir({required String path}) =>
+    RustLib.instance.api.crateApiRequestWatchDir(path: path);
+
+/// Request server to stop watching a directory
+///
+/// # Arguments
+/// * `watcher_id` - ID of the watcher to stop (returned in WatchStarted event)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestUnwatchDir({required String watcherId}) =>
+    RustLib.instance.api.crateApiRequestUnwatchDir(watcherId: watcherId);
+
+/// Receive next file watcher event from server (NON-BLOCKING)
+///
+/// Returns watcher events (FileEvent, WatchStarted, WatchError).
+/// Call repeatedly in a loop to process all events.
+/// Returns None if no events available yet.
+///
+/// # Returns
+/// * `Some(FileWatcherEventData)` - Event received
+/// * `None` - No events available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<FileWatcherEventData?> receiveFileEvent() =>
+    RustLib.instance.api.crateApiReceiveFileEvent();
+
+/// Get file event buffer length (for monitoring)
+///
+/// Returns number of buffered events waiting to be processed.
+Future<BigInt> fileEventBufferLen() =>
+    RustLib.instance.api.crateApiFileEventBufferLen();
+
+/// Simple add function for testing FFI
+int add({required int a, required int b}) =>
+    RustLib.instance.api.crateApiAdd(a: a, b: b);
+
+/// Greeting function for testing FFI
+String greet({required String name}) =>
+    RustLib.instance.api.crateApiGreet(name: name);
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirEntry>>
+abstract class DirEntry implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<QrPayload>>
+abstract class QrPayload implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<TerminalCommand>>
+abstract class TerminalCommand implements RustOpaqueInterface {}
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<TerminalEvent>>
+abstract class TerminalEvent implements RustOpaqueInterface {}
+
+/// File watcher event data (for Dart)
+class FileWatcherEventData {
+  /// Event type: "file", "started", or "error"
+  final String eventType;
+
+  /// Watcher ID (for started/error events)
+  final String watcherId;
+
+  /// File path (for file events)
+  final String path;
+
+  /// File event type: "created", "modified", "deleted", "renamed"
+  final String fileEventType;
+
+  /// Old name (for rename events only)
+  final String oldName;
+
+  /// Event timestamp (Unix epoch seconds)
+  final BigInt timestamp;
+
+  /// Error message (for error events only)
+  final String error;
+
+  const FileWatcherEventData({
+    required this.eventType,
+    required this.watcherId,
+    required this.path,
+    required this.fileEventType,
+    required this.oldName,
+    required this.timestamp,
+    required this.error,
+  });
+
+  static Future<FileWatcherEventData> default_() =>
+      RustLib.instance.api.crateApiFileWatcherEventDataDefault();
+
+  @override
+  int get hashCode =>
+      eventType.hashCode ^
+      watcherId.hashCode ^
+      path.hashCode ^
+      fileEventType.hashCode ^
+      oldName.hashCode ^
+      timestamp.hashCode ^
+      error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FileWatcherEventData &&
+          runtimeType == other.runtimeType &&
+          eventType == other.eventType &&
+          watcherId == other.watcherId &&
+          path == other.path &&
+          fileEventType == other.fileEventType &&
+          oldName == other.oldName &&
+          timestamp == other.timestamp &&
+          error == other.error;
+}
+
 /// Terminal configuration for Flutter
 class TerminalConfig {
   final int rows;

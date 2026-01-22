@@ -21,6 +21,7 @@ use crate::auth::TokenStore;
 use crate::ratelimit::RateLimiterStore;
 use crate::session::SessionManager;
 use crate::vfs;
+use crate::vfs_watcher::WatcherManager;
 
 /// QUIC server for terminal connections
 pub struct QuicServer {
@@ -32,6 +33,8 @@ pub struct QuicServer {
     token_store: Arc<TokenStore>,
     /// Rate limiter for auth failure tracking
     rate_limiter: Arc<RateLimiterStore>,
+    /// File watcher manager for VFS (Phase VFS-3)
+    watcher_mgr: Arc<WatcherManager>,
     /// Shutdown signal sender
     shutdown_tx: Option<oneshot::Sender<()>>,
 }
@@ -73,6 +76,7 @@ impl QuicServer {
                 session_mgr: Arc::new(SessionManager::new()),
                 token_store,
                 rate_limiter,
+                watcher_mgr: Arc::new(WatcherManager::new()),
                 shutdown_tx: None,
             },
             cert,
@@ -118,8 +122,9 @@ impl QuicServer {
                             let session_mgr = Arc::clone(&self.session_mgr);
                             let token_store = Arc::clone(&self.token_store);
                             let rate_limiter = Arc::clone(&self.rate_limiter);
+                            let watcher_mgr = Arc::clone(&self.watcher_mgr);
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(incoming, session_mgr, token_store, rate_limiter).await {
+                                if let Err(e) = Self::handle_connection(incoming, session_mgr, token_store, rate_limiter, watcher_mgr).await {
                                     tracing::error!("Connection error: {}", e);
                                 }
                             });
@@ -147,6 +152,7 @@ impl QuicServer {
         session_mgr: Arc<SessionManager>,
         token_store: Arc<TokenStore>,
         rate_limiter: Arc<RateLimiterStore>,
+        watcher_mgr: Arc<WatcherManager>,
     ) -> Result<()> {
         // Accept the connection - returns Result<Connecting, ConnectionError>
         let connecting = incoming.accept()?;
@@ -162,8 +168,9 @@ impl QuicServer {
                     let session_mgr = Arc::clone(&session_mgr);
                     let token_store = Arc::clone(&token_store);
                     let rate_limiter = Arc::clone(&rate_limiter);
+                    let watcher_mgr = Arc::clone(&watcher_mgr);
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_stream(send, recv, session_mgr, token_store, rate_limiter, remote_addr).await {
+                        if let Err(e) = Self::handle_stream(send, recv, session_mgr, token_store, rate_limiter, watcher_mgr, remote_addr).await {
                             tracing::error!("Stream error: {}", e);
                         }
                     });
@@ -189,6 +196,7 @@ impl QuicServer {
         session_mgr: Arc<SessionManager>,
         token_store: Arc<TokenStore>,
         rate_limiter: Arc<RateLimiterStore>,
+        watcher_mgr: Arc<WatcherManager>,
         peer_addr: SocketAddr,
     ) -> Result<()> {
         let mut session_id: Option<u64> = None;
@@ -442,6 +450,107 @@ impl QuicServer {
                                     }
                                 )).await;
                             }
+                        }
+                    }
+                    // ===== VFS: File Watcher - Phase 3 =====
+                    NetworkMessage::WatchDir { path } => {
+                        if !authenticated {
+                            tracing::warn!("WatchDir received before authentication from {}", peer_addr);
+                            break;
+                        }
+
+                        tracing::info!("WatchDir request: {}", path);
+
+                        let path_buf = PathBuf::from(&path);
+
+                        // Validate path
+                        let current_dir = std::env::current_dir()
+                            .unwrap_or_else(|_| PathBuf::from("/"));
+                        if let Err(e) = vfs::validate_path(&path_buf, &current_dir) {
+                            let error_msg = format!("Path validation failed: {}", e);
+                            tracing::warn!("{}", error_msg);
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                                watcher_id: format!("watch_{}", session_id.unwrap_or(0)),
+                                error: error_msg,
+                            }).await;
+                            break;
+                        }
+
+                        // Check if path exists and is a directory
+                        if !path_buf.exists() {
+                            let error_msg = format!("Path not found: {}", path);
+                            tracing::warn!("{}", error_msg);
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                                watcher_id: format!("watch_{}", session_id.unwrap_or(0)),
+                                error: error_msg,
+                            }).await;
+                            break;
+                        }
+
+                        if !path_buf.is_dir() {
+                            let error_msg = format!("Path is not a directory: {}", path);
+                            tracing::warn!("{}", error_msg);
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                                watcher_id: format!("watch_{}", session_id.unwrap_or(0)),
+                                error: error_msg,
+                            }).await;
+                            break;
+                        }
+
+                        // Start watching
+                        let watcher_id = format!("watch_{}", session_id.unwrap_or(0));
+                        let watcher_mgr_clone: Arc<WatcherManager> = Arc::clone(&watcher_mgr);
+                        let send_clone = send_shared.clone();
+
+                        // Spawn watch task
+                        if let Err(e) = watcher_mgr_clone.watch_directory(
+                            watcher_id.clone(),
+                            &path_buf,
+                            move |event| {
+                                let msg = NetworkMessage::FileEvent {
+                                    watcher_id: event.watcher_id.clone(),
+                                    path: event.path,
+                                    event_type: event.event_type,
+                                    timestamp: event.timestamp,
+                                };
+
+                                // Send event to client
+                                let send = send_clone.clone();
+                                tokio::spawn(async move {
+                                    let mut send_lock = send.lock().await;
+                                    let _ = Self::send_message(&mut *send_lock, &msg).await;
+                                });
+                            },
+                        ).await {
+                            tracing::error!("Failed to start watcher: {}", e);
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                                watcher_id: watcher_id.clone(),
+                                error: format!("Failed to start watcher: {}", e),
+                            }).await;
+                            break;
+                        }
+
+                        // Send WatchStarted confirmation
+                        let mut send_lock = send_shared.lock().await;
+                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchStarted {
+                            watcher_id,
+                        }).await;
+                    }
+                    NetworkMessage::UnwatchDir { watcher_id } => {
+                        if !authenticated {
+                            tracing::warn!("UnwatchDir received before authentication from {}", peer_addr);
+                            break;
+                        }
+
+                        tracing::info!("UnwatchDir request: {}", watcher_id);
+
+                        // Stop watching
+                        if let Err(e) = watcher_mgr.unwatch(&watcher_id).await {
+                            tracing::warn!("Failed to unwatch {}: {}", watcher_id, e);
                         }
                     }
                     _ => {

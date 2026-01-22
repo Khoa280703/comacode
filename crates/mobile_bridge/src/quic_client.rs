@@ -16,7 +16,7 @@
 use comacode_core::{TerminalEvent, AuthToken};
 use comacode_core::types::DirEntry;
 use comacode_core::protocol::MessageCodec;
-use comacode_core::types::{NetworkMessage, TerminalCommand};
+use comacode_core::types::{NetworkMessage, TerminalCommand, FileEventType};
 use quinn::{ClientConfig, Endpoint, Connection, RecvStream, SendStream};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -176,6 +176,8 @@ pub struct QuicClient {
     event_buffer: Arc<Mutex<Vec<TerminalEvent>>>,
     /// DirChunk buffer for VFS directory listing
     dir_chunk_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
+    /// File event buffer for VFS file watcher (Phase VFS-3)
+    file_event_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
 }
 
 impl QuicClient {
@@ -193,6 +195,7 @@ impl QuicClient {
             recv_task: None,
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             dir_chunk_buffer: Arc::new(Mutex::new(Vec::new())),
+            file_event_buffer: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -295,6 +298,7 @@ impl QuicClient {
         // and pushes events to event_buffer. receive_event() polls from buffer.
         let event_buffer = self.event_buffer.clone();
         let dir_chunk_buffer = self.dir_chunk_buffer.clone();
+        let file_event_buffer = self.file_event_buffer.clone();
         let recv_task = tokio::spawn(async move {
             info!("🔄 [RECV_TASK] Background receive task started");
             let mut recv = recv_shared.lock().await;
@@ -321,6 +325,19 @@ impl QuicClient {
                                         buffer.push(msg);
                                     } else {
                                         warn!("📥 [RECV_TASK] DirChunk buffer full (100), dropping chunk");
+                                    }
+                                }
+                                // VFS Phase 3: Buffer file watcher events
+                                // Cap at 1000 events to prevent OOM (~500KB max)
+                                Ok(msg @ NetworkMessage::FileEvent { .. })
+                                | Ok(msg @ NetworkMessage::WatchStarted { .. })
+                                | Ok(msg @ NetworkMessage::WatchError { .. }) => {
+                                    let mut buffer = file_event_buffer.lock().await;
+                                    if buffer.len() < 1000 {
+                                        info!("📥 [RECV_TASK] Received file watcher event, buffering ({}/1000)", buffer.len() + 1);
+                                        buffer.push(msg);
+                                    } else {
+                                        warn!("📥 [RECV_TASK] File event buffer full (1000), dropping event");
                                     }
                                 }
                                 Ok(msg) => {
@@ -519,6 +536,8 @@ impl QuicClient {
         buffer.clear();
         let mut dir_buffer = self.dir_chunk_buffer.lock().await;
         dir_buffer.clear();
+        let mut file_buffer = self.file_event_buffer.lock().await;
+        file_buffer.clear();
 
         Ok(())
     }
@@ -530,6 +549,126 @@ impl QuicClient {
             None => false,
         }
     }
+
+    // ===== VFS Watcher Methods - Phase 3 =====
+
+    /// Request server to watch a directory for changes
+    ///
+    /// Server will push FileEvent messages when files are created/modified/deleted.
+    /// Call receive_file_event() to receive watcher events.
+    pub async fn request_watch_dir(&self, path: String) -> Result<(), String> {
+        info!("📁 [QUIC_CLIENT] request_watch_dir: {}", path);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let watch_msg = NetworkMessage::WatchDir { path };
+        let encoded = MessageCodec::encode(&watch_msg)
+            .map_err(|e| format!("Failed to encode WatchDir: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send WatchDir: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] WatchDir request sent");
+        Ok(())
+    }
+
+    /// Request server to stop watching a directory
+    pub async fn request_unwatch_dir(&self, watcher_id: String) -> Result<(), String> {
+        info!("📁 [QUIC_CLIENT] request_unwatch_dir: {}", watcher_id);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let unwatch_msg = NetworkMessage::UnwatchDir { watcher_id };
+        let encoded = MessageCodec::encode(&unwatch_msg)
+            .map_err(|e| format!("Failed to encode UnwatchDir: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send UnwatchDir: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] UnwatchDir request sent");
+        Ok(())
+    }
+
+    /// Receive next file watcher event from server (NON-BLOCKING)
+    ///
+    /// Returns Ok(Some(event)) if event available, Ok(None) if buffer empty.
+    ///
+    /// **Security**: Buffer capped at 1000 events to prevent OOM.
+    pub async fn receive_file_event(&self) -> Result<Option<FileWatcherEventData>, String> {
+        let mut buffer = self.file_event_buffer.lock().await;
+
+        let pos = buffer.iter().position(|m| matches!(
+            m,
+            NetworkMessage::FileEvent { .. }
+                | NetworkMessage::WatchStarted { .. }
+                | NetworkMessage::WatchError { .. }
+        ));
+
+        match pos {
+            Some(idx) => {
+                let msg = buffer.remove(idx);
+                Ok(Some(match msg {
+                    NetworkMessage::FileEvent { watcher_id, path, event_type, timestamp } => {
+                        FileWatcherEventData::FileEvent(FileWatcherEvent {
+                            watcher_id,
+                            path,
+                            event_type,
+                            timestamp,
+                        })
+                    }
+                    NetworkMessage::WatchStarted { watcher_id } => {
+                        FileWatcherEventData::Started(WatcherStartedEvent { watcher_id })
+                    }
+                    NetworkMessage::WatchError { watcher_id, error } => {
+                        FileWatcherEventData::Error(WatcherErrorEvent { watcher_id, error })
+                    }
+                    _ => unreachable!(),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get file event buffer length (for monitoring)
+    pub async fn file_event_buffer_len(&self) -> usize {
+        self.file_event_buffer.lock().await.len()
+    }
+}
+
+/// File watcher event (for FFI)
+#[derive(Debug, Clone)]
+pub struct FileWatcherEvent {
+    pub watcher_id: String,
+    pub path: String,
+    pub event_type: FileEventType,
+    pub timestamp: u64,
+}
+
+/// Watcher started event (for FFI)
+#[derive(Debug, Clone)]
+pub struct WatcherStartedEvent {
+    pub watcher_id: String,
+}
+
+/// Watcher error event (for FFI)
+#[derive(Debug, Clone)]
+pub struct WatcherErrorEvent {
+    pub watcher_id: String,
+    pub error: String,
+}
+
+/// File watcher event data enum
+///
+/// Moved outside impl block for public visibility
+#[derive(Debug, Clone)]
+pub enum FileWatcherEventData {
+    FileEvent(FileWatcherEvent),
+    Started(WatcherStartedEvent),
+    Error(WatcherErrorEvent),
 }
 
 #[cfg(test)]

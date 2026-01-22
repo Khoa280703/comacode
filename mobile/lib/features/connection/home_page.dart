@@ -10,11 +10,16 @@ import '../../core/theme.dart';
 ///
 /// Phase 06: Refactor to Riverpod
 /// Shows saved hosts and options to connect
-class HomePage extends ConsumerWidget {
+class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends ConsumerState<HomePage> {
+  @override
+  Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
 
     // Auto-navigate to terminal if already connected
@@ -39,11 +44,11 @@ class HomePage extends ConsumerWidget {
           ),
         ],
       ),
-      body: _buildContent(context, ref),
+      body: _buildContent(context),
     );
   }
 
-  Widget _buildContent(BuildContext context, WidgetRef ref) {
+  Widget _buildContent(BuildContext context) {
     return FutureBuilder<bool>(
       future: ref.read(connectionStateProvider.notifier).hasSavedHosts(),
       builder: (context, snapshot) {
@@ -117,7 +122,7 @@ class HomePage extends ConsumerWidget {
                 const SizedBox(height: 32),
                 const Divider(color: CatppuccinMocha.surface0),
                 const SizedBox(height: 16),
-                _buildSavedHostsSection(context, ref),
+                _buildSavedHostsSection(context),
               ],
             ],
           ),
@@ -250,7 +255,7 @@ class HomePage extends ConsumerWidget {
     );
   }
 
-  Widget _buildSavedHostsSection(BuildContext context, WidgetRef ref) {
+  Widget _buildSavedHostsSection(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -275,12 +280,12 @@ class HomePage extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
-        _buildSavedHostsList(context, ref),
+        _buildSavedHostsList(context),
       ],
     );
   }
 
-  Widget _buildSavedHostsList(BuildContext context, WidgetRef ref) {
+  Widget _buildSavedHostsList(BuildContext context) {
     return FutureBuilder<List<QrPayload>>(
       future: AppStorage.getAllHosts(),
       builder: (context, snapshot) {
@@ -297,14 +302,14 @@ class HomePage extends ConsumerWidget {
 
         return Column(
           children: hosts.map((host) {
-            return _buildHostTile(context, ref, host);
+            return _buildHostTile(context, host);
           }).toList(),
         );
       },
     );
   }
 
-  Widget _buildHostTile(BuildContext context, WidgetRef ref, QrPayload host) {
+  Widget _buildHostTile(BuildContext context, QrPayload host) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -336,7 +341,7 @@ class HomePage extends ConsumerWidget {
                 Icons.connect_without_contact,
                 color: CatppuccinMocha.green,
               ),
-              onPressed: () => _connectToSaved(context, ref, host),
+              onPressed: () => _connectToSaved(context, host),
               tooltip: 'Connect',
             ),
             IconButton(
@@ -366,7 +371,7 @@ class HomePage extends ConsumerWidget {
     );
   }
 
-  void _connectToSaved(BuildContext context, WidgetRef ref, QrPayload host) async {
+  void _connectToSaved(BuildContext context, QrPayload host) async {
     try {
       await ref.read(connectionStateProvider.notifier).connect(host.toJson());
       if (context.mounted) {
@@ -416,8 +421,16 @@ class HomePage extends ConsumerWidget {
     );
 
     if (confirmed == true) {
+      // Disconnect if deleting the currently connected host
+      final connectionState = ref.read(connectionStateProvider);
+      if (connectionState.isConnected &&
+          connectionState.currentHost?.fingerprint == host.fingerprint) {
+        await ref.read(connectionStateProvider.notifier).disconnect();
+      }
+
       await AppStorage.deleteHost(host.fingerprint);
-      // Refresh handled by FutureBuilder
+      // Trigger rebuild to refresh hosts list
+      setState(() {});
     }
   }
 
@@ -452,6 +465,8 @@ class HomePage extends ConsumerWidget {
 
     if (confirmed == true) {
       await AppStorage.clearAll();
+      // Trigger rebuild to refresh hosts list
+      setState(() {});
     }
   }
 }

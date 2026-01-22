@@ -14,6 +14,7 @@ mod ratelimit;
 mod session;
 mod snapshot;
 mod vfs;
+mod vfs_watcher;
 mod web_ui;
 
 use anyhow::{Context, Result};

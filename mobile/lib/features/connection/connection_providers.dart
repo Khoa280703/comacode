@@ -1,8 +1,8 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../bridge/bridge_wrapper.dart';
-import '../../core/storage.dart';
+import '../../bridge/ffi_helpers.dart';
+import '../../core/storage.dart' as storage;
 import 'package:wakelock_plus/wakelock_plus.dart';
-import '../../bridge/third_party/mobile_bridge/api.dart' as frb;
 
 part 'connection_providers.g.dart';
 
@@ -17,7 +17,7 @@ enum ConnectionStatus {
 /// Connection model with current state
 class ConnectionModel {
   final ConnectionStatus status;
-  final QrPayload? currentHost; // Dart model from storage.dart
+  final storage.QrPayload? currentHost; // Dart model from storage.dart
   final String? errorMessage;
 
   const ConnectionModel({
@@ -34,7 +34,7 @@ class ConnectionModel {
     return const ConnectionModel(status: ConnectionStatus.connecting);
   }
 
-  factory ConnectionModel.connected(QrPayload host) {
+  factory ConnectionModel.connected(storage.QrPayload host) {
     return ConnectionModel(
       status: ConnectionStatus.connected,
       currentHost: host,
@@ -98,7 +98,7 @@ class ConnectionState extends _$ConnectionState {
 
     try {
       // Parse to Dart model first (for storage and UI)
-      final dartPayload = QrPayload.fromJson(qrJson);
+      final dartPayload = storage.QrPayload.fromJson(qrJson);
 
       // Parse to FRB opaque type
       final bridge = ref.read(bridgeWrapperProvider);
@@ -106,14 +106,14 @@ class ConnectionState extends _$ConnectionState {
 
       // Connect via Rust Bridge using FRB API getters
       await bridge.connect(
-        host: frb.getQrIp(payload: frbPayload),
-        port: frb.getQrPort(payload: frbPayload),
-        token: frb.getQrToken(payload: frbPayload),
-        fingerprint: frb.getQrFingerprint(payload: frbPayload),
+        host: getQrIp(frbPayload),
+        port: getQrPort(frbPayload),
+        token: getQrToken(frbPayload),
+        fingerprint: getQrFingerprint(frbPayload),
       );
 
       // Persist credentials (TOFU) - use Dart model
-      await AppStorage.saveHost(dartPayload);
+      await storage.AppStorage.saveHost(dartPayload);
 
       // Enable wakelock (keep screen on during session)
       await WakelockPlus.enable();
@@ -127,7 +127,7 @@ class ConnectionState extends _$ConnectionState {
 
   /// Auto-reconnect to last saved host
   Future<void> reconnectLast() async {
-    final last = await AppStorage.getLastHost();
+    final last = await storage.AppStorage.getLastHost();
     if (last != null) {
       await connect(last.toJson());
     } else {
@@ -169,7 +169,7 @@ class ConnectionState extends _$ConnectionState {
 
   /// Check if has any saved hosts
   Future<bool> hasSavedHosts() async {
-    return await AppStorage.hasHosts();
+    return await storage.AppStorage.hasHosts();
   }
 }
 

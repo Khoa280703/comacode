@@ -6,14 +6,20 @@
 //! Phase 04.1: Fixed UB - replaced static mut with once_cell::sync::OnceCell
 //! Phase 04.2: Use RwLock<Option<>> for reconnect support
 //! Phase VFS-1: Directory listing API
+//! Phase VFS-3: File watcher API
 
-use comacode_core::{TerminalCommand, NetworkMessage, MessageCodec, TerminalEvent, QrPayload};
-use comacode_core::types::DirEntry;
+use comacode_core::{NetworkMessage, MessageCodec};
+use comacode_core::types::FileEventType;
 use flutter_rust_bridge::frb;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::quic_client::QuicClient;
+
+// Re-export commonly used types for FRB
+// These are both imported and re-exported for FRB generated code visibility
+pub use comacode_core::{TerminalCommand, TerminalEvent, QrPayload};
+pub use comacode_core::types::DirEntry;
 
 /// CryptoProvider initializer (rustls 0.23+ requires runtime init)
 ///
@@ -479,6 +485,142 @@ pub fn get_dir_entry_modified(entry: &DirEntry) -> Option<u64> {
 #[frb(sync)]
 pub fn get_dir_entry_permissions(entry: &DirEntry) -> Option<String> {
     entry.permissions.clone()
+}
+
+// ===== VFS File Watcher Functions - Phase 3 =====
+
+/// Request server to watch a directory for changes
+///
+/// Server will push FileEvent messages when files are created/modified/deleted.
+/// Call receive_file_event() in a loop to receive watcher events.
+///
+/// # Arguments
+/// * `path` - Absolute path to watch (e.g., "/tmp", "/home/user/project")
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn request_watch_dir(path: String) -> Result<(), String> {
+    tracing::info!("📁 [FRB] request_watch_dir: {}", path);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.request_watch_dir(path).await
+}
+
+/// Request server to stop watching a directory
+///
+/// # Arguments
+/// * `watcher_id` - ID of the watcher to stop (returned in WatchStarted event)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn request_unwatch_dir(watcher_id: String) -> Result<(), String> {
+    tracing::info!("📁 [FRB] request_unwatch_dir: {}", watcher_id);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.request_unwatch_dir(watcher_id).await
+}
+
+/// File watcher event data (for Dart)
+#[derive(Debug, Clone)]
+#[frb(sync)]
+pub struct FileWatcherEventData {
+    /// Event type: "file", "started", or "error"
+    pub event_type: String,
+    /// Watcher ID (for started/error events)
+    pub watcher_id: String,
+    /// File path (for file events)
+    pub path: String,
+    /// File event type: "created", "modified", "deleted", "renamed"
+    pub file_event_type: String,
+    /// Old name (for rename events only)
+    pub old_name: String,
+    /// Event timestamp (Unix epoch seconds)
+    pub timestamp: u64,
+    /// Error message (for error events only)
+    pub error: String,
+}
+
+impl Default for FileWatcherEventData {
+    fn default() -> Self {
+        Self {
+            event_type: String::new(),
+            watcher_id: String::new(),
+            path: String::new(),
+            file_event_type: String::new(),
+            old_name: String::new(),
+            timestamp: 0,
+            error: String::new(),
+        }
+    }
+}
+
+/// Receive next file watcher event from server (NON-BLOCKING)
+///
+/// Returns watcher events (FileEvent, WatchStarted, WatchError).
+/// Call repeatedly in a loop to process all events.
+/// Returns None if no events available yet.
+///
+/// # Returns
+/// * `Some(FileWatcherEventData)` - Event received
+/// * `None` - No events available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn receive_file_event() -> Result<Option<FileWatcherEventData>, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+
+    match client.receive_file_event().await? {
+        Some(event) => {
+            let data = match event {
+                crate::quic_client::FileWatcherEventData::FileEvent(e) => FileWatcherEventData {
+                    event_type: "file".to_string(),
+                    watcher_id: e.watcher_id,
+                    path: e.path,
+                    file_event_type: match e.event_type {
+                        FileEventType::Created => "created".to_string(),
+                        FileEventType::Modified => "modified".to_string(),
+                        FileEventType::Deleted => "deleted".to_string(),
+                        FileEventType::Renamed { ref old_name } => {
+                            format!("renamed:{}", old_name)
+                        }
+                    },
+                    old_name: match &e.event_type {
+                        FileEventType::Renamed { old_name } => old_name.clone(),
+                        _ => String::new(),
+                    },
+                    timestamp: e.timestamp,
+                    error: String::new(),
+                },
+                crate::quic_client::FileWatcherEventData::Started(e) => FileWatcherEventData {
+                    event_type: "started".to_string(),
+                    watcher_id: e.watcher_id,
+                    ..Default::default()
+                },
+                crate::quic_client::FileWatcherEventData::Error(e) => FileWatcherEventData {
+                    event_type: "error".to_string(),
+                    watcher_id: e.watcher_id,
+                    error: e.error,
+                    ..Default::default()
+                },
+            };
+            Ok(Some(data))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Get file event buffer length (for monitoring)
+///
+/// Returns number of buffered events waiting to be processed.
+#[frb]
+pub async fn file_event_buffer_len() -> Result<usize, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    Ok(client.file_event_buffer_len().await)
 }
 
 // ===== Test functions =====

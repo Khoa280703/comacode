@@ -26,7 +26,7 @@ pub use error::{CoreError, Result};
 pub use protocol::MessageCodec;
 pub use streaming::OutputStream;
 pub use terminal::{Terminal, TerminalConfig, MockTerminal};
-pub use types::{NetworkMessage, TerminalCommand, TerminalEvent, QrPayload};
+pub use types::{NetworkMessage, TerminalCommand, TerminalEvent, QrPayload, FileEventType};
 
 #[cfg(test)]
 mod tests {

@@ -86,6 +86,37 @@ pub enum NetworkMessage {
         entries: Vec<DirEntry>,
         has_more: bool,
     },
+
+    // ===== VFS File Watcher - Phase 3 =====
+
+    /// Request to watch a directory for changes
+    WatchDir {
+        path: String,
+    },
+
+    /// Watch started successfully
+    WatchStarted {
+        watcher_id: String,
+    },
+
+    /// File system event
+    FileEvent {
+        watcher_id: String,
+        path: String,
+        event_type: FileEventType,
+        timestamp: u64,
+    },
+
+    /// Request to stop watching
+    UnwatchDir {
+        watcher_id: String,
+    },
+
+    /// Watch error occurred
+    WatchError {
+        watcher_id: String,
+        error: String,
+    },
 }
 
 /// Directory entry for VFS browsing
@@ -98,6 +129,15 @@ pub struct DirEntry {
     pub size: Option<u64>,
     pub modified: Option<u64>,
     pub permissions: Option<String>,
+}
+
+/// File system event type for watcher
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FileEventType {
+    Created,
+    Modified,
+    Deleted,
+    Renamed { old_name: String },
 }
 
 impl NetworkMessage {
