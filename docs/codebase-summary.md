@@ -1,7 +1,7 @@
 # Comacode Codebase Summary
 
-> Last Updated: 2026-01-07
-> Version: Phase 04.1 (QUIC Client + Critical Bugfixes)
+> Last Updated: 2026-01-22
+> Version: Phase VFS-1 (Virtual File System - Directory Listing)
 
 ---
 
@@ -80,6 +80,26 @@ Comacode/
    - `rustls-pki-types = "1.0"` (Rustls 0.23 compatibility)
    - `sha2 = "0.10"` (Fingerprint calculation)
 
+### Phase VFS-1: Virtual File System ✅
+
+5. **VFS Operations** (`crates/hostagent/src/vfs.rs` - NEW)
+   - Directory listing with async I/O
+   - Sorted entries (directories first, alphabetically)
+   - Chunked streaming for large directories (150 entries/chunk)
+   - Path validation with symlink resolution
+   - VFS-specific error types
+   - Security: path traversal protection
+
+6. **VFS Message Types** (`crates/core/src/types/message.rs`)
+   - `NetworkMessage::ListDir { path, depth }` - Request directory listing
+   - `NetworkMessage::DirChunk { chunk_index, total_chunks, entries, has_more }` - Response chunk
+   - `DirEntry` struct - File metadata (name, path, is_dir, is_symlink, size, modified)
+
+7. **VFS FFI API** (`crates/mobile_bridge/src/api.rs`)
+   - `request_list_dir(path)` - Request directory listing
+   - `receive_dir_chunk()` - Receive chunk (non-blocking, returns Option)
+   - DirEntry getters: `get_dir_entry_name`, `is_dir_entry_dir`, etc.
+
 ### Phase 04.1 Critical Bugfixes ✅
 
 4. **Fixed Undefined Behavior in FFI Bridge** (`api.rs`)
@@ -98,7 +118,7 @@ Comacode/
 
 ### Partial Implementation ⚠️
 
-6. **Stream I/O Methods** (Stub implementations - deferred to Phase 05)
+8. **Stream I/O Methods** (Stub implementations - deferred to Phase 05)
    - `receive_event()`: Returns empty stub (TODO: Read from QUIC stream)
    - `send_command()`: Logs only (TODO: Write to QUIC stream)
    - **Blocks**: Flutter integration with StreamSink
@@ -127,6 +147,19 @@ impl AuthToken {
     pub fn generate() -> Self;           // Secure random generation
     pub fn to_hex(&self) -> String;       // Hex encoding
     pub fn from_hex(hex: &str) -> Result<Self>; // Decoding
+}
+```
+
+**DirEntry**: VFS directory entry (Phase VFS-1)
+```rust
+pub struct DirEntry {
+    pub name: String,           // File/directory name
+    pub path: String,           // Full path
+    pub is_dir: bool,           // Is directory
+    pub is_symlink: bool,       // Is symbolic link
+    pub size: Option<u64>,      // File size in bytes
+    pub modified: Option<u64>,  // Modified time (Unix epoch)
+    pub permissions: Option<String>, // Permissions (reserved)
 }
 ```
 
@@ -177,7 +210,30 @@ impl QuicClient {
 }
 ```
 
-### 3. FFI Bridge (`crates/mobile_bridge/src/api.rs`)
+### 4. VFS Module (`crates/hostagent/src/vfs.rs`)
+
+**Purpose**: Virtual File System operations for directory browsing
+
+**Key Functions**:
+```rust
+pub async fn read_directory(path: &Path) -> VfsResult<Vec<DirEntry>>;
+pub fn chunk_entries(entries: Vec<DirEntry>, chunk_size: usize) -> Vec<Vec<DirEntry>>;
+pub fn validate_path(path: &Path, allowed_base: &Path) -> VfsResult<()>;
+```
+
+**Features**:
+- Async directory reading with `tokio::fs`
+- Sorted output (directories first, then alphabetically)
+- Chunked streaming for large directories (default: 150 entries/chunk)
+- Path validation with symlink resolution (prevents traversal attacks)
+- VFS-specific error types with `CoreError` conversion
+
+**Security**:
+- Path validation using `canonicalize()` to resolve symlinks and relative paths
+- Permission denied detection (returns specific error)
+- Does NOT follow symlinks (metadata only)
+
+### 5. FFI Bridge (`crates/mobile_bridge/src/api.rs`)
 
 **Purpose**: Expose Rust functions to Flutter via `flutter_rust_bridge`
 
@@ -191,12 +247,23 @@ impl QuicClient {
 
 **API Signature**:
 ```rust
+// Connection
 pub async fn connect_to_host(
     host: String,
     port: u16,
     auth_token: String,
     fingerprint: String,
 ) -> Result<(), String>;
+
+// VFS (Phase VFS-1)
+pub async fn request_list_dir(path: String) -> Result<(), String>;
+pub async fn receive_dir_chunk() -> Result<Option<(u32, Vec<DirEntry>, bool)>, String>;
+
+// DirEntry getters (sync)
+pub fn get_dir_entry_name(entry: &DirEntry) -> String;
+pub fn is_dir_entry_dir(entry: &DirEntry) -> bool;
+pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64>;
+// ... (see api.rs for full list)
 ```
 
 ---
@@ -466,6 +533,6 @@ cargo test -p mobile_bridge
 
 ---
 
-**Last Updated**: 2026-01-07
-**Current Phase**: Phase 04.1 - QUIC Client Complete + Critical Bugfixes
-**Next Milestone**: Phase 05 - Network Protocol (Stream I/O Implementation)
+**Last Updated**: 2026-01-22
+**Current Phase**: Phase VFS-1 - Virtual File System (Directory Listing)
+**Next Milestone**: Phase VFS-2 - File Operations (Read/Download)

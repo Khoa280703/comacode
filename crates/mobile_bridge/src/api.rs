@@ -4,32 +4,41 @@
 //!
 //! Phase 04: Added QUIC client support
 //! Phase 04.1: Fixed UB - replaced static mut with once_cell::sync::OnceCell
+//! Phase 04.2: Use RwLock<Option<>> for reconnect support
+//! Phase VFS-1: Directory listing API
 
 use comacode_core::{TerminalCommand, NetworkMessage, MessageCodec, TerminalEvent, QrPayload};
+use comacode_core::types::DirEntry;
 use flutter_rust_bridge::frb;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
 use crate::quic_client::QuicClient;
 
-/// Global client instance (thread-safe, no unsafe needed)
+/// CryptoProvider initializer (rustls 0.23+ requires runtime init)
 ///
-/// Using OnceCell ensures:
-/// - One-time initialization guarantee
-/// - Thread-safe access via atomic operations
-/// - Zero undefined behavior
-static QUIC_CLIENT: OnceCell<Arc<Mutex<QuicClient>>> = OnceCell::new();
+/// Using OnceCell ensures ring crypto provider is installed exactly once
+/// before any QUIC connection is attempted.
+static CRYPTO_INIT: OnceCell<()> = OnceCell::new();
 
-/// Initialize the QUIC client (internal helper)
+/// Initialize the CryptoProvider with ring backend
 ///
-/// This is called automatically by connect_to_host if not already initialized.
-/// OnceCell ensures this only happens once.
-fn init_quic_client(server_fingerprint: String) -> Result<(), String> {
-    let client = QuicClient::new(server_fingerprint);
-    QUIC_CLIENT.set(Arc::new(Mutex::new(client)))
-        .map_err(|_| "Failed to initialize global client (already set)".to_string())
+/// This must be called before any rustls operations.
+/// Safe to call multiple times - OnceCell ensures it only runs once.
+fn init_crypto_provider() {
+    CRYPTO_INIT.get_or_init(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
+
+/// Global client instance (thread-safe, reconnectable)
+///
+/// Using OnceCell<RwLock<Option<>>> allows:
+/// - Lazy initialization on first use
+/// - Reconnection after failure
+/// - Explicit disconnect and reconnect
+/// - Thread-safe access in async context
+static QUIC_CLIENT: OnceCell<tokio::sync::RwLock<Option<Arc<Mutex<QuicClient>>>>> = OnceCell::new();
 
 /// Connect to remote host
 ///
@@ -43,8 +52,8 @@ fn init_quic_client(server_fingerprint: String) -> Result<(), String> {
 /// * `fingerprint` - Certificate fingerprint for TOFU verification
 ///
 /// # Behavior
-/// - First call: Initializes client and connects
-/// - Subsequent calls: Returns error if already connected
+/// - If already connected: Returns error (call disconnect first)
+/// - On success: Stores client for subsequent operations
 #[frb]
 pub async fn connect_to_host(
     host: String,
@@ -52,23 +61,38 @@ pub async fn connect_to_host(
     auth_token: String,
     fingerprint: String,
 ) -> Result<(), String> {
-    // Check if already initialized (OnceCell::get is thread-safe)
-    if QUIC_CLIENT.get().is_some() {
-        return Err(
-            "Client already initialized. Please restart app to reset.".to_string()
-        );
+    // Initialize rustls CryptoProvider first (required for rustls 0.23+)
+    init_crypto_provider();
+
+    // Get or init the RwLock
+    let lock = QUIC_CLIENT.get_or_init(|| tokio::sync::RwLock::new(None));
+
+    // Check if already connected (read lock)
+    {
+        let client_guard = lock.read().await;
+        if client_guard.is_some() {
+            return Err(
+                "Already connected. Disconnect first to reconnect.".to_string()
+            );
+        }
     }
 
-    // Initialize client (one-time, thread-safe)
-    init_quic_client(fingerprint)?;
-
-    // Get client (safe unwrap - we just initialized it)
-    let client_arc = QUIC_CLIENT.get()
-        .ok_or("Failed to get initialized client")?;
+    // Create new client
+    let client = Arc::new(Mutex::new(QuicClient::new(fingerprint)));
 
     // Connect
-    let mut client = client_arc.lock().await;
-    client.connect(host, port, auth_token).await
+    {
+        let mut client_lock = client.lock().await;
+        client_lock.connect(host, port, auth_token).await?;
+    }
+
+    // Store client (write lock)
+    {
+        let mut client_guard = lock.write().await;
+        *client_guard = Some(client);
+    }
+
+    Ok(())
 }
 
 /// Receive next terminal event from server
@@ -80,9 +104,7 @@ pub async fn connect_to_host(
 /// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn receive_terminal_event() -> Result<TerminalEvent, String> {
-    let client_arc = QUIC_CLIENT.get()
-        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
-
+    let client_arc = get_client().await?;
     let client = client_arc.lock().await;
     client.receive_event().await
 }
@@ -93,11 +115,15 @@ pub async fn receive_terminal_event() -> Result<TerminalEvent, String> {
 /// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn send_terminal_command(command: String) -> Result<(), String> {
-    let client_arc = QUIC_CLIENT.get()
-        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
-
+    tracing::info!("🔵 [FRB] Sending command: '{}'", command);
+    let client_arc = get_client().await?;
     let client = client_arc.lock().await;
-    client.send_command(command).await
+    let result = client.send_command(command).await;
+    match &result {
+        Ok(()) => tracing::info!("✅ [FRB] Command sent successfully"),
+        Err(e) => tracing::error!("❌ [FRB] Command send failed: {}", e),
+    }
+    result
 }
 
 /// Send raw input bytes to remote terminal (pure passthrough)
@@ -112,9 +138,7 @@ pub async fn send_terminal_command(command: String) -> Result<(), String> {
 /// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn send_raw_input(data: Vec<u8>) -> Result<(), String> {
-    let client_arc = QUIC_CLIENT.get()
-        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
-
+    let client_arc = get_client().await?;
     let client = client_arc.lock().await;
     client.send_raw_input(data).await
 }
@@ -132,22 +156,28 @@ pub async fn send_raw_input(data: Vec<u8>) -> Result<(), String> {
 /// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn resize_pty(rows: u16, cols: u16) -> Result<(), String> {
-    let client_arc = QUIC_CLIENT.get()
-        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
-
+    let client_arc = get_client().await?;
     let client = client_arc.lock().await;
     client.resize_pty(rows, cols).await
 }
 
 /// Disconnect from host
 ///
+/// Clears the client, allowing reconnect.
+///
 /// # Errors
 /// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn disconnect_from_host() -> Result<(), String> {
-    let client_arc = QUIC_CLIENT.get()
-        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())?;
+    // Get and clear client (write lock)
+    let client_arc = {
+        let lock = QUIC_CLIENT.get_or_init(|| tokio::sync::RwLock::new(None));
+        let mut client_guard = lock.write().await;
+        client_guard.take()
+            .ok_or_else(|| "Not connected".to_string())?
+    };
 
+    // Disconnect (outside lock to avoid deadlock)
     let mut client = client_arc.lock().await;
     client.disconnect().await
 }
@@ -157,12 +187,27 @@ pub async fn disconnect_from_host() -> Result<(), String> {
 /// Returns false if client not initialized or disconnected.
 #[frb]
 pub async fn is_connected() -> bool {
-    if let Some(client_arc) = QUIC_CLIENT.get() {
+    let lock = QUIC_CLIENT.get_or_init(|| tokio::sync::RwLock::new(None));
+    let client_guard = lock.read().await;
+
+    if let Some(client_arc) = client_guard.as_ref() {
         let client = client_arc.lock().await;
         client.is_connected().await
     } else {
         false
     }
+}
+
+/// Helper: Get client reference
+///
+/// Returns error if not connected.
+async fn get_client() -> Result<Arc<Mutex<QuicClient>>, String> {
+    let lock = QUIC_CLIENT.get_or_init(|| tokio::sync::RwLock::new(None));
+    lock.read()
+        .await
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "Not connected. Call connect_to_host first.".to_string())
 }
 
 // ===== Existing encode/decode functions =====
@@ -352,6 +397,88 @@ pub fn is_event_error(event: &TerminalEvent) -> bool {
 #[frb(sync)]
 pub fn is_event_exit(event: &TerminalEvent) -> bool {
     matches!(event, TerminalEvent::Exit { .. })
+}
+
+// ===== VFS (Virtual File System) Functions - Phase 1 =====
+
+/// Request directory listing from server
+///
+/// Sends ListDir message. Server responds with multiple DirChunk messages.
+/// Call receive_dir_chunk() in a loop to receive all chunks.
+///
+/// # Arguments
+/// * `path` - Absolute path to list (e.g., "/tmp", "/home/user")
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn request_list_dir(path: String) -> Result<(), String> {
+    tracing::info!("📁 [FRB] request_list_dir: {}", path);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.request_list_dir(path).await
+}
+
+/// Receive next directory chunk from server (NON-BLOCKING)
+///
+/// Returns a chunk with entries. Call repeatedly until has_more is false.
+/// Returns None if no chunks available yet (server still processing).
+///
+/// # Returns
+/// * `Some((chunk_index, entries, has_more))` - Chunk received
+/// * `None` - No chunks available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn receive_dir_chunk() -> Result<Option<(u32, Vec<DirEntry>, bool)>, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.receive_dir_chunk().await
+}
+
+// ===== DirEntry helper functions for Dart =====
+
+/// Get entry name
+#[frb(sync)]
+pub fn get_dir_entry_name(entry: &DirEntry) -> String {
+    entry.name.clone()
+}
+
+/// Get entry path
+#[frb(sync)]
+pub fn get_dir_entry_path(entry: &DirEntry) -> String {
+    entry.path.clone()
+}
+
+/// Check if entry is a directory
+#[frb(sync)]
+pub fn is_dir_entry_dir(entry: &DirEntry) -> bool {
+    entry.is_dir
+}
+
+/// Check if entry is a symlink
+#[frb(sync)]
+pub fn is_dir_entry_symlink(entry: &DirEntry) -> bool {
+    entry.is_symlink
+}
+
+/// Get entry size (bytes)
+#[frb(sync)]
+pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64> {
+    entry.size
+}
+
+/// Get entry modified timestamp (Unix epoch seconds)
+#[frb(sync)]
+pub fn get_dir_entry_modified(entry: &DirEntry) -> Option<u64> {
+    entry.modified
+}
+
+/// Get entry permissions string
+#[frb(sync)]
+pub fn get_dir_entry_permissions(entry: &DirEntry) -> Option<String> {
+    entry.permissions.clone()
 }
 
 // ===== Test functions =====

@@ -1,7 +1,7 @@
 # Comacode System Architecture
 
-> Version: 1.1 | Last Updated: 2026-01-07
-> Phase: Phase 04.1 - QUIC Client + Critical Bugfixes
+> Version: 1.2 | Last Updated: 2026-01-22
+> Phase: Phase VFS-1 - Virtual File System (Directory Listing)
 
 ---
 
@@ -179,20 +179,33 @@ impl CertificateManager {
 - Write user input → PTY
 - Handle window resize
 
+#### 4. VFS Module (Phase VFS-1)
+**File**: `crates/host_agent/src/vfs.rs`
+
+**Responsibilities**:
+- Directory listing with async I/O
+- Path validation (security)
+- Chunked streaming for large directories
+- File metadata extraction
+
 **Key Methods**:
 ```rust
-pub struct PtyManager {
-    pty: Box<Pty>,
-    shell: Child,
-}
-
-impl PtyManager {
-    pub fn spawn(shell: &str, rows: u16, cols: u16) -> Result<Self>;
-    pub async fn read_output(&mut self) -> Result<TerminalEvent>;
-    pub fn write_input(&mut self, input: &str) -> Result<()>;
-    pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()>;
-}
+pub async fn read_directory(path: &Path) -> VfsResult<Vec<DirEntry>>;
+pub fn chunk_entries(entries: Vec<DirEntry>, chunk_size: usize) -> Vec<Vec<DirEntry>>;
+pub fn validate_path(path: &Path, allowed_base: &Path) -> VfsResult<()>;
 ```
+
+**Message Flow** (VFS):
+```
+Client → Host: ListDir { path: "/tmp", depth: None }
+Host → Client: DirChunk { chunk_index: 0, total_chunks: 2, entries: [...], has_more: true }
+Host → Client: DirChunk { chunk_index: 1, total_chunks: 2, entries: [...], has_more: false }
+```
+
+**Security**:
+- Path validation using `canonicalize()` resolves all symlinks and relative components
+- Checks if resolved path is within allowed base (prevents `../` traversal)
+- Returns specific errors: `PathNotFound`, `PermissionDenied`, `NotADirectory`
 
 ### Mobile Bridge Components
 
@@ -521,6 +534,37 @@ class ScanQrPage extends StatelessWidget {
 ```
 
 ### Message Format
+
+**TerminalEvent** (Postcard serialized):
+
+**VFS Messages** (Phase VFS-1):
+```rust
+// Request directory listing
+pub enum NetworkMessage {
+    ListDir {
+        path: String,           // Directory path
+        depth: Option<u32>,     // Reserved for future recursive listing
+    },
+    // Response chunk
+    DirChunk {
+        chunk_index: u32,       // Current chunk index (0-based)
+        total_chunks: u32,      // Total number of chunks
+        entries: Vec<DirEntry>, // Directory entries
+        has_more: bool,         // true if more chunks coming
+    },
+}
+
+// Directory entry metadata
+pub struct DirEntry {
+    pub name: String,           // File/directory name
+    pub path: String,           // Full path
+    pub is_dir: bool,           // Is directory
+    pub is_symlink: bool,       // Is symbolic link
+    pub size: Option<u64>,      // File size in bytes
+    pub modified: Option<u64>,  // Modified time (Unix epoch)
+    pub permissions: Option<String>, // Permissions (reserved)
+}
+```
 
 **TerminalEvent** (Postcard serialized):
 ```rust
@@ -914,9 +958,50 @@ jobs:
 
 ---
 
-**Last Updated**: 2026-01-07
+**Last Updated**: 2026-01-22
 **Maintainer**: Comacode Development Team
-**Next Review**: Phase 05 completion
+**Next Review**: Phase VFS-2 completion
+
+---
+
+## Phase VFS-1 Architecture Updates
+
+### Virtual File System Module
+
+**New Module**: `crates/hostagent/src/vfs.rs`
+
+**Features**:
+1. **Directory Listing**: Async directory reading with `tokio::fs`
+2. **Sorted Output**: Directories first, then alphabetically by name
+3. **Chunked Streaming**: 150 entries per chunk for large directories
+4. **Path Validation**: Symlink resolution with traversal protection
+
+**Error Types**:
+```rust
+pub enum VfsError {
+    IoError(String),
+    PathNotFound(String),
+    NotADirectory(String),
+    PermissionDenied(String),
+}
+
+// Converts to CoreError:
+impl From<VfsError> for CoreError {
+    fn from(err: VfsError) -> Self {
+        match err {
+            VfsError::PathNotFound(p) => CoreError::PathNotFound(p),
+            VfsError::NotADirectory(p) => CoreError::NotADirectory(p),
+            VfsError::PermissionDenied(p) => CoreError::PermissionDenied(p),
+            VfsError::IoError(e) => CoreError::VfsIoError(e),
+        }
+    }
+}
+```
+
+**Network Integration**:
+- `NetworkMessage::ListDir` sent from client
+- `NetworkMessage::DirChunk` responses streamed back
+- QUIC server handler in `quic_server.rs`
 
 ---
 

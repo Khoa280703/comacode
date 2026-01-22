@@ -11,6 +11,7 @@ use comacode_core::{
 use quinn::{Endpoint, TokioRuntime};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
@@ -19,6 +20,7 @@ use rcgen::KeyPair;
 use crate::auth::TokenStore;
 use crate::ratelimit::RateLimiterStore;
 use crate::session::SessionManager;
+use crate::vfs;
 
 /// QUIC server for terminal connections
 pub struct QuicServer {
@@ -198,46 +200,40 @@ impl QuicServer {
         let send_shared = Arc::new(Mutex::new(send));
 
         // Message receive loop - read length-prefixed messages properly
-        let mut len_buf = [0u8; 4];
+        let mut recv_buffer = Vec::new(); // Buffer for incomplete reads
 
         loop {
-            // Read 4-byte length prefix
-            recv.read_exact(&mut len_buf).await
-                .map_err(|_| anyhow::anyhow!("Stream closed while reading length"))?;
-
-            let len = u32::from_be_bytes(len_buf) as usize;
-
-            // Validate size (prevent DoS)
-            if len > 16 * 1024 * 1024 {
-                tracing::error!("Message too large: {} bytes", len);
-                break;
-            }
-
-            // Read payload
-            let mut payload = vec![0u8; len];
-            recv.read_exact(&mut payload).await
-                .map_err(|_| anyhow::anyhow!("Stream closed while reading payload"))?;
-
-            // Reconstruct full buffer: [length prefix][payload]
-            // MessageCodec::decode() expects the complete format
-            let mut full_buffer = Vec::with_capacity(4 + len);
-            full_buffer.extend_from_slice(&len_buf);
-            full_buffer.extend_from_slice(&payload);
-
-            // Parse message from full buffer
-            let msg = match MessageCodec::decode(&full_buffer) {
-                Ok(msg) => msg,
+            // Try to read some data
+            let mut read_buf = [0u8; 8192];
+            let n = match recv.read(&mut read_buf).await {
+                Ok(Some(0)) => {
+                    tracing::info!("Connection closed by client (EOF)");
+                    break;
+                }
+                Ok(Some(n)) => n,
+                Ok(None) => {
+                    tracing::info!("Connection closed by client (None)");
+                    break;
+                }
                 Err(e) => {
-                    tracing::error!("Failed to decode message: {}", e);
-                    continue;
+                    tracing::error!("Read error: {}", e);
+                    break;
                 }
             };
 
-            tracing::trace!("Received message: {:?}", std::mem::discriminant(&msg));
+            // Append to recv buffer
+            recv_buffer.extend_from_slice(&read_buf[..n]);
+            tracing::debug!("Received {} bytes, buffer size: {}", n, recv_buffer.len());
 
-            // Handle message
-            match msg {
-                NetworkMessage::Hello { ref protocol_version, ref app_version, auth_token, .. } => {
+            // Process all complete messages in buffer
+            while let Some((msg, remaining)) = Self::try_decode_message(&recv_buffer) {
+                recv_buffer = remaining.to_vec();
+
+                tracing::info!("Received message: {:?}", std::mem::discriminant(&msg));
+
+                // Handle message
+                match msg {
+                    NetworkMessage::Hello { ref protocol_version, ref app_version, auth_token, .. } => {
                     tracing::info!("Client hello protocol_version={}, app_version={}", protocol_version, app_version);
 
                     // Phase 07-A: AUTH VALIDATION (P0 fix)
@@ -278,8 +274,8 @@ impl QuicServer {
                     let response = NetworkMessage::hello(None);
                     let mut send_lock = send_shared.lock().await;
                     Self::send_message(&mut *send_lock, &response).await?;
-                }
-                NetworkMessage::Input { data } => {
+                    }
+                    NetworkMessage::Input { data } => {
                     // Raw input bytes - pure passthrough to PTY
                     // PTY handles echo & signal generation (Ctrl+C = SIGINT)
                     if !authenticated {
@@ -315,8 +311,8 @@ impl QuicServer {
                             &data,
                         ).await;
                     }
-                }
-                NetworkMessage::Command(cmd) => {
+                    }
+                    NetworkMessage::Command(cmd) => {
                     // Legacy: Command with String text
                     // Still supported for backward compatibility
                     // Use Input instead for raw byte passthrough
@@ -340,14 +336,14 @@ impl QuicServer {
                             cmd.text.as_bytes(),
                         ).await;
                     }
-                }
-                NetworkMessage::Ping { timestamp } => {
+                    }
+                    NetworkMessage::Ping { timestamp } => {
                     // Respond with Pong
                     let response = NetworkMessage::pong(timestamp);
                     let mut send_lock = send_shared.lock().await;
                     Self::send_message(&mut *send_lock, &response).await?;
-                }
-                NetworkMessage::Resize { rows, cols } => {
+                    }
+                    NetworkMessage::Resize { rows, cols } => {
                     if let Some(id) = session_id {
                         if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
                             tracing::error!("Failed to resize PTY: {}", e);
@@ -357,13 +353,100 @@ impl QuicServer {
                         pending_resize = Some((rows, cols));
                         tracing::debug!("Stored pending resize: {}x{}", rows, cols);
                     }
-                }
-                NetworkMessage::Close => {
-                    tracing::info!("Received Close message");
-                    break;
-                }
-                _ => {
-                    tracing::warn!("Unhandled message type");
+                    }
+                    NetworkMessage::Close => {
+                        tracing::info!("Received Close message");
+                        break;
+                    }
+                    // ===== VFS: Directory Listing - Phase 1 =====
+                    NetworkMessage::ListDir { path, depth: _ } => {
+                        if !authenticated {
+                            tracing::warn!("ListDir received before authentication from {}", peer_addr);
+                            break;
+                        }
+
+                        tracing::info!("ListDir request: {}", path);
+
+                        let path_buf = PathBuf::from(&path);
+
+                        // Validate path for security (restrict to current directory and subdirs)
+                        // Use current working directory as allowed base
+                        let current_dir = std::env::current_dir()
+                            .unwrap_or_else(|_| PathBuf::from("/"));
+                        if let Err(e) = vfs::validate_path(&path_buf, &current_dir) {
+                            let error_msg = format!("Path validation failed: {}", e);
+                            tracing::warn!("{}", error_msg);
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                comacode_core::types::TerminalEvent::Error {
+                                    message: error_msg.clone(),
+                                }
+                            )).await;
+                            break;
+                        }
+
+                        // Check if path exists
+                        if !path_buf.exists() {
+                            let error_msg = format!("Path not found: {}", path);
+                            tracing::warn!("{}", error_msg);
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                comacode_core::types::TerminalEvent::Error {
+                                    message: error_msg,
+                                }
+                            )).await;
+                            break;
+                        }
+
+                        // Read directory
+                        match vfs::read_directory(&path_buf).await {
+                            Ok(entries) => {
+                                // Security: Limit total entries to prevent DoS (max 10,000 entries)
+                                const MAX_ENTRIES: usize = 10_000;
+                                let entries = if entries.len() > MAX_ENTRIES {
+                                    tracing::warn!("Directory has {} entries, limiting to {}", entries.len(), MAX_ENTRIES);
+                                    entries.into_iter().take(MAX_ENTRIES).collect()
+                                } else {
+                                    entries
+                                };
+
+                                // Chunk into batches of 150
+                                let chunks = vfs::chunk_entries(entries, 150);
+                                let total = chunks.len() as u32;
+
+                                tracing::info!("Sending {} chunks ({} entries)", total, chunks.len());
+
+                                for (i, chunk) in chunks.iter().enumerate() {
+                                    let msg = NetworkMessage::DirChunk {
+                                        chunk_index: i as u32,
+                                        total_chunks: total,
+                                        entries: chunk.clone(),
+                                        has_more: i < chunks.len() - 1,
+                                    };
+                                    let mut send_lock = send_shared.lock().await;
+                                    if let Err(e) = Self::send_message(&mut *send_lock, &msg).await {
+                                        tracing::error!("Failed to send DirChunk: {}", e);
+                                        break;
+                                    }
+                                }
+
+                                tracing::info!("ListDir completed: {} chunks sent", total);
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Failed to read directory: {}", e);
+                                tracing::error!("{}", error_msg);
+                                let mut send_lock = send_shared.lock().await;
+                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                    comacode_core::types::TerminalEvent::Error {
+                                        message: error_msg,
+                                    }
+                                )).await;
+                            }
+                        }
+                    }
+                    _ => {
+                        tracing::warn!("Unhandled message type");
+                    }
                 }
             }
         }
@@ -455,6 +538,41 @@ impl QuicServer {
         let encoded = MessageCodec::encode(msg)?;
         send.write_all(&encoded).await?;
         Ok(())
+    }
+
+    /// Try to decode a message from buffer
+    ///
+    /// Returns Some((message, remaining_bytes)) if successful
+    /// Returns None if buffer is incomplete
+    fn try_decode_message(buf: &[u8]) -> Option<(NetworkMessage, &[u8])> {
+        if buf.len() < 4 {
+            return None;
+        }
+
+        let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+
+        // Validate size (prevent DoS)
+        if len > 16 * 1024 * 1024 {
+            tracing::error!("Message too large: {} bytes", len);
+            return None;
+        }
+
+        if buf.len() < 4 + len {
+            // Incomplete message
+            return None;
+        }
+
+        let msg_buf = &buf[..4 + len];
+        let remaining = &buf[4 + len..];
+
+        match MessageCodec::decode(msg_buf) {
+            Ok(msg) => Some((msg, remaining)),
+            Err(e) => {
+                tracing::error!("Failed to decode message: {}", e);
+                // Skip this message and continue
+                Some((NetworkMessage::Close, remaining))
+            }
+        }
     }
 
     /// Get session manager reference

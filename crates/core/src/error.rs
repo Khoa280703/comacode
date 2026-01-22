@@ -79,6 +79,19 @@ pub enum CoreError {
 
     #[error("Network error: {0}")]
     NetworkError(String),
+
+    // ===== VFS Errors - Phase 1 =====
+    #[error("Path not found: {0}")]
+    PathNotFound(String),
+
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
+    #[error("Not a directory: {0}")]
+    NotADirectory(String),
+
+    #[error("VFS I/O error: {0}")]
+    VfsIoError(String),
 }
 
 /// Result type alias

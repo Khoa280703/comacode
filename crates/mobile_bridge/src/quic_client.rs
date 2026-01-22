@@ -1,22 +1,27 @@
 //! QUIC client for Flutter bridge
 //!
 //! Phase 04: Mobile App - QUIC client with TOFU verification
+//! Phase 09: Background receive task - non-blocking event polling
+//! Phase VFS-1: Directory listing with DirChunk support
 //!
 //! ## Implementation Notes
 //!
 //! Uses Quinn 0.11 + Rustls 0.23 with custom TOFU (Trust On First Use) certificate verifier.
 //! The fingerprint is normalized (case-insensitive, separator-agnostic) before comparison.
+//!
+//! **Background Receive Task:** To prevent blocking Dart isolate's event loop,
+//! receive operations run in a background Tokio task. Events are buffered in
+//! Arc<Mutex<Vec>> and receive_event() polls from this buffer (non-blocking).
 
 use comacode_core::{TerminalEvent, AuthToken};
+use comacode_core::types::DirEntry;
 use comacode_core::protocol::MessageCodec;
 use comacode_core::types::{NetworkMessage, TerminalCommand};
 use quinn::{ClientConfig, Endpoint, Connection, RecvStream, SendStream};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 
 // Rustls imports for custom certificate verification
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -164,10 +169,13 @@ pub struct QuicClient {
     server_fingerprint: String,
     /// QUIC send stream for commands
     send_stream: Option<Arc<Mutex<SendStream>>>,
-    /// QUIC receive stream for terminal events
-    recv_stream: Option<Arc<Mutex<RecvStream>>>,
     /// Background task for receiving terminal events
     recv_task: Option<JoinHandle<()>>,
+    /// Event buffer for background receive task
+    /// Events from server are pushed here by background task
+    event_buffer: Arc<Mutex<Vec<TerminalEvent>>>,
+    /// DirChunk buffer for VFS directory listing
+    dir_chunk_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
 }
 
 impl QuicClient {
@@ -182,8 +190,9 @@ impl QuicClient {
             connection: None,
             server_fingerprint,
             send_stream: None,
-            recv_stream: None,
             recv_task: None,
+            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            dir_chunk_buffer: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -280,54 +289,83 @@ impl QuicClient {
         let recv_shared = Arc::new(Mutex::new(recv));
 
         self.send_stream = Some(send_shared.clone());
-        self.recv_stream = Some(recv_shared.clone());
 
-        // Step 8: Spawn background receive task (Phase 05.1)
-        // Note: For now, we don't implement background receiving
-        // The receive_event() method will read directly from the stream
+        // Step 8: Spawn background receive task (Phase 09)
+        // This reads from QUIC stream continuously in background
+        // and pushes events to event_buffer. receive_event() polls from buffer.
+        let event_buffer = self.event_buffer.clone();
+        let dir_chunk_buffer = self.dir_chunk_buffer.clone();
+        let recv_task = tokio::spawn(async move {
+            info!("🔄 [RECV_TASK] Background receive task started");
+            let mut recv = recv_shared.lock().await;
+            let mut read_buf = vec![0u8; 8192];
+
+            loop {
+                // Read from stream (blocking is OK in background task)
+                match recv.read(&mut read_buf).await {
+                    Ok(Some(n)) => {
+                        if n > 0 {
+                            // Decode and push to buffer
+                            match MessageCodec::decode(&read_buf[..n]) {
+                                Ok(NetworkMessage::Event(event)) => {
+                                    info!("📥 [RECV_TASK] Received event, buffering");
+                                    let mut buffer = event_buffer.lock().await;
+                                    buffer.push(event);
+                                }
+                                // VFS Phase 1: Buffer DirChunk messages
+                                // Cap at 100 chunks to prevent OOM (~15MB max)
+                                Ok(msg @ NetworkMessage::DirChunk { .. }) => {
+                                    let mut buffer = dir_chunk_buffer.lock().await;
+                                    if buffer.len() < 100 {
+                                        info!("📥 [RECV_TASK] Received DirChunk, buffering ({}/100)", buffer.len() + 1);
+                                        buffer.push(msg);
+                                    } else {
+                                        warn!("📥 [RECV_TASK] DirChunk buffer full (100), dropping chunk");
+                                    }
+                                }
+                                Ok(msg) => {
+                                    debug!("📥 [RECV_TASK] Received non-event message: {:?}", std::mem::discriminant(&msg));
+                                }
+                                Err(e) => {
+                                    warn!("📥 [RECV_TASK] Failed to decode message: {}", e);
+                                }
+                            }
+                        } else {
+                            info!("📥 [RECV_TASK] Connection closed (EOF)");
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        info!("📥 [RECV_TASK] Connection closed (None)");
+                        break;
+                    }
+                    Err(e) => {
+                        error!("📥 [RECV_TASK] Read error: {}", e);
+                        break;
+                    }
+                }
+            }
+            info!("🛑 [RECV_TASK] Background receive task ended");
+        });
+
+        self.recv_task = Some(recv_task);
         self.connection = Some(connection);
         Ok(())
     }
 
-    /// Receive next terminal event from server
+    /// Receive next terminal event from server (NON-BLOCKING)
     ///
-    /// Phase 05.1: Reads from QUIC stream and returns terminal events
+    /// Phase 09: Polls from event buffer populated by background task.
+    /// Returns immediately if no events available (empty event).
     pub async fn receive_event(&self) -> Result<TerminalEvent, String> {
-        let recv_stream = self.recv_stream.as_ref()
-            .ok_or_else(|| "Not connected".to_string())?;
+        let mut buffer = self.event_buffer.lock().await;
 
-        let mut recv = recv_stream.lock().await;
-        let mut read_buf = vec![0u8; 8192];
-
-        // Read from stream
-        let n = recv.read(&mut read_buf).await
-            .map_err(|e| format!("Failed to read from stream: {}", e))?
-            .ok_or_else(|| format!("Connection closed"))?;
-
-        if n == 0 {
-            return Ok(TerminalEvent::output_str(""));
-        }
-
-        // Decode message
-        let msg = MessageCodec::decode(&read_buf[..n])
-            .map_err(|e| format!("Failed to decode message: {}", e))?;
-
-        match msg {
-            NetworkMessage::Event(event) => Ok(event),
-            NetworkMessage::Input { .. } | NetworkMessage::Command(_) => {
-                // Input/Command messages from server (unlikely in receive path)
-                Ok(TerminalEvent::output_str(""))
-            }
-            NetworkMessage::Hello { .. } | NetworkMessage::Ping { .. } | NetworkMessage::Pong { .. } => {
-                Ok(TerminalEvent::output_str(""))
-            }
-            NetworkMessage::Resize { .. } => Ok(TerminalEvent::output_str("")),
-            NetworkMessage::RequestPty { .. } | NetworkMessage::StartShell => {
-                Ok(TerminalEvent::output_str(""))
-            }
-            NetworkMessage::RequestSnapshot => Ok(TerminalEvent::output_str("")),
-            NetworkMessage::Snapshot { .. } => Ok(TerminalEvent::output_str("")),
-            NetworkMessage::Close => Ok(TerminalEvent::output_str("")),
+        if buffer.is_empty() {
+            // No events available - return empty immediately (non-blocking)
+            Ok(TerminalEvent::output_str(""))
+        } else {
+            // Pop first event from buffer
+            Ok(buffer.remove(0))
         }
     }
 
@@ -335,18 +373,31 @@ impl QuicClient {
     ///
     /// Phase 05.1: Sends command via QUIC stream
     pub async fn send_command(&self, command: String) -> Result<(), String> {
+        info!("🔵 [QUIC_CLIENT] send_command called: '{}'", command);
+
         let send_stream = self.send_stream.as_ref()
-            .ok_or_else(|| "Not connected".to_string())?;
+            .ok_or_else(|| {
+                error!("❌ [QUIC_CLIENT] No send_stream - not connected");
+                "Not connected".to_string()
+            })?;
 
         let cmd_msg = NetworkMessage::Command(TerminalCommand::new(command));
         let encoded = MessageCodec::encode(&cmd_msg)
-            .map_err(|e| format!("Failed to encode command: {}", e))?;
+            .map_err(|e| {
+                error!("❌ [QUIC_CLIENT] Encode failed: {}", e);
+                format!("Failed to encode command: {}", e)
+            })?;
+
+        info!("📤 [QUIC_CLIENT] Sending {} bytes", encoded.len());
 
         let mut send = send_stream.lock().await;
         send.write_all(&encoded).await
-            .map_err(|e| format!("Failed to send command: {}", e))?;
+            .map_err(|e| {
+                error!("❌ [QUIC_CLIENT] write_all failed: {}", e);
+                format!("Failed to send command: {}", e)
+            })?;
 
-        debug!("Sent command via QUIC");
+        info!("✅ [QUIC_CLIENT] Command sent successfully");
         Ok(())
     }
 
@@ -389,15 +440,86 @@ impl QuicClient {
         Ok(())
     }
 
+    // ===== VFS Methods - Phase 1 =====
+
+    /// Request directory listing from server
+    ///
+    /// Sends ListDir message. Server responds with multiple DirChunk messages.
+    /// Call receive_dir_chunk() to receive chunks until has_more == false.
+    pub async fn request_list_dir(&self, path: String) -> Result<(), String> {
+        info!("📁 [QUIC_CLIENT] request_list_dir: {}", path);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let list_dir_msg = NetworkMessage::ListDir {
+            path,
+            depth: None,  // Reserved for future
+        };
+        let encoded = MessageCodec::encode(&list_dir_msg)
+            .map_err(|e| format!("Failed to encode ListDir: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send ListDir: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] ListDir request sent");
+        Ok(())
+    }
+
+    /// Receive next directory chunk from server (NON-BLOCKING)
+    ///
+    /// Returns (chunk_index, entries, has_more) tuple.
+    /// Returns None if no chunks available yet.
+    /// Call repeatedly until has_more == false.
+    ///
+    /// **Security**: Buffer capped at 100 chunks to prevent OOM.
+    pub async fn receive_dir_chunk(&self) -> Result<Option<(u32, Vec<DirEntry>, bool)>, String> {
+        let mut buffer = self.dir_chunk_buffer.lock().await;
+
+        // Find first DirChunk message
+        let pos = buffer.iter().position(|m| matches!(m, NetworkMessage::DirChunk { .. }));
+
+        match pos {
+            Some(idx) => {
+                let msg = buffer.remove(idx);
+                if let NetworkMessage::DirChunk { chunk_index, entries, has_more, .. } = msg {
+                    info!("📥 [QUIC_CLIENT] Received DirChunk {}/? with {} entries, has_more={}",
+                        chunk_index, entries.len(), has_more);
+                    Ok(Some((chunk_index, entries, has_more)))
+                } else {
+                    unreachable!() // We checked above
+                }
+            }
+            None => Ok(None),  // No chunks available
+        }
+    }
+
+    /// Get dir chunk buffer length (for monitoring)
+    pub async fn dir_chunk_buffer_len(&self) -> usize {
+        self.dir_chunk_buffer.lock().await.len()
+    }
+
     /// Disconnect from server
     pub async fn disconnect(&mut self) -> Result<(), String> {
+        // Abort background receive task
+        if let Some(task) = self.recv_task.take() {
+            task.abort();
+            info!("🛑 [QUIC_CLIENT] Background receive task aborted");
+        }
+
         if let Some(conn) = &self.connection {
             conn.close(0u32.into(), b"Client disconnect");
         }
         self.connection = None;
         self.send_stream = None;
-        self.recv_stream = None;
-        self.recv_task = None;
+
+        // Clear buffers
+        let mut buffer = self.event_buffer.lock().await;
+        buffer.clear();
+        let mut dir_buffer = self.dir_chunk_buffer.lock().await;
+        dir_buffer.clear();
+
         Ok(())
     }
 

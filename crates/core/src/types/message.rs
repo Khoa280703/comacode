@@ -70,6 +70,34 @@ pub enum NetworkMessage {
 
     /// Connection close
     Close,
+
+    // ===== VFS (Virtual File System) Messages - Phase 1 =====
+
+    /// Request directory listing
+    ListDir {
+        path: String,
+        depth: Option<u32>,  // Reserved for future recursive listing
+    },
+
+    /// Directory entry (part of DirChunk response)
+    DirChunk {
+        chunk_index: u32,
+        total_chunks: u32,
+        entries: Vec<DirEntry>,
+        has_more: bool,
+    },
+}
+
+/// Directory entry for VFS browsing
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub size: Option<u64>,
+    pub modified: Option<u64>,
+    pub permissions: Option<String>,
 }
 
 impl NetworkMessage {

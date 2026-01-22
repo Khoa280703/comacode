@@ -1,7 +1,7 @@
 # Comacode Code Standards & Architecture
 
-> Version: 1.1 | Last Updated: 2026-01-07
-> Phase: Phase 04.1 - QUIC Client + Critical Bugfixes
+> Version: 1.2 | Last Updated: 2026-01-22
+> Phase: Phase VFS-1 - Virtual File System (Directory Listing)
 
 ---
 
@@ -26,15 +26,24 @@ Comacode/
 ├── crates/                    # Rust workspace
 │   ├── core/                  # Shared business logic
 │   │   ├── src/
-│   │   │   ├── types/         # Data types (TerminalEvent, AuthToken, QrPayload)
+│   │   │   ├── types/         # Data types (TerminalEvent, AuthToken, QrPayload, DirEntry)
 │   │   │   ├── auth.rs        # Authentication logic
+│   │   │   ├── error.rs       # Error types (including VFS errors)
 │   │   │   └── lib.rs
+│   │   └── Cargo.toml
+│   │
+│   ├── hostagent/             # Host agent binary
+│   │   ├── src/
+│   │   │   ├── vfs.rs         # VFS operations (NEW Phase VFS-1)
+│   │   │   ├── quic_server.rs # QUIC server
+│   │   │   ├── pty.rs         # PTY manager
+│   │   │   └── main.rs
 │   │   └── Cargo.toml
 │   │
 │   └── mobile_bridge/         # FFI bridge for Flutter
 │       ├── src/
 │       │   ├── lib.rs         # Module exports
-│       │   ├── api.rs         # FFI bridge functions
+│       │   ├── api.rs         # FFI bridge functions (VFS API added)
 │       │   └── quic_client.rs # QUIC client implementation
 │       └── Cargo.toml
 │
@@ -677,6 +686,43 @@ Padding(
 
 ## Testing Standards
 
+### Flutter Self-Testing Policy
+
+**IMPORTANT:** The developer handles all Flutter testing manually. The AI assistant should **NOT** run Flutter testing commands.
+
+#### Commands to AVOID
+
+Do NOT run these commands:
+- `flutter run`
+- `flutter test`
+- `flutter build ios`
+- `flutter build apk`
+- `flutter devices`
+
+#### Developer Responsibilities
+
+The developer will:
+1. Run Flutter app on physical iOS device manually
+2. Test QR scanning and connection flow
+3. Test terminal command sending and output display
+4. Test virtual keyboard functionality
+5. Report any issues with logs
+
+#### Assistant Responsibilities
+
+The assistant should:
+1. Build Rust code: `cargo build --release --manifest-path=crates/Cargo.toml`
+2. Generate FRB bindings when needed
+3. Fix code issues based on developer-reported bugs
+4. Provide code changes only - no Flutter execution
+
+#### Why This Policy?
+
+1. **iOS device requirement** - App needs physical device for proper testing (camera, network)
+2. **Developer environment** - Only developer has access to iOS simulator and devices
+3. **Faster iteration** - Developer can immediately test changes on their device
+4. **Avoid Xcode issues** - AI cannot interact with Xcode simulator/device picker
+
 ### Rust Testing
 
 **Unit tests**: Test individual functions and methods
@@ -1158,9 +1204,94 @@ class ConnectionProvider extends ChangeNotifier {
 
 ---
 
-**Last Updated**: 2026-01-07
+**Last Updated**: 2026-01-22
 **Maintainer**: Comacode Development Team
-**Next Review**: Phase 05 completion
+**Next Review**: Phase VFS-2 completion
+
+---
+
+## Phase VFS-1 Updates
+
+### VFS Module Organization
+
+**New Module**: `crates/hostagent/src/vfs.rs`
+
+**Structure**:
+```rust
+// VFS-specific result type
+pub type VfsResult<T> = Result<T, VfsError>;
+
+// VFS-specific errors
+pub enum VfsError {
+    IoError(String),
+    PathNotFound(String),
+    NotADirectory(String),
+    PermissionDenied(String),
+}
+
+// Core functions
+pub async fn read_directory(path: &Path) -> VfsResult<Vec<DirEntry>>;
+pub fn chunk_entries(entries: Vec<DirEntry>, chunk_size: usize) -> Vec<Vec<DirEntry>>;
+pub fn validate_path(path: &Path, allowed_base: &Path) -> VfsResult<()>;
+```
+
+**Error Conversion**:
+```rust
+impl From<VfsError> for CoreError {
+    fn from(err: VfsError) -> Self {
+        match err {
+            VfsError::PathNotFound(p) => CoreError::PathNotFound(p),
+            VfsError::NotADirectory(p) => CoreError::NotADirectory(p),
+            VfsError::PermissionDenied(p) => CoreError::PermissionDenied(p),
+            VfsError::IoError(e) => CoreError::VfsIoError(e),
+        }
+    }
+}
+```
+
+### VFS FFI API Pattern
+
+**Async Request/Response Pattern** (non-blocking):
+```rust
+// Request (sends to server)
+pub async fn request_list_dir(path: String) -> Result<(), String>;
+
+// Poll response (returns None if not ready)
+pub async fn receive_dir_chunk() -> Result<Option<(u32, Vec<DirEntry>, bool)>, String>;
+
+// Sync getters for DirEntry
+#[frb(sync)]
+pub fn get_dir_entry_name(entry: &DirEntry) -> String;
+
+#[frb(sync)]
+pub fn is_dir_entry_dir(entry: &DirEntry) -> bool;
+```
+
+### VFS Security Guidelines
+
+**Path Validation**:
+- Always use `canonicalize()` to resolve symlinks and relative paths
+- Check if resolved path is within allowed base directory
+- Return specific errors for different failure modes
+
+**Example**:
+```rust
+pub fn validate_path(path: &Path, allowed_base: &Path) -> VfsResult<()> {
+    let canonical = path.canonicalize()
+        .map_err(|_| VfsError::PathNotFound(path.display().to_string()))?;
+
+    let allowed_canonical = allowed_base.canonicalize()
+        .unwrap_or_else(|_| allowed_base.to_path_buf());
+
+    if !canonical.starts_with(&allowed_canonical) {
+        return Err(VfsError::PermissionDenied(
+            "Path traversal not allowed".to_string()
+        ));
+    }
+
+    Ok(())
+}
+```
 
 ---
 

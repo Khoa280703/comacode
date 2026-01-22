@@ -1,8 +1,8 @@
 # Comacode Project Overview & PDR
 
 > Product Development Requirements (PDR)
-> Version: 1.1 | Last Updated: 2026-01-07
-> Current Phase: Phase 04.1 (Mobile App - QUIC Client Complete + Critical Bugfixes)
+> Version: 1.2 | Last Updated: 2026-01-22
+> Current Phase: Phase VFS-1 (Virtual File System - Directory Listing)
 
 ---
 
@@ -72,6 +72,13 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 - **FR5.2**: App must handle network disconnections gracefully
 - **FR5.3**: App must allow manual disconnect
 - **FR5.4**: App must support multiple saved hosts (future)
+
+#### FR6: Virtual File System (Phase VFS-1) ✅
+- **FR6.1**: App must request directory listing from remote host
+- **FR6.2**: App must display directory entries (files/folders)
+- **FR6.3**: App must support chunked responses for large directories
+- **FR6.4**: App must show file metadata (size, modified time)
+- **FR6.5**: App must navigate directories (parent/child)
 
 ---
 
@@ -348,6 +355,30 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 - Host management (save, delete, edit)
 - Connection history
 
+### Phase VFS-1: Virtual File System - Directory Listing ✅
+**Status**: Complete
+
+**Phase VFS-1 Completed**:
+- ✅ VFS module implementation (`crates/hostagent/src/vfs.rs`)
+- ✅ Directory listing with async I/O
+- ✅ Chunked streaming (150 entries/chunk)
+- ✅ Path validation with symlink resolution
+- ✅ VFS message types (`ListDir`, `DirChunk`, `DirEntry`)
+- ✅ VFS error types in `CoreError`
+- ✅ FFI API for Flutter (`request_list_dir`, `receive_dir_chunk`)
+- ✅ DirEntry getter functions
+
+**Phase VFS-1 Features**:
+- Async directory reading with `tokio::fs`
+- Sorted output (directories first, alphabetically)
+- Security: Path traversal protection via `canonicalize()`
+- Error handling: `PathNotFound`, `PermissionDenied`, `NotADirectory`
+
+**Pending**:
+- ⏳ Flutter UI for file browser
+- ⏳ File read/download operations (Phase VFS-2)
+- ⏳ File write/upload operations (Phase VFS-3)
+
 ### Phase 07: Testing & Deployment (Planned)
 **Status**: Not started
 - Integration tests
@@ -501,7 +532,7 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 
 ---
 
-**Last Updated**: 2026-01-07
-**Current Phase**: Phase 04.1 - Mobile App (QUIC Client Complete + Critical Bugfixes)
-**Next Milestone**: Phase 05 - Network Protocol (Stream I/O Implementation)
+**Last Updated**: 2026-01-22
+**Current Phase**: Phase VFS-1 - Virtual File System (Directory Listing)
+**Next Milestone**: Phase VFS-2 - File Operations (Read/Download)
 **Maintainer**: Comacode Development Team

@@ -13,6 +13,7 @@ mod quic_server;
 mod ratelimit;
 mod session;
 mod snapshot;
+mod vfs;
 mod web_ui;
 
 use anyhow::{Context, Result};
@@ -53,6 +54,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize rustls CryptoProvider with ring backend (required for rustls 0.23+)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let args = Args::parse();
 
     // Setup logging
