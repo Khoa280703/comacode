@@ -214,6 +214,25 @@ Future<void> requestListDir({required String path}) =>
 Future<(int, List<DirEntry>, bool)?> receiveDirChunk() =>
     RustLib.instance.api.crateApiReceiveDirChunk();
 
+/// Stream directory entries incrementally (zero-polling API)
+///
+/// This is the RECOMMENDED method for directory listing.
+/// Returns a Stream<List<VfsEntry>> that emits chunks as they arrive.
+///
+/// # Usage in Dart
+/// ```dart
+/// final stream = streamListDir(path: '/');
+/// await for (final chunk in stream) {
+///   entries.addAll(chunk);
+/// }
+/// ```
+///
+/// # Implementation
+/// Uses internal polling (20ms interval, 3s timeout) but exposed as
+/// clean Stream API to Dart. Each chunk is emitted as it arrives.
+Stream<List<DirEntry>> streamListDir({required String path}) =>
+    RustLib.instance.api.crateApiStreamListDir(path: path);
+
 /// Get entry name
 String getDirEntryName({required DirEntry entry}) =>
     RustLib.instance.api.crateApiGetDirEntryName(entry: entry);

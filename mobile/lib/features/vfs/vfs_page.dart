@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme.dart';
+import '../../../core/theme.dart';
 import '../connection/connection_providers.dart';
 import 'vfs_notifier.dart';
 import 'widgets/entry_tile.dart';
@@ -51,7 +51,15 @@ class _VfsPageState extends ConsumerState<VfsPage> {
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            // Phase VFS-Fix: Back button navigates to parent folder
+            // Only exits when at root directory
+            if (vfsState.isAtRoot) {
+              Navigator.of(context).pop();
+            } else {
+              ref.read(vfsProvider.notifier).navigateUp();
+            }
+          },
         ),
         actions: [
           // Refresh button
@@ -91,6 +99,9 @@ class _VfsPageState extends ConsumerState<VfsPage> {
   }
 
   Widget _buildBody(VfsState state, bool isConnected) {
+    // Phase VFS-Fix: Debug log to diagnose empty directory issue
+    debugPrint('🔍 [VfsPage] _buildBody: path=${state.currentPath}, isLoading=${state.isLoading}, entries=${state.entries.length}, error=${state.error}');
+
     if (!isConnected) {
       return Center(
         child: Column(
@@ -122,7 +133,10 @@ class _VfsPageState extends ConsumerState<VfsPage> {
       );
     }
 
-    if (state.isLoading && state.entries.isEmpty) {
+    // Phase VFS-Fix: Check loading FIRST to prevent race condition
+    // where loading=true but entries empty → shows "Empty" incorrectly
+    if (state.isLoading) {
+      // Show loading spinner even if entries exist (showing stale data during load)
       return const Center(
         child: CircularProgressIndicator(
           color: CatppuccinMocha.mauve,

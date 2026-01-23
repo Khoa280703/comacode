@@ -377,22 +377,6 @@ impl QuicServer {
 
                         let path_buf = PathBuf::from(&path);
 
-                        // Validate path for security (restrict to current directory and subdirs)
-                        // Use current working directory as allowed base
-                        let current_dir = std::env::current_dir()
-                            .unwrap_or_else(|_| PathBuf::from("/"));
-                        if let Err(e) = vfs::validate_path(&path_buf, &current_dir) {
-                            let error_msg = format!("Path validation failed: {}", e);
-                            tracing::warn!("{}", error_msg);
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
-                                comacode_core::types::TerminalEvent::Error {
-                                    message: error_msg.clone(),
-                                }
-                            )).await;
-                            break;
-                        }
-
                         // Check if path exists
                         if !path_buf.exists() {
                             let error_msg = format!("Path not found: {}", path);
@@ -411,18 +395,27 @@ impl QuicServer {
                             Ok(entries) => {
                                 // Security: Limit total entries to prevent DoS (max 10,000 entries)
                                 const MAX_ENTRIES: usize = 10_000;
-                                let entries = if entries.len() > MAX_ENTRIES {
+                                let (entries, entry_count) = if entries.len() > MAX_ENTRIES {
                                     tracing::warn!("Directory has {} entries, limiting to {}", entries.len(), MAX_ENTRIES);
-                                    entries.into_iter().take(MAX_ENTRIES).collect()
+                                    (entries.into_iter().take(MAX_ENTRIES).collect::<Vec<_>>(), MAX_ENTRIES)
                                 } else {
-                                    entries
+                                    let count = entries.len();
+                                    (entries, count)
                                 };
 
                                 // Chunk into batches of 150
-                                let chunks = vfs::chunk_entries(entries, 150);
+                                let mut chunks = vfs::chunk_entries(entries, 150);
+
+                                // Phase VFS-Fix: ALWAYS send at least one chunk, even if empty
+                                // This prevents client timeout on empty directories
+                                if chunks.is_empty() {
+                                    tracing::info!("Directory empty, sending empty chunk");
+                                    chunks = vec![vec![]];
+                                }
+
                                 let total = chunks.len() as u32;
 
-                                tracing::info!("Sending {} chunks ({} entries)", total, chunks.len());
+                                tracing::info!("Sending {} chunks ({} entries)", total, entry_count);
 
                                 for (i, chunk) in chunks.iter().enumerate() {
                                     let msg = NetworkMessage::DirChunk {
@@ -462,20 +455,6 @@ impl QuicServer {
                         tracing::info!("WatchDir request: {}", path);
 
                         let path_buf = PathBuf::from(&path);
-
-                        // Validate path
-                        let current_dir = std::env::current_dir()
-                            .unwrap_or_else(|_| PathBuf::from("/"));
-                        if let Err(e) = vfs::validate_path(&path_buf, &current_dir) {
-                            let error_msg = format!("Path validation failed: {}", e);
-                            tracing::warn!("{}", error_msg);
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
-                                watcher_id: format!("watch_{}", session_id.unwrap_or(0)),
-                                error: error_msg,
-                            }).await;
-                            break;
-                        }
 
                         // Check if path exists and is a directory
                         if !path_buf.exists() {

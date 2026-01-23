@@ -1,8 +1,8 @@
 # Comacode Project Overview & PDR
 
 > Product Development Requirements (PDR)
-> Version: 1.2 | Last Updated: 2026-01-22
-> Current Phase: Phase VFS-1 (Virtual File System - Directory Listing)
+> Version: 1.3 | Last Updated: 2026-01-22
+> Current Phase: Phase VFS-2 (Virtual File System - File Watcher) - Flutter UI Complete
 
 ---
 
@@ -73,12 +73,17 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 - **FR5.3**: App must allow manual disconnect
 - **FR5.4**: App must support multiple saved hosts (future)
 
-#### FR6: Virtual File System (Phase VFS-1) ✅
+#### FR6: Virtual File System (Phase VFS-1/VFS-2) ✅
 - **FR6.1**: App must request directory listing from remote host
 - **FR6.2**: App must display directory entries (files/folders)
 - **FR6.3**: App must support chunked responses for large directories
 - **FR6.4**: App must show file metadata (size, modified time)
 - **FR6.5**: App must navigate directories (parent/child)
+- **FR6.6**: App must receive file watcher push events ✅ (Phase VFS-2)
+- **FR6.7**: App must display VFS browser UI with navigation ✅ (Phase 06)
+- **FR6.8**: App must handle empty directories (explicit empty chunk) ✅
+- **FR6.9**: App must protect against path traversal attacks ✅
+- **FR6.10**: App must stream chunks (150 entries/chunk, max 10,000) ✅
 
 ---
 
@@ -201,7 +206,7 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 | Async | [Tokio](https://docs.rs/tokio) | 1.38 | Async runtime |
 | Serialization | [Serde](https://docs.rs/serde) | 1.0 | JSON/bincode |
 | Serialization | [Postcard](https://docs.rs/postcard) | 1.0 | Binary format |
-| FFI | [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/) | 1.80+ | Dart↔Rust bindings |
+| FFI | [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/) | 2.4.0 | Dart↔Rust bindings |
 
 #### Architecture Decisions
 - **QUIC vs TCP**: 1-2 RTT connection establishment (vs 3 RTT for TCP+TLS)
@@ -215,9 +220,9 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 | Component | Library | Version | Purpose |
 |-----------|---------|---------|---------|
 | Terminal | [xterm_flutter](https://pub.dev/packages/xterm_flutter) | 2.0+ | Terminal emulation |
-| QR Scanner | [mobile_scanner](https://pub.dev/packages/mobile_scanner) | 3.5+ | Camera QR scanning |
+| QR Scanner | [mobile_scanner](https://pub.dev/packages/mobile_scanner) | 3.5.0 | Camera QR scanning |
 | Secure Storage | [flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage) | 9.0+ | Keychain/Keystore |
-| State | [Provider](https://pub.dev/packages/provider) | 6.0+ | State management |
+| State | [Riverpod](https://pub.dev/packages/flutter_riverpod) | 2.4.0 | State management |
 | Permissions | [permission_handler](https://pub.dev/packages/permission_handler) | 11.0+ | Camera permissions |
 | Wakelock | [wakelock_plus](https://pub.dev/packages/wakelock_plus) | 1.1+ | Keep screen on |
 
@@ -374,10 +379,43 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 - Security: Path traversal protection via `canonicalize()`
 - Error handling: `PathNotFound`, `PermissionDenied`, `NotADirectory`
 
+### Phase VFS-2: Virtual File System - File Watcher ✅
+**Status**: Complete
+
+**Phase VFS-2 Completed**:
+- ✅ File watcher implementation (`notify` 7.0)
+- ✅ Push events for file changes
+- ✅ Watcher lifecycle management
+- ✅ Event propagation to client
+- ✅ Empty directory handling (explicit empty chunk)
+
+**Phase VFS-2 Features**:
+- Real-time file system monitoring
+- Efficient event debouncing
+- Automatic re-watching on changes
+- Permission checking for watched paths
+
 **Pending**:
-- ⏳ Flutter UI for file browser
-- ⏳ File read/download operations (Phase VFS-2)
-- ⏳ File write/upload operations (Phase VFS-3)
+- ⏳ File read/download operations (Phase VFS-3)
+- ⏳ File write/upload operations (Phase VFS-4)
+
+### Phase 06: Flutter UI ✅
+**Status**: Complete
+
+**Phase 06 Completed**:
+- ✅ Terminal UI with xterm_flutter
+- ✅ Virtual key bar (ESC, CTRL, TAB, Arrows)
+- ✅ VFS browser with navigation
+- ✅ QR scanner with auto-connect
+- ✅ Connection state management (Riverpod)
+- ✅ Web dashboard with QR display (axum 0.7)
+
+**Phase 06 Features**:
+- Catppuccin Mocha theme
+- Screen wakelock toggle
+- Font size adjustment (11-16px)
+- Secure credential storage
+- mDNS discovery (planned)
 
 ### Phase 07: Testing & Deployment (Planned)
 **Status**: Not started
@@ -533,6 +571,6 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 ---
 
 **Last Updated**: 2026-01-22
-**Current Phase**: Phase VFS-1 - Virtual File System (Directory Listing)
-**Next Milestone**: Phase VFS-2 - File Operations (Read/Download)
+**Current Phase**: Phase VFS-2 - Virtual File System (File Watcher) - Flutter UI Complete
+**Next Milestone**: Phase VFS-3 - File Operations (Read/Download)
 **Maintainer**: Comacode Development Team

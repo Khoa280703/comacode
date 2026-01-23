@@ -1,7 +1,7 @@
 # Comacode Codebase Summary
 
 > Last Updated: 2026-01-22
-> Version: Phase VFS-1 (Virtual File System - Directory Listing)
+> Version: Phase VFS-2 (Virtual File System - File Watcher) - Flutter UI Complete
 
 ---
 
@@ -22,19 +22,48 @@ Comacode/
 ├── crates/
 │   ├── core/                 # Shared types and business logic
 │   │   └── src/
-│   │       ├── types/        # TerminalEvent, AuthToken, QrPayload
+│   │       ├── types/        # TerminalEvent, AuthToken, QrPayload, DirEntry
 │   │       ├── auth.rs       # AuthToken validation/generation
+│   │       ├── error.rs      # Error types (including VFS errors)
 │   │       └── lib.rs
 │   │
-│   └── mobile_bridge/        # Rust FFI bridge for Flutter
-│       ├── Cargo.toml        # Dependencies: quinn, rustls, flutter_rust_bridge
-│       └── src/
-│           ├── lib.rs        # Module exports
-│           ├── api.rs        # FFI bridge functions (unsafe static - UB risk)
-│           └── quic_client.rs # QUIC client with TOFU (Phase 04)
+│   ├── hostagent/            # Host agent binary
+│   │   ├── src/
+│   │   │   ├── vfs.rs        # VFS operations
+│   │   │   ├── quic_server.rs # QUIC server
+│   │   │   ├── pty.rs        # PTY manager
+│   │   │   ├── main.rs       # CLI entry point
+│   │   │   └── web_dashboard.rs # Web UI with QR display (axum)
+│   │   └── Cargo.toml
+│   │
+│   ├── mobile_bridge/        # Rust FFI bridge for Flutter
+│   │   ├── Cargo.toml        # Dependencies: quinn, rustls, flutter_rust_bridge
+│   │   └── src/
+│   │       ├── lib.rs        # Module exports
+│   │       ├── api.rs        # FFI bridge functions (VFS API added)
+│   │       └── quic_client.rs # QUIC client with TOFU (Phase 04)
+│   │
+│   └── cli_client/           # CLI client binary (SSH-like terminal)
+│       ├── src/
+│       │   └── main.rs
+│       └── Cargo.toml
 │
-├── mobile/                   # Flutter app (TODO - Phase 04)
-│   └── lib/
+├── mobile/                   # Flutter app
+│   ├── lib/
+│   │   ├── main.dart
+│   │   ├── app.dart
+│   │   ├── core/              # Core utilities
+│   │   │   ├── theme.dart
+│   │   │   └── storage.dart
+│   │   ├── features/          # Feature modules
+│   │   │   ├── terminal/      # Terminal UI with xterm_flutter
+│   │   │   ├── connection/    # Connection state management (Riverpod)
+│   │   │   ├── vfs/           # VFS browser UI
+│   │   │   └── qr_scanner/    # QR scanner with mobile_scanner
+│   │   └── bridge/            # FFI bindings
+│   │       └── bridge_generated.dart
+│   ├── ios/
+│   └── android/
 │
 ├── docs/                     # Documentation
 │   ├── codebase-summary.md   # This file
@@ -275,16 +304,19 @@ pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64>;
 - **TLS**: Rustls 0.23 with ring crypto provider
 - **Serialization**: Serde + Postcard (binary format)
 - **Async Runtime**: Tokio 1.x
-- **FFI**: flutter_rust_bridge 1.80+
+- **FFI**: flutter_rust_bridge 2.4.0
 - **Crypto**: SHA2 (hashing), ring (signature verification)
 
-### Mobile (Flutter) - TODO Phase 04
+### Mobile (Flutter)
 - **Terminal**: xterm_flutter (terminal emulation)
-- **QR Scanner**: mobile_scanner 3.5+
+- **QR Scanner**: mobile_scanner 3.5.0
 - **Secure Storage**: flutter_secure_storage 9.0+
-- **State Management**: Provider 6.0+
+- **State Management**: Riverpod 2.4.0
 - **Permissions**: permission_handler 11.0+
 - **Wakelock**: wakelock_plus 1.1+
+- **FFI**: flutter_rust_bridge 2.4.0
+- **Web Server**: axum 0.7 (host agent dashboard)
+- **File Watcher**: notify 7.0
 
 ---
 
@@ -317,33 +349,37 @@ pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64>;
 
 ## Development Workflow
 
-### Current Phase: Phase 04.1 - Mobile App (QUIC Client + Bugfixes)
+### Current Phase: Phase VFS-2 - Virtual File System (File Watcher)
 
-**Status**: QUIC client complete with critical bugfixes, Flutter UI pending
+**Status**: Flutter app complete with terminal, VFS browser, file watcher, QR scanner
 
-**Phase 04 Completed**:
-- ✅ QUIC client implementation (quic_client.rs)
-- ✅ TOFU certificate verification
-- ✅ Fingerprint normalization
-- ✅ Unit tests (7 tests, all passing)
-- ✅ Zero clippy warnings
+**Phase VFS-1 Completed**:
+- ✅ VFS module implementation (vfs.rs)
+- ✅ Directory listing with async I/O
+- ✅ Chunked streaming (150 entries/chunk)
+- ✅ Path validation with symlink resolution
+- ✅ VFS message types and error handling
 
-**Phase 04.1 Completed**:
-- ✅ Fixed UB in FFI bridge (api.rs)
-- ✅ Replaced `static mut` with `once_cell::sync::OnceCell`
-- ✅ Fixed fingerprint leakage in logs
-- ✅ Thread-safe implementation
+**Phase VFS-2 Completed**:
+- ✅ File watcher implementation (notify 7.0)
+- ✅ Push events for file changes
+- ✅ Watcher lifecycle management
+- ✅ Event propagation to client
+- ✅ Empty directory handling (explicit empty chunk)
 
-**Blocked**:
-- ⏳ Stream I/O stub implementations (blocks Flutter integration)
-- ⏳ Flutter project not created
+**Phase 06 Completed** (Flutter UI):
+- ✅ Terminal UI with xterm_flutter
+- ✅ Virtual key bar (ESC, CTRL, TAB, Arrows)
+- ✅ VFS browser with navigation
+- ✅ QR scanner with auto-connect
+- ✅ Connection state management (Riverpod)
+- ✅ Web dashboard with QR display (axum 0.7)
 
 **Next Steps**:
-1. Implement stream I/O in Phase 05 (receive_event, send_command)
-2. Generate FRB bindings for Flutter
-3. Create Flutter project
-4. Implement QR scanner
-5. Implement terminal UI with xterm_flutter
+1. Implement file read/download operations (Phase VFS-3)
+2. Implement file write/upload operations (Phase VFS-4)
+3. Add mDNS discovery
+4. Production hardening and testing
 
 ### Testing Strategy
 
@@ -420,39 +456,34 @@ cargo test -p mobile_bridge
 
 ## Known Technical Debt
 
-### Critical (Must Fix)
+### Resolved (Phase 04.1)
 1. ~~**Undefined Behavior in `api.rs`**~~ ✅ RESOLVED (Phase 04.1)
    - Was: `static mut QUIC_CLIENT` with unsafe access
    - Fixed: Replaced with `once_cell::sync::OnceCell<Arc<Mutex<QuicClient>>>`
 
-2. **Stream I/O Stubs**
-   - File: `crates/mobile_bridge/src/quic_client.rs:232-253`
-   - Issue: receive_event/send_command return stubs
-   - Fix: Implement actual QUIC stream reading/writing (deferred to Phase 05)
-
-### High Priority (Should Fix)
-3. ~~**Fingerprint Leakage in Logs**~~ ✅ RESOLVED (Phase 04.1)
+2. ~~**Fingerprint Leakage in Logs**~~ ✅ RESOLVED (Phase 04.1)
    - Was: Actual fingerprint logged at line 88
    - Fixed: Now logs only match result
 
-4. **Hardcoded Timeout**
+### Medium Priority (Should Fix)
+3. **Hardcoded Timeout**
    - File: `crates/mobile_bridge/src/quic_client.rs:206`
    - Issue: 10s timeout not configurable
    - Fix: Use const or make struct field
 
-### Medium Priority (Nice to Have)
-5. **Error Messages**
+4. **Error Messages**
    - Generic errors in some places
    - Improve with more context
+
+### Low Priority (Nice to Have)
+5. **Constant-Time Comparison**
+   - Fingerprint comparison potentially timing-vulnerable
+   - Use `subtle` crate
 
 6. **Documentation**
    - Add security warnings
    - Add usage examples
    - Document panics
-
-7. **Constant-Time Comparison**
-   - Fingerprint comparison potentially timing-vulnerable
-   - Use `subtle` crate
 
 ---
 
@@ -534,5 +565,5 @@ cargo test -p mobile_bridge
 ---
 
 **Last Updated**: 2026-01-22
-**Current Phase**: Phase VFS-1 - Virtual File System (Directory Listing)
-**Next Milestone**: Phase VFS-2 - File Operations (Read/Download)
+**Current Phase**: Phase VFS-2 - Virtual File System (File Watcher) - Flutter UI Complete
+**Next Milestone**: Phase VFS-3 - File Operations (Read/Download)

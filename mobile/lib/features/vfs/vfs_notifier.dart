@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../bridge/bridge_wrapper.dart';
 import '../../../models/dir_entry.dart';
@@ -67,24 +69,73 @@ class VfsState {
 /// VFS Notifier for directory browsing
 ///
 /// Phase VFS-2: State management for file browser
+/// Phase VFS-Fix: Stream now emits single chunk with all data (no race condition)
 class VfsNotifier extends StateNotifier<VfsState> {
   final BridgeWrapper _bridge;
+  StreamSubscription<List<VfsEntry>>? _dirSubscription;
 
   VfsNotifier(this._bridge) : super(VfsState.initial());
 
-  /// Load directory entries from server
+  /// Load directory entries from server using Stream API
+  ///
+  /// Phase VFS-Fix: Stream emits single chunk with all entries.
+  /// Rust side collects all data before sending → no race condition.
   Future<void> loadDirectory(String path) async {
-    if (state.isLoading) return;
+    // Cancel old stream
+    await _dirSubscription?.cancel();
+    _dirSubscription = null;
 
-    state = state.copyWith(isLoading: true, error: null);
+    // Update path and loading state
+    state = state.copyWith(
+      currentPath: path,
+      isLoading: true,
+      error: null,
+      entries: [],  // Clear old entries while loading
+    );
 
     try {
-      final entries = await _bridge.listDirectory(path);
-      state = VfsState(
-        currentPath: path,
-        entries: entries,
-        isLoading: false,
-        hasMore: false,
+      // Stream-based directory listing
+      // Rust now waits for ALL data before emitting single chunk
+      _dirSubscription = _bridge.listDirectory(path).listen(
+        // onData: Single chunk with all entries
+        (entries) {
+          debugPrint('📦 [VfsNotifier] RAW entries: ${entries.length}');
+
+          // CRITICAL: Create NEW list to avoid mutating original
+          // Also sort safely
+          final sortedEntries = List<VfsEntry>.from(entries);
+          sortedEntries.sort((a, b) {
+            if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
+            return a.name.compareTo(b.name);
+          });
+
+          // CRITICAL: Set ALL fields explicitly to avoid any issues
+          final newState = VfsState(
+            currentPath: path,
+            entries: sortedEntries,
+            isLoading: false,
+            hasMore: false,
+            error: null,
+          );
+
+          state = newState;
+          debugPrint('✅ [VfsNotifier] Updated state: path=${path}, entries=${sortedEntries.length}, isLoading=false');
+        },
+        // onError
+        onError: (error) {
+          state = state.copyWith(
+            isLoading: false,
+            error: error.toString(),
+          );
+          debugPrint('❌ [VfsNotifier] Stream error: $error');
+        },
+        // onDone
+        onDone: () {
+          // Phase VFS-Fix: Do NOT modify state here!
+          // onData already set isLoading=false and entries
+          // onDone fires after, so we should not overwrite anything
+          debugPrint('✅ [VfsNotifier] Stream done (state has ${state.entries.length} entries)');
+        },
       );
     } catch (e) {
       state = state.copyWith(
@@ -106,7 +157,7 @@ class VfsNotifier extends StateNotifier<VfsState> {
     loadDirectory(childPath);
   }
 
-  /// Refresh current directory
+  /// Refresh current directory (cancel + restart)
   void refresh() {
     loadDirectory(state.currentPath);
   }
@@ -116,6 +167,13 @@ class VfsNotifier extends StateNotifier<VfsState> {
     if (state.error != null) {
       state = state.copyWith(error: null);
     }
+  }
+
+  @override
+  void dispose() {
+    // Cancel stream to prevent memory leak
+    _dirSubscription?.cancel();
+    super.dispose();
   }
 }
 

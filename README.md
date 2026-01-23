@@ -1,6 +1,6 @@
 # Comacode
 
-> Truy cập terminal từ xa bằng QR code - Điều khiển terminal từ điện thoại
+> Truy cập terminal từ xa bằng QR code - Remote terminal control via QR code
 
 Quét mã QR → Kết nối ngay → Điều khiển terminal từ điện thoại
 
@@ -16,6 +16,7 @@ cargo run --bin hostagent -- --qr-terminal
 ## Mục lục
 
 - [Kiến trúc](#kiến-trúc)
+- [Tính năng](#tính-năng)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Thiết lập development](#thiết-lập-development)
 - [Chạy local](#chạy-local)
@@ -30,14 +31,16 @@ cargo run --bin hostagent -- --qr-terminal
 ## Kiến trúc
 
 ```
-┌─────────────────┐    Quét QR     ┌─────────────────┐
+┌─────────────────┐    QUIC/TLS    ┌─────────────────┐
 │   Flutter App   │  ───────────►   │   Host Agent    │
-│   (iOS/Android) │  (QUIC conn)    │   (Rust)        │
+│   (iOS/Android) │  (encrypted)    │   (Rust)        │
 │                 │                 │                 │
 │  - QR Scanner   │                 │  - QUIC Server  │
 │  - Terminal UI  │                 │  - PTY Manager  │
-└─────────────────┘                 │  - Auth System  │
-                                      └─────────────────┘
+│  - VFS Browser  │                 │  - VFS Module   │
+│  - File Watcher │                 │  - File Watcher │
+└─────────────────┘                 │  - Web Dashboard │
+                                      └────────┬────────┘
                                                │
                                                ▼
                                       ┌─────────────────┐
@@ -46,9 +49,40 @@ cargo run --bin hostagent -- --qr-terminal
 ```
 
 **Protocol Stack:**
-- QUIC (quinn) → UDP transport
-- rustls → TLS 1.3 encryption
+- QUIC (quinn 0.11) → UDP transport
+- rustls 0.23 → TLS 1.3 encryption
 - Custom protocol → Terminal events/messages
+- Postcard → Binary serialization
+
+---
+
+## Tính năng
+
+### Terminal Access
+- Real-time terminal output via QUIC protocol
+- Virtual key bar (ESC, CTRL, TAB, Arrow keys)
+- Catppuccin Mocha theme
+- Screen wakelock toggle
+- Font size adjustment (11-16px)
+
+### Security
+- TOFU (Trust On First Use) fingerprint verification
+- 256-bit AuthToken for authentication
+- Secure credential storage (Keychain/Keystore)
+- Rate limiting for authentication attempts
+- TLS 1.3 with forward secrecy
+
+### Virtual File System (VFS)
+- Directory listing with metadata
+- Chunked streaming (150 entries/chunk, max 10,000)
+- Path traversal protection
+- File watcher with push events
+- Sorted entries (directories first)
+
+### Discovery
+- QR code pairing (zero-config setup)
+- Web dashboard with QR display
+- mDNS service discovery (planned)
 
 ---
 
@@ -57,12 +91,16 @@ cargo run --bin hostagent -- --qr-terminal
 ```
 Comacode/
 ├── crates/
-│   ├── core/           # Library chia sẻ (network, codec, types)
-│   ├── hostagent/      # Binary server desktop
-│   └── mobile_bridge/  # FFI bridge cho Flutter (Rust)
+│   ├── core/           # Library chia sẻ (types, protocol, transport)
+│   ├── hostagent/      # Binary server desktop (QUIC server, PTY, VFS)
+│   ├── mobile_bridge/  # FFI bridge cho Flutter (QUIC client)
+│   └── cli_client/     # CLI client binary (SSH-like terminal)
 ├── mobile/
 │   ├── ios/            # iOS native code & framework
 │   └── lib/            # Flutter app (Dart)
+│       ├── core/       # Theme, storage
+│       ├── bridge/     # FFI bindings
+│       └── features/   # Terminal, VFS, QR scanner
 ├── docs/               # Tài liệu
 └── plans/              # Implementation plans
 ```
@@ -176,15 +214,11 @@ cargo build --release --target aarch64-apple-ios-sim --package mobile_bridge
 
 ```bash
 # Device binary
-cp target/aarch64-apple-ios/release/libmobile_bridge.dylib \
-   mobile/ios/Frameworks/mobile_bridge.framework/mobile_bridge
-
-# Fix install_name (quan trọng!)
-install_name_tool -id @rpath/mobile_bridge.framework/mobile_bridge \
-   mobile/ios/Frameworks/mobile_bridge.framework/mobile_bridge
+cp target/aarch64-apple-ios/release/libmobile_bridge.a \
+   mobile/ios/Frameworks/libmobile_bridge.a
 
 # Code sign
-codesign --force --sign - mobile/ios/Frameworks/mobile_bridge.framework
+codesign --force --sign - mobile/ios/Frameworks/libmobile_bridge.a
 ```
 
 ### Bước 3: Build iOS App
@@ -197,15 +231,6 @@ open mobile/ios/Runner.xcworkspace
 # Hoặc qua Flutter
 flutter run
 ```
-
-### Lỗi build iOS thường gặp
-
-| Lỗi | Giải pháp |
-|-----|----------|
-| `Framework not found` | Kiểm tra framework path trong Xcode |
-| `Symbol not found` | Rebuild Rust lib với target đúng |
-| `Code signing failed` | Code sign framework thủ công |
-| `CryptoProvider panic` | Đảm bảo `rustls = { features = ["ring"] }` trong Cargo.toml |
 
 ---
 
@@ -223,9 +248,6 @@ cargo test -p mobile_bridge
 
 # Với output
 cargo test -- --nocapture
-
-# Test cụ thể
-cargo test ten_test
 ```
 
 ### Integration Tests
@@ -236,18 +258,6 @@ cargo run --bin hostagent -- --bind 127.0.0.1:8443
 
 # Terminal khác, chạy mobile bridge tests
 cargo test -p mobile_bridge --test integration
-```
-
-### Flutter Tests
-
-```bash
-cd mobile
-
-# Unit tests
-flutter test
-
-# Integration tests (cần device/emulator)
-flutter test integration_test/
 ```
 
 ---
@@ -272,28 +282,7 @@ RUST_LOG=comacode::quic=debug cargo run --bin hostagent --
 ```bash
 # Xem logging cho FFI calls
 RUST_BACKTRACE=1 cargo run --bin hostagent --
-
-# Debug với LLDB
-rust-lldb -- target/debug/hostagent
 ```
-
-### Flutter App
-
-```bash
-# Flutter devtools
-flutter pub global activate devtools
-flutter pub global run devtools
-
-# Attach vào app đang chạy
-flutter attach
-```
-
-### Xcode (iOS)
-
-1. Mở `mobile/ios/Runner.xcworkspace`
-2. Đặt breakpoints trong Dart hoặc Swift
-3. Chạy từ Xcode (Cmd+R)
-4. Check console cho Rust logs qua `os_log`
 
 ---
 
@@ -313,9 +302,6 @@ flutter attach
 ```toml
 # Trong Cargo.toml
 rustls = { version = "0.23", features = ["ring"] }
-
-# Trong code, gọi trước khi kết nối:
-rustls::crypto::ring::default_provider().install_default();
 ```
 
 ### iOS framework not found
@@ -323,7 +309,7 @@ rustls::crypto::ring::default_provider().install_default();
 **Kiểm tra:**
 1. Framework path trong Xcode: `Build Phases → Link Binary With Libraries`
 2. Framework Search Paths trong Build Settings
-3. Code signature: `codesign -dv mobile/ios/Frameworks/mobile_bridge.framework`
+3. Code signature: `codesign -dv mobile/ios/Frameworks/`
 
 ### QUIC connection timeout
 
@@ -332,40 +318,6 @@ rustls::crypto::ring::default_provider().install_default();
 2. Sai IP/port trong QR code
 3. Certificate fingerprint không khớp
 
-**Debug:**
-```bash
-# Test UDP connectivity
-nc -uz <host> <port>
-
-# Verify host agent đang listen
-lsof -i :8443
-```
-
----
-
-## Development Workflow
-
-```bash
-# 1. Thay đổi code
-# 2. Chạy tests
-cargo test
-
-# 3. Nếu có thay đổi Rust: rebuild iOS library
-cargo build --release --target aarch64-apple-ios --package mobile_bridge
-cp target/aarch64-apple-ios/release/libmobile_bridge.dylib \
-   mobile/ios/Frameworks/mobile_bridge.framework/mobile_bridge
-install_name_tool -id @rpath/mobile_bridge.framework/mobile_bridge \
-   mobile/ios/Frameworks/mobile_bridge.framework/mobile_bridge
-codesign --force --sign - mobile/ios/Frameworks/mobile_bridge.framework
-
-# 4. Chạy Flutter app
-cd mobile && flutter run
-
-# 5. Commit khi xong
-git add .
-git commit -m "feat: mô tả"
-```
-
 ---
 
 ## Tài liệu
@@ -373,7 +325,7 @@ git commit -m "feat: mô tả"
 - [Kiến trúc hệ thống](docs/system-architecture.md)
 - [Lộ trình dự án](docs/project-roadmap.md)
 - [Tiêu chuẩn code](docs/code-standards.md)
-- [Hướng dẫn dev mới](docs/ONBOARDING.md)
+- [Tổng quan dự án](docs/project-overview-pdr.md)
 
 ---
 

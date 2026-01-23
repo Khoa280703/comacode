@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../connection/connection_providers.dart';
+import '../vfs/vfs_page.dart';
 import '../../bridge/bridge_wrapper.dart';
 import '../../bridge/ffi_helpers.dart';
 import '../../core/theme.dart';
@@ -35,6 +36,18 @@ class TerminalPage extends ConsumerWidget {
         backgroundColor: CatppuccinMocha.mantle,
         actions: [
           _ConnectionStatusIndicator(state: connectionState),
+          if (connectionState.isConnected)
+            IconButton(
+              icon: const Icon(Icons.folder_open),
+              tooltip: 'File Browser',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const VfsPage(),
+                  ),
+                );
+              },
+            ),
           if (connectionState.isConnected)
             PopupMenuButton<String>(
               onSelected: (value) async {

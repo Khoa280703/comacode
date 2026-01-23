@@ -1,7 +1,7 @@
 # Comacode System Architecture
 
-> Version: 1.2 | Last Updated: 2026-01-22
-> Phase: Phase VFS-1 - Virtual File System (Directory Listing)
+> Version: 1.3 | Last Updated: 2026-01-22
+> Phase: Phase VFS-2 - Virtual File System (File Watcher) - Flutter UI Complete
 
 ---
 
@@ -99,6 +99,21 @@ Comacode is a **distributed terminal control system** consisting of three main c
 │  │  - Spawn shell process (zsh/bash)                          │   │
 │  │  - Read PTY output → TerminalEvent                         │   │
 │  │  - Write user input → PTY                                  │   │
+│  └───────────────────────────┬─────────────────────────────────┘   │
+│                              │                                      │
+│  ┌───────────────────────────▼─────────────────────────────────┐   │
+│  │                      VFS Module                             │   │
+│  │  - Directory listing with async I/O                        │   │
+│  │  - Path validation with symlink resolution                 │   │
+│  │  - Chunked streaming (150 entries/chunk)                   │   │
+│  │  - File watcher with push events                           │   │
+│  └───────────────────────────┬─────────────────────────────────┘   │
+│                              │                                      │
+│  ┌───────────────────────────▼─────────────────────────────────┐   │
+│  │                   Web Dashboard                             │   │
+│  │  - QR code display (axum 0.7)                              │   │
+│  │  - Connection status                                       │   │
+│  │  - HTTP server on port 8080                                │   │
 │  └───────────────────────────┬─────────────────────────────────┘   │
 │                              │                                      │
 │  ┌───────────────────────────▼─────────────────────────────────┐   │
@@ -960,11 +975,11 @@ jobs:
 
 **Last Updated**: 2026-01-22
 **Maintainer**: Comacode Development Team
-**Next Review**: Phase VFS-2 completion
+**Next Review**: Phase VFS-3 completion
 
 ---
 
-## Phase VFS-1 Architecture Updates
+## Phase VFS-2 Architecture Updates
 
 ### Virtual File System Module
 
@@ -973,8 +988,22 @@ jobs:
 **Features**:
 1. **Directory Listing**: Async directory reading with `tokio::fs`
 2. **Sorted Output**: Directories first, then alphabetically by name
-3. **Chunked Streaming**: 150 entries per chunk for large directories
+3. **Chunked Streaming**: 150 entries per chunk for large directories, max 10,000 entries
 4. **Path Validation**: Symlink resolution with traversal protection
+5. **Empty Directory Handling**: Explicit empty chunk response (fixes timeout issue)
+
+**Directory Listing Flow**:
+```
+Client → Host: ListDir { path: "/tmp", depth: None }
+Host → Client: DirChunk { chunk_index: 0, total_chunks: 2, entries: [...], has_more: true }
+Host → Client: DirChunk { chunk_index: 1, total_chunks: 2, entries: [...], has_more: false }
+```
+
+**Empty Directory Flow** (Phase VFS-2 fix):
+```
+Client → Host: ListDir { path: "/empty", depth: None }
+Host → Client: DirChunk { chunk_index: 0, total_chunks: 1, entries: [], has_more: false }
+```
 
 **Error Types**:
 ```rust
@@ -1002,6 +1031,42 @@ impl From<VfsError> for CoreError {
 - `NetworkMessage::ListDir` sent from client
 - `NetworkMessage::DirChunk` responses streamed back
 - QUIC server handler in `quic_server.rs`
+
+### File Watcher Architecture
+
+**New Component**: `crates/hostagent/src/file_watcher.rs`
+
+**Features**:
+1. **Real-time Monitoring**: Uses `notify` 7.0 for file system events
+2. **Push Events**: Automatic event propagation to connected clients
+3. **Debouncing**: Efficient event batching to reduce network traffic
+4. **Lifecycle Management**: Automatic re-watching on directory changes
+
+**Event Flow**:
+```
+File System Change → notify Event → Watcher Debounce → NetworkMessage → Client
+```
+
+**Supported Events**:
+- `FileCreate`: New file created
+- `FileModify`: File content changed
+- `FileDelete`: File removed
+- `DirCreate`: New directory created
+- `DirDelete`: Directory removed
+
+**Watcher Lifecycle**:
+1. Client sends `StartWatching { path: "/tmp" }`
+2. Host creates watcher with `notify::RecursiveMode::Recursive`
+3. Host spawns task to poll events
+4. Events debounced (100ms window)
+5. Batched events sent to client
+6. Client sends `StopWatching { path: "/tmp" }` to cleanup
+
+**Security**:
+- Path validation using `canonicalize()` resolves all symlinks and relative components
+- Checks if resolved path is within allowed base (prevents `../` traversal)
+- Returns specific errors: `PathNotFound`, `PermissionDenied`, `NotADirectory`
+- Permission checks before watching (read access required)
 
 ---
 

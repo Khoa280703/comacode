@@ -1,7 +1,7 @@
 # Comacode Code Standards & Architecture
 
-> Version: 1.2 | Last Updated: 2026-01-22
-> Phase: Phase VFS-1 - Virtual File System (Directory Listing)
+> Version: 1.3 | Last Updated: 2026-01-22
+> Phase: Phase VFS-2 - Virtual File System (File Watcher) - Flutter UI Complete
 
 ---
 
@@ -55,8 +55,10 @@ Comacode/
 │   │   │   ├── theme.dart
 │   │   │   └── storage.dart
 │   │   ├── features/          # Feature modules
-│   │   │   ├── terminal/
-│   │   │   └── connection/
+│   │   │   ├── terminal/      # Terminal UI with xterm_flutter
+│   │   │   ├── connection/    # Connection state management (Riverpod)
+│   │   │   ├── vfs/           # VFS browser UI
+│   │   │   └── qr_scanner/    # QR scanner with mobile_scanner
 │   │   └── bridge/            # FFI bindings
 │   │       ├── bridge_generated.dart
 │   │       └── bridge.dart
@@ -1206,7 +1208,7 @@ class ConnectionProvider extends ChangeNotifier {
 
 **Last Updated**: 2026-01-22
 **Maintainer**: Comacode Development Team
-**Next Review**: Phase VFS-2 completion
+**Next Review**: Phase VFS-3 completion
 
 ---
 

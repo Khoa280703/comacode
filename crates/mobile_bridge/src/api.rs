@@ -76,10 +76,13 @@ pub async fn connect_to_host(
     // Check if already connected (read lock)
     {
         let client_guard = lock.read().await;
-        if client_guard.is_some() {
-            return Err(
-                "Already connected. Disconnect first to reconnect.".to_string()
-            );
+        if let Some(client_arc) = client_guard.as_ref() {
+            let client = client_arc.lock().await;
+            if client.is_connected().await {
+                return Err(
+                    "Already connected. Disconnect first to reconnect.".to_string()
+                );
+            }
         }
     }
 
@@ -441,6 +444,139 @@ pub async fn receive_dir_chunk() -> Result<Option<(u32, Vec<DirEntry>, bool)>, S
     let client_arc = get_client().await?;
     let client = client_arc.lock().await;
     client.receive_dir_chunk().await
+}
+
+// ===== VFS Directory Listing =====
+
+/// List directory entries using Future API
+///
+/// Phase VFS-Fix: Refactored from Stream to Future for reliability.
+/// Stream API had race condition where onDone fired before onData.
+/// Future API is deterministic - data is returned when complete.
+///
+/// # Arguments
+/// * `path` - Directory path to list
+///
+/// # Returns
+/// * `Ok(Vec<DirEntry>)` - All entries in directory
+/// * `Err(String)` - Error message
+#[frb]
+pub async fn list_directory(path: String) -> Result<Vec<DirEntry>, String> {
+    use std::time::Duration;
+
+    tracing::info!("📁 [list_directory] STARTING for path '{}'", path);
+
+    // Get client
+    let client_arc = get_client().await.map_err(|e| e.to_string())?;
+    let client = client_arc.lock().await;
+
+    // Request listing
+    tracing::info!("📤 [list_directory] Sending request for '{}'", path);
+    client.request_list_dir(path.clone()).await?;
+    tracing::info!("✅ [list_directory] Request sent, now polling...");
+
+    // Collect all chunks
+    let mut all_entries = Vec::new();
+    let mut attempts = 0;
+    const MAX_ATTEMPTS: usize = 150; // 3 seconds at 20ms
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+    let mut chunk_count = 0;
+
+    loop {
+        tokio::time::sleep(POLL_INTERVAL).await;
+
+        let chunk_result = client.receive_dir_chunk().await?;
+        match chunk_result {
+            Some((index, entries, has_more)) => {
+                chunk_count += 1;
+                tracing::info!(
+                    "📥 [list_directory] Chunk {}: {} entries, has_more={}, total_so_far={}",
+                    index,
+                    entries.len(),
+                    has_more,
+                    all_entries.len() + entries.len()
+                );
+                all_entries.extend(entries);
+                if !has_more {
+                    tracing::info!("✅ [list_directory] Last chunk received (has_more=false)");
+                    break;
+                }
+                attempts = 0; // Reset on success
+            }
+            None => {
+                attempts += 1;
+                if attempts >= MAX_ATTEMPTS {
+                    tracing::warn!("⚠️ [list_directory] TIMEOUT after {} attempts (3 seconds), chunks={}, entries={}",
+                        MAX_ATTEMPTS, chunk_count, all_entries.len());
+                    break; // Timeout
+                }
+                // Log every 25 attempts (500ms)
+                if attempts % 25 == 0 {
+                    tracing::debug!("⏳ [list_directory] Still waiting... {}/{} attempts", attempts, MAX_ATTEMPTS);
+                }
+            }
+        }
+    }
+
+    tracing::info!("🏁 [list_directory] DONE: path='{}', chunks={}, entries={}",
+        path, chunk_count, all_entries.len());
+    Ok(all_entries)
+}
+
+/// Stream directory entries (DEPRECATED - for FRB codegen compatibility)
+///
+/// This function exists only for compatibility with generated code.
+/// Use `list_directory()` instead (Future API, no race condition).
+///
+/// Phase VFS-Fix: Added delay after sink.add() to ensure Dart processes data.
+pub fn stream_list_dir(
+    path: String,
+    sink: crate::frb_generated::StreamSink<Vec<DirEntry>>,
+) -> Result<(), String> {
+    use std::thread;
+    use std::time::Duration;
+
+    let path_clone = path.clone();
+
+    // Spawn thread to convert Future → StreamSink
+    thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to create tokio runtime: {}", e);
+                return;
+            }
+        };
+
+        let result = rt.block_on(async {
+            list_directory(path_clone).await
+        });
+
+        match result {
+            Ok(entries) => {
+                tracing::info!("📤 [stream_list_dir] Sending {} entries", entries.len());
+                match sink.add(entries) {
+                    Ok(_) => {
+                        // CRITICAL: Keep thread alive so Dart event loop processes onData
+                        // Stream closes when this thread ends, so we must wait
+                        tracing::info!("⏳ [stream_list_dir] Data sent, waiting for Dart to process...");
+                        thread::sleep(Duration::from_millis(300));
+                        tracing::info!("✅ [stream_list_dir] Done waiting");
+                    }
+                    Err(_) => {
+                        tracing::warn!("⚠️ [stream_list_dir] Stream closed by Dart");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("❌ [stream_list_dir] Error: {}", e);
+                let _ = sink.add_error(e);
+                thread::sleep(Duration::from_millis(300));
+            }
+        }
+    });
+
+    Ok(())
 }
 
 // ===== DirEntry helper functions for Dart =====

@@ -4,7 +4,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 import 'core/theme.dart';
 import 'features/connection/home_page.dart';
 import 'features/terminal/terminal_page.dart';
-import 'bridge/third_party/mobile_bridge/frb_generated.dart';
+import 'bridge/frb_generated.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

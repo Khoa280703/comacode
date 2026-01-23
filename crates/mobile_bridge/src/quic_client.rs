@@ -17,7 +17,7 @@ use comacode_core::{TerminalEvent, AuthToken};
 use comacode_core::types::DirEntry;
 use comacode_core::protocol::MessageCodec;
 use comacode_core::types::{NetworkMessage, TerminalCommand, FileEventType};
-use quinn::{ClientConfig, Endpoint, Connection, RecvStream, SendStream};
+use quinn::{Endpoint, Connection, SendStream};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -318,11 +318,16 @@ impl QuicClient {
                                 }
                                 // VFS Phase 1: Buffer DirChunk messages
                                 // Cap at 100 chunks to prevent OOM (~15MB max)
-                                Ok(msg @ NetworkMessage::DirChunk { .. }) => {
+                                Ok(NetworkMessage::DirChunk { ref entries, ref has_more, .. }) => {
                                     let mut buffer = dir_chunk_buffer.lock().await;
                                     if buffer.len() < 100 {
                                         info!("📥 [RECV_TASK] Received DirChunk, buffering ({}/100)", buffer.len() + 1);
-                                        buffer.push(msg);
+                                        buffer.push(NetworkMessage::DirChunk {
+                                            chunk_index: 0,
+                                            total_chunks: 0,
+                                            entries: entries.clone(),
+                                            has_more: *has_more,
+                                        });
                                     } else {
                                         warn!("📥 [RECV_TASK] DirChunk buffer full (100), dropping chunk");
                                     }

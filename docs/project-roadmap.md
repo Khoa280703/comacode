@@ -1,8 +1,8 @@
 # Project Roadmap
 
 **Project**: Comacode
-**Last Updated**: 2026-01-07
-**Current Phase**: 04.1 (Post-MVP Bugfix)
+**Last Updated**: 2026-01-22
+**Current Phase**: VFS-2 (Virtual File System - File Watcher) - Flutter UI Complete
 
 ---
 
@@ -23,8 +23,11 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 | 03 | QUIC Server | ✅ Done | 100% |
 | 04 | QUIC Client (Mobile) | ✅ Done | 100% |
 | 04.1 | Critical Bugfixes | ✅ Done | 100% |
-| 05 | Network Protocol | ⏳ TODO | 0% |
-| 06 | Flutter UI | ⏳ TODO | 0% |
+| 05 | Network Protocol | ✅ Done | 100% |
+| VFS-1 | VFS - Directory Listing | ✅ Done | 100% |
+| VFS-2 | VFS - File Watcher | ✅ Done | 100% |
+| 06 | Flutter UI | ✅ Done | 100% |
+| VFS-3 | File Operations (Read) | ⏳ TODO | 0% |
 | 07 | Discovery & Auth | ⏳ TODO | 0% |
 | 08 | Production Hardening | ⏳ TODO | 0% |
 
@@ -80,43 +83,87 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 
 ---
 
+### Phase 05: Network Protocol ✅
+- [x] Stream I/O implementation
+- [x] Bidirectional messaging
+- [x] Terminal event streaming
+- [x] Error handling and recovery
+
+**Deliverable**: Complete QUIC stream I/O
+
+---
+
+### Phase VFS-1: Virtual File System - Directory Listing ✅
+- [x] VFS module implementation (vfs.rs)
+- [x] Directory listing with async I/O
+- [x] Chunked streaming (150 entries/chunk)
+- [x] Path validation with symlink resolution
+- [x] VFS message types and error handling
+- [x] FFI API for Flutter
+
+**Deliverable**: `crates/hostagent/src/vfs.rs`
+
+---
+
+### Phase VFS-2: Virtual File System - File Watcher ✅
+- [x] File watcher implementation (notify 7.0)
+- [x] Push events for file changes
+- [x] Watcher lifecycle management
+- [x] Event propagation to client
+- [x] Empty directory handling (explicit empty chunk)
+
+**Deliverable**: File watcher with push events
+
+---
+
+### Phase 06: Flutter UI ✅
+- [x] Terminal UI with xterm_flutter
+- [x] Virtual key bar (ESC, CTRL, TAB, Arrows)
+- [x] VFS browser with navigation
+- [x] QR scanner with auto-connect
+- [x] Connection state management (Riverpod)
+- [x] Web dashboard with QR display (axum 0.7)
+- [x] Catppuccin Mocha theme
+- [x] Screen wakelock toggle
+- [x] Font size adjustment (11-16px)
+
+**Deliverable**: Complete Flutter mobile app
+
+---
+
 ## Upcoming Phases
 
-### Phase 05: Network Protocol (PRIORITY)
+### Phase VFS-3: File Operations (Read/Download)
 
-**Goal**: Implement actual QUIC stream I/O for terminal communication
+**Goal**: Implement file read and download operations
 
 **Tasks**:
-- [ ] Create `crates/core/src/transport/` module
-- [ ] Implement `configure_client()` with migration enabled
-- [ ] Implement `pump_pty_to_quic()` stream pump
-- [ ] Implement `pump_quic_to_pty()` stream pump
-- [ ] Add heartbeat/ping-pong logic
-- [ ] Implement exponential backoff reconnect
-- [ ] Update stub implementations in `quic_client.rs`
+- [ ] File read API (read file contents)
+- [ ] Chunked file download (stream large files)
+- [ ] File metadata caching
+- [ ] Progress reporting for downloads
+- [ ] Error handling for read failures
 
-**Estimate**: 6h (revised from 10h)
-
-**Plan**: `plans/260106-2127-comacode-mvp/phase-05-network-protocol.md`
+**Estimate**: 8-12h
 
 **Dependencies**: None (can start immediately)
 
 ---
 
-### Phase 06: Flutter UI
+### Phase VFS-4: File Operations (Write/Upload)
 
-**Goal**: Build mobile app UI for terminal access
+**Goal**: Implement file write and upload operations
 
 **Tasks**:
-- [ ] QR scanner screen
-- [ ] Terminal display (xterm.js flutter fork or custom widget)
-- [ ] Connection status indicator
-- [ ] Settings (fingerprint management, saved hosts)
-- [ ] Test FFI boundary with actual data flow
+- [ ] File write API (create/overwrite files)
+- [ ] Chunked file upload (stream large files)
+- [ ] Append mode support
+- [ ] Progress reporting for uploads
+- [ ] Error handling for write failures
 
-**Estimate**: 16-24h
+**Estimate**: 8-12h
 
-**Dependencies**: Phase 05 (Network Protocol)
+**Dependencies**: Phase VFS-3
 
 ---
 
@@ -134,9 +181,7 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 
 **Estimate**: 6-8h
 
-**Plan**: `plans/260106-2127-comacode-mvp/phase-06-discovery-auth.md` (to be renamed to phase-07)
-
-**Dependencies**: Phase 06 (Flutter UI - for UX integration)
+**Dependencies**: Phase 06 (Flutter UI - complete)
 
 ---
 
@@ -164,7 +209,8 @@ See `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`
 
 | Issue | Priority | Phase |
 |-------|----------|-------|
-| Stream I/O stubs | P1 | Phase 05 |
+| File read/download | P1 | Phase VFS-3 |
+| File write/upload | P1 | Phase VFS-4 |
 | Integration tests | P2 | Phase 08 |
 | IP ban persistence | P2 | Phase 08 |
 | Constant-time comparison | P3 | Phase 08 |
@@ -179,9 +225,13 @@ See `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`
 2026-01-06  │ Phase 01-03: MVP Complete
 2026-01-07  │ Phase 04: QUIC Client Complete
 2026-01-07  │ Phase 04.1: Bugfixes Complete
+2026-01-09  │ Phase 05: Network Protocol Complete
+2026-01-12  │ Phase VFS-1: VFS Directory Listing Complete
+2026-01-15  │ Phase VFS-2: VFS File Watcher Complete
+2026-01-22  │ Phase 06: Flutter UI Complete
 ────────────┼───────────────────────────────────
-TBD         │ Phase 05: Network Protocol (6h)
-TBD         │ Phase 06: Flutter UI (16-24h)
+TBD         │ Phase VFS-3: File Operations Read (8-12h)
+TBD         │ Phase VFS-4: File Operations Write (8-12h)
 TBD         │ Phase 07: Discovery & Auth (6-8h)
 TBD         │ Phase 08: Production Hardening (6-8h)
 ```
@@ -190,9 +240,14 @@ TBD         │ Phase 08: Production Hardening (6-8h)
 
 ## Success Criteria
 
-- [ ] Mobile app can connect to hostagent via QR scan
-- [ ] Terminal I/O works bidirectionally
-- [ ] TOFU verification prevents MitM
-- [ ] Rate limiting protects against abuse
+- [x] Mobile app can connect to hostagent via QR scan
+- [x] Terminal I/O works bidirectionally
+- [x] TOFU verification prevents MitM
+- [x] Rate limiting protects against abuse
+- [x] VFS directory listing works
+- [x] File watcher with push events
+- [x] Flutter UI complete (terminal, VFS, QR scanner)
 - [ ] mDNS discovery works (Phase 07)
+- [ ] File read/download (Phase VFS-3)
+- [ ] File write/upload (Phase VFS-4)
 - [ ] Production-ready (hardened, tested)
