@@ -25,7 +25,7 @@ dependencies:
   riverpod_annotation: ^2.3.0
 
   # Terminal UI (Phase 06)
-  xterm: ^3.5.0
+  xterm: ^4.0.0
 
   # QR Code Scanner
   mobile_scanner: ^3.5.0
