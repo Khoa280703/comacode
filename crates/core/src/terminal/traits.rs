@@ -204,7 +204,8 @@ mod tests {
         assert_eq!(config.rows, 40);
         assert_eq!(config.cols, 120);
         assert_eq!(config.shell, "/bin/zsh");
-        assert_eq!(config.env.len(), 2);
+        // Default env has TERM, LANG, LC_ALL (3 vars) + 1 added = 4
+        assert_eq!(config.env.len(), 4);
     }
 
     #[tokio::test]

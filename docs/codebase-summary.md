@@ -1,7 +1,7 @@
 # Comacode Codebase Summary
 
 > Last Updated: 2026-01-23
-> Version: Phase Vibe-02 (Vibe Coding Client - Enhanced Features) Complete
+> Version: Phase Vibe-03 (Vibe Coding Client - Polish & Performance) Complete
 
 ---
 
@@ -59,10 +59,10 @@ Comacode/
 │   │   │   ├── terminal/      # Terminal UI with xterm_flutter
 │   │   │   ├── connection/    # Connection state management (Riverpod)
 │   │   │   ├── vfs/           # VFS browser UI
-│   │   │   ├── vibe/          # Vibe Coding Client (Phase Vibe-01, Vibe-02)
-│   │   │   │   ├── models/    # Output block models, session state
-│   │   │   │   ├── widgets/   # Output parser, parsed view, search overlay
-│   │   │   │   └── services/  # Speech service, session manager
+│   │   │   ├── vibe/          # Vibe Coding Client (Phase Vibe-01, Vibe-02, Vibe-03)
+│   │   │   │   ├── models/    # Output block models, session state, output buffer
+│   │   │   │   ├── widgets/   # Output parser, parsed view, search overlay, haptic, animations, error dialogs
+│   │   │   │   └── services/  # Speech service, session manager, haptic service
 │   │   │   └── qr_scanner/    # QR scanner with mobile_scanner
 │   │   └── bridge/            # FFI bindings
 │   │       └── bridge_generated.dart
@@ -184,6 +184,71 @@ Comacode/
     - Prevents path traversal attacks
     - Returns error response on validation failure
     - Lines 546-563: validation logic
+
+### Phase Vibe-03: Vibe Coding Client - Polish & Performance ✅
+
+11. **Haptic Feedback Service** (`mobile/lib/features/vibe/services/haptic_service.dart`)
+    - **HapticService**: Singleton service for haptic feedback
+    - 8 feedback types: light, medium, heavy, selection, success, warning, error, notification
+    - Platform-aware: Uses iOS Haptic Feedback API natively
+    - Graceful degradation: Silently fails on unsupported devices
+    - Usage examples: File attached (light), send prompt (medium), errors (heavy)
+
+12. **Ambient Animations** (`mobile/lib/features/vibe/widgets/thinking_indicator.dart`)
+    - **ThinkingIndicator**: Pulse animation when Claude is thinking
+      - Shows when connected but no recent output
+      - Combines scale (0.8-1.2) and opacity (0.3-0.8) animations
+      - Customizable label (default: "Claude is thinking...")
+      - Yellow accent color with circular progress indicator
+    - **FadeTransitionWrapper**: Smooth fade transitions
+      - Configurable duration (default 200ms)
+      - Forward/reverse animation based on visibility
+      - Useful for page transitions, widget appearance
+    - **ScalePressAnimation**: Button press scale effect
+      - Scale down on tap (default 0.95)
+      - Automatic reverse on cancel/tap up
+      - Enhances tactile feedback
+
+13. **Performance Optimization** (`mobile/lib/features/vibe/models/output_buffer.dart`)
+    - **OutputBuffer**: Bounded buffer to prevent memory issues
+      - MAX_LINES: 10,000 lines maximum
+      - MAX_LINE_BYTES: 4,096 bytes per line (truncates huge lines)
+      - Automatic oldest-line dropping when full
+      - Memory usage tracking (`memoryUsage` getter)
+      - Buffer statistics (`lines`, `bytes`, `isFull`)
+      - Methods: `add()`, `addAll()`, `clear()`, `getRange()`, `getLast()`
+    - **Integration**: Integrated into `vibe_session_providers.dart`
+      - All terminal output passes through OutputBuffer
+      - Periodic stats logging (every 1,000 lines)
+      - Warning when buffer at capacity
+    - **Benefits**: Prevents unbounded memory growth in long-running sessions
+
+14. **Error Recovery** (`mobile/lib/features/vibe/widgets/error_dialog.dart`)
+    - **ErrorType**: 5 error categories
+      - connection (network issues)
+      - authentication (session problems)
+      - file (file operations)
+      - dictation (speech recognition)
+      - generic (catch-all)
+    - **VibeErrorDialog**: Modal error dialog
+      - Categorized by type with appropriate icons and colors
+      - Custom actions (primary, secondary, destructive)
+      - Haptic feedback on show (heavy) and action press (selection)
+      - Factory methods: `showConnectionLost()`, `showDictationFailed()`, `showFileReadFailed()`, `showGeneric()`
+    - **ErrorBanner**: Inline error banner
+      - Compact display for non-critical errors
+      - Retry and dismiss actions
+      - Type-aware coloring
+      - Haptic feedback on interactions
+    - **ErrorData**: Error data model
+      - Title, message, type, actions
+      - Factory constructors for common error scenarios
+
+15. **UI Polish** (Multiple files modified)
+    - **quick_keys_toolbar.dart**: Added `HapticService.selection()` on key press
+    - **input_bar.dart**: Added haptic feedback for send (medium) and file attachment (light)
+    - Enhanced user feedback throughout the app
+    - Consistent haptic patterns for similar interactions
 
 ### Phase 04.1 Critical Bugfixes ✅
 
@@ -405,9 +470,9 @@ pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64>;
 
 ## Development Workflow
 
-### Current Phase: Phase Vibe-02 - Vibe Coding Client (Enhanced Features)
+### Current Phase: Phase Vibe-03 - Vibe Coding Client (Polish & Performance)
 
-**Status**: Vibe Coding Client complete with enhanced output parsing and search functionality
+**Status**: Vibe Coding Client complete with haptic feedback, ambient animations, performance optimizations, and error recovery
 
 **Phase Vibe-01 Completed** (Vibe MVP):
 - ✅ Chat-style interface for Claude Code CLI
@@ -423,6 +488,13 @@ pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64>;
 - ✅ ParsedOutputView with rich rendering
 - ✅ SearchOverlay with case-sensitive toggle
 - ✅ Security fix: Path validation in ReadFile handler
+
+**Phase Vibe-03 Completed** (Polish & Performance):
+- ✅ HapticService with 8 feedback types
+- ✅ Ambient animations (ThinkingIndicator, FadeTransitionWrapper, ScalePressAnimation)
+- ✅ OutputBuffer for memory management (MAX_LINES=10000)
+- ✅ Error recovery (VibeErrorDialog, ErrorBanner)
+- ✅ UI polish with haptic feedback throughout
 
 **Phase VFS-1 Completed**:
 - ✅ VFS module implementation (vfs.rs)
@@ -636,5 +708,5 @@ cargo test -p mobile_bridge
 ---
 
 **Last Updated**: 2026-01-23
-**Current Phase**: Phase Vibe-02 - Vibe Coding Client (Enhanced Features) Complete
+**Current Phase**: Phase Vibe-03 - Vibe Coding Client (Polish & Performance) Complete
 **Next Milestone**: Phase VFS-3 - File Operations (Read/Download)

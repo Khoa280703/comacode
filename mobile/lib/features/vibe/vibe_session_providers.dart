@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../bridge/bridge_wrapper.dart';
+import 'models/output_buffer.dart';
 import 'models/special_key.dart';
 import 'models/vibe_session_state.dart';
 
@@ -24,6 +25,9 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
 
   Timer? _eventLoopTimer;
   bool _isDisposed = false;
+
+  /// Output buffer to prevent memory issues with large output
+  final OutputBuffer _outputBuffer = OutputBuffer();
 
   /// Send prompt text to backend
   Future<void> sendPrompt(String prompt) async {
@@ -79,25 +83,57 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
             if (data.isNotEmpty) {
               try {
                 final text = String.fromCharCodes(data);
+
+                // Add to output buffer (limits memory growth)
+                _outputBuffer.add(text);
+
+                // Write to terminal for display
                 state.terminal.write(text);
+
+                // Log buffer stats periodically for monitoring
+                if (_outputBuffer.length % 1000 == 0) {
+                  final stats = _outputBuffer.stats;
+                  if (stats['isFull'] == true) {
+                    // Buffer at capacity - oldest lines being dropped
+                    print('Output buffer at capacity: ${stats['lines']} lines');
+                  }
+                }
               } catch (e) {
                 // Ignore decode errors
               }
             }
           } else if (isEventError(event)) {
             final message = getEventErrorMessage(event);
-            state.terminal
-                .write('\x1b[31mError: $message\x1b[0m\r\n');
+            final errorText = '\x1b[31mError: $message\x1b[0m\r\n';
+            _outputBuffer.add(errorText);
+            state.terminal.write(errorText);
           } else if (isEventExit(event)) {
             final code = getEventExitCode(event);
-            state.terminal
-                .write('\r\n\x1b[33mProcess exited with code $code\x1b[0m\r\n');
+            final exitText = '\r\n\x1b[33mProcess exited with code $code\x1b[0m\r\n';
+            _outputBuffer.add(exitText);
+            state.terminal.write(exitText);
           }
         } catch (e) {
           // Silent ignore
         }
       },
     );
+  }
+
+  /// Get buffered output (for search/export features)
+  String getBufferedOutput() {
+    return _outputBuffer.toString();
+  }
+
+  /// Get buffer statistics
+  Map<String, dynamic> getBufferStats() {
+    return _outputBuffer.stats;
+  }
+
+  /// Clear output buffer and terminal
+  void clearOutput() {
+    _outputBuffer.clear();
+    state.terminal.eraseDisplay();
   }
 
   @override

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
@@ -83,6 +85,9 @@ class _OutputSearchOverlayState extends State<OutputSearchOverlay> {
   bool _caseSensitive = false;
   bool _searching = false;
 
+  // Debounce timer for search
+  Timer? _debounce;
+
   @override
   void initState() {
     super.initState();
@@ -91,6 +96,7 @@ class _OutputSearchOverlayState extends State<OutputSearchOverlay> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -237,10 +243,16 @@ class _OutputSearchOverlayState extends State<OutputSearchOverlay> {
                       ),
                       onSubmitted: (_) => _performSearch(),
                       onChanged: (value) {
+                        // Debounced search for better performance
+                        _debounce?.cancel();
                         if (value.isEmpty) {
                           _results = const SearchResults();
                           _clearTerminalHighlight();
                           setState(() {});
+                        } else {
+                          _debounce = Timer(const Duration(milliseconds: 300), () {
+                            _performSearch();
+                          });
                         }
                       },
                     ),

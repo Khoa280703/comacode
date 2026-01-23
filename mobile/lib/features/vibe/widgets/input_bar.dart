@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme.dart';
 import '../models/file_attachment.dart';
+import '../services/haptic_service.dart';
 import '../vibe_session_providers.dart';
 import 'attachment_button.dart';
 import 'dictation_button.dart';
@@ -46,6 +47,9 @@ class _InputBarState extends ConsumerState<InputBar> {
     final text = _controller.text.trim();
     if (text.isEmpty && _attachedFiles.isEmpty) return;
 
+    // Haptic feedback for send
+    await HapticService.medium();
+
     // Build prompt with attachments
     String finalPrompt = text;
 
@@ -68,6 +72,7 @@ class _InputBarState extends ConsumerState<InputBar> {
   }
 
   void _handleFilesAttached(List<String> paths, AttachmentFormat format) {
+    HapticService.light();
     setState(() {
       _attachedFiles.clear();
       _attachedFiles.addAll(paths);

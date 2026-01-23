@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme.dart';
 import '../models/special_key.dart';
+import '../services/haptic_service.dart';
 
 /// Quick keys toolbar for common terminal interactions
 class QuickKeysToolbar extends StatelessWidget {
@@ -82,6 +83,7 @@ class _QuickKeyButtonState extends State<_QuickKeyButton> {
       onTapDown: (_) => setState(() => _isPressed = true),
       onTapUp: (_) {
         setState(() => _isPressed = false);
+        HapticService.selection();
         widget.onTap();
       },
       onTapCancel: () => setState(() => _isPressed = false),

@@ -42,6 +42,9 @@ dependencies:
   # Wakelock (keep screen on)
   wakelock_plus: ^1.1.0
 
+  # Haptic Feedback (Vibe Coding - Phase 03)
+  haptic_feedback: ^0.4.0
+
   # Network utilities
   connectivity_plus: ^6.0.5
 
