@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme.dart';
@@ -88,17 +87,6 @@ class _InputBarState extends ConsumerState<InputBar> {
     }
   }
 
-  void _handleKey(KeyEvent event) {
-    // Handle physical keyboard shortcuts
-    if (event is KeyDownEvent) {
-      if (event.logicalKey == LogicalKeyboardKey.enter &&
-          !HardwareKeyboard.instance.isShiftPressed) {
-        // Send on Enter (without Shift)
-        _sendPrompt();
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final sessionState = ref.watch(vibeSessionProvider);
@@ -129,30 +117,26 @@ class _InputBarState extends ConsumerState<InputBar> {
               ),
               // Text field
               Expanded(
-                child: KeyboardListener(
+                child: TextField(
+                  controller: _controller,
                   focusNode: _focusNode,
-                  onKeyEvent: _handleKey,
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    enabled: isConnected && !isSending,
-                    style: TextStyle(
-                      color: CatppuccinMocha.text,
-                      fontSize: 16,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: 'Type your prompt...',
-                      hintStyle: TextStyle(
-                        color: CatppuccinMocha.overlay1,
-                      ),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    maxLines: null,
-                    minLines: 1,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _sendPrompt(),
+                  enabled: isConnected && !isSending,
+                  style: TextStyle(
+                    color: CatppuccinMocha.text,
+                    fontSize: 16,
                   ),
+                  decoration: InputDecoration(
+                    hintText: 'Type your prompt...',
+                    hintStyle: TextStyle(
+                      color: CatppuccinMocha.overlay1,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  maxLines: null,
+                  minLines: 1,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _sendPrompt(),
                 ),
               ),
               const SizedBox(width: 8),
@@ -178,8 +162,8 @@ class _InputBarState extends ConsumerState<InputBar> {
               // Send button
               _SendButton(
                 isEnabled: isConnected &&
-                !isSending &&
-                _controller.text.trim().isNotEmpty,
+                    !isSending &&
+                    _controller.text.trim().isNotEmpty,
                 isLoading: isSending,
                 onPressed: _sendPrompt,
               ),
