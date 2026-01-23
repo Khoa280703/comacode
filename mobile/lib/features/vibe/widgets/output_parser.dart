@@ -213,7 +213,7 @@ class OutputParser {
       if (last.type == BlockType.raw && current.type == BlockType.raw) {
         merged[merged.length - 1] = OutputBlock(
           type: BlockType.raw,
-          content: last.content + '\n' + current.content,
+          content: '${last.content}\n${current.content}',
         );
       } else {
         merged.add(current);

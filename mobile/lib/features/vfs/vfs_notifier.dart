@@ -119,7 +119,7 @@ class VfsNotifier extends StateNotifier<VfsState> {
           );
 
           state = newState;
-          debugPrint('✅ [VfsNotifier] Updated state: path=${path}, entries=${sortedEntries.length}, isLoading=false');
+          debugPrint('✅ [VfsNotifier] Updated state: path=$path, entries=${sortedEntries.length}, isLoading=false');
         },
         // onError
         onError: (error) {

@@ -23,7 +23,7 @@ void main() {
     // Verify that the app title is displayed.
     expect(find.text('Comacode'), findsOneWidget);
 
-    // Verify that "Remote Terminal" text is present (HomePage).
-    expect(find.text('Remote Terminal'), findsOneWidget);
+    // Verify that "Vibe Coding" text is present (HomePage title + button).
+    expect(find.text('Vibe Coding'), findsWidgets);
   });
 }

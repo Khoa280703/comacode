@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../bridge/bridge_wrapper.dart';
@@ -95,7 +96,7 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
                   final stats = _outputBuffer.stats;
                   if (stats['isFull'] == true) {
                     // Buffer at capacity - oldest lines being dropped
-                    print('Output buffer at capacity: ${stats['lines']} lines');
+                    debugPrint('Output buffer at capacity: ${stats['lines']} lines');
                   }
                 }
               } catch (e) {

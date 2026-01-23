@@ -43,7 +43,10 @@ build/
 # Logs
 *.log
 
-# Ignore plan reports and markdown files (keep main README)
+# Ignore markdown files except main README
 *.md
 !README.md
-!docs/*.md
+
+# Ignore docs and plans folders entirely
+docs/
+plans/

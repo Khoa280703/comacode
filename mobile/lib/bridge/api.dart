@@ -217,9 +217,9 @@ Future<(int, List<DirEntry>, bool)?> receiveDirChunk() =>
 /// Stream directory entries incrementally (zero-polling API)
 ///
 /// This is the RECOMMENDED method for directory listing.
-/// Returns a Stream<List<VfsEntry>> that emits chunks as they arrive.
+/// Returns a Stream&lt;List&lt;VfsEntry&gt;&gt; that emits chunks as they arrive.
 ///
-/// # Usage in Dart
+/// Usage in Dart:
 /// ```dart
 /// final stream = streamListDir(path: '/');
 /// await for (final chunk in stream) {

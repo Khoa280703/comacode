@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../qr_scanner/qr_scanner_page.dart';
-import '../terminal/terminal_page.dart';
 import '../vibe/vibe_session_page.dart';
 import 'connection_providers.dart';
 import '../../core/storage.dart';
@@ -23,11 +22,11 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
 
-    // Auto-navigate to terminal if already connected
+    // Auto-navigate to Vibe Session if already connected
     if (connectionState.isConnected) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const TerminalPage()),
+          MaterialPageRoute(builder: (_) => const VibeSessionPage()),
         );
       });
     }
@@ -80,7 +79,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
               // Title
               const Text(
-                'Remote Terminal',
+                'Vibe Coding',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 28,
@@ -90,7 +89,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Scan QR code from host terminal to connect',
+                'Scan QR code to start Vibe Coding session',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: CatppuccinMocha.subtext0,
@@ -456,7 +455,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       await ref.read(connectionStateProvider.notifier).connect(host.toJson());
       if (context.mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const TerminalPage()),
+          MaterialPageRoute(builder: (_) => const VibeSessionPage()),
         );
       }
     } catch (e) {

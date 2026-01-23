@@ -337,12 +337,14 @@ class _CollapsibleBlock extends StatefulWidget {
   final OutputBlock block;
   final Widget header;
   final List<Widget>? children;
+  // ignore: unused_field
   final ValueChanged<bool>? onToggle;
 
   const _CollapsibleBlock({
     required this.block,
     required this.header,
     this.children,
+    // ignore: unused_element_parameter
     this.onToggle,
   });
 
