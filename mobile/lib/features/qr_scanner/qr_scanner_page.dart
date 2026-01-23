@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../connection/connection_providers.dart';
+import '../project/project_picker_page.dart';
 import '../../core/theme.dart';
 import 'dart:convert';
 
@@ -72,8 +73,10 @@ class _QrScannerPageState extends ConsumerState<QrScannerPage> {
       await ref.read(connectionStateProvider.notifier).connect(qrJson);
 
       if (mounted) {
-        // Navigate to terminal on success
-        Navigator.of(context).pushReplacementNamed('/terminal');
+        // Navigate to Project Picker on success
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ProjectPickerPage()),
+        );
       }
     } catch (e) {
       if (mounted) {

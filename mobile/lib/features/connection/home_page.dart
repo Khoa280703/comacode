@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../qr_scanner/qr_scanner_page.dart';
+import '../project/project_picker_page.dart';
 import '../vibe/vibe_session_page.dart';
 import 'connection_providers.dart';
 import '../../core/storage.dart';
@@ -22,11 +23,11 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
 
-    // Auto-navigate to Vibe Session if already connected
+    // Auto-navigate to Project Picker if already connected
     if (connectionState.isConnected) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const VibeSessionPage()),
+          MaterialPageRoute(builder: (_) => const ProjectPickerPage()),
         );
       });
     }
@@ -455,7 +456,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       await ref.read(connectionStateProvider.notifier).connect(host.toJson());
       if (context.mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const VibeSessionPage()),
+          MaterialPageRoute(builder: (_) => const ProjectPickerPage()),
         );
       }
     } catch (e) {
