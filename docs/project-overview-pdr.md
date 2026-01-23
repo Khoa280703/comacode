@@ -1,8 +1,8 @@
 # Comacode Project Overview & PDR
 
 > Product Development Requirements (PDR)
-> Version: 1.3 | Last Updated: 2026-01-22
-> Current Phase: Phase VFS-2 (Virtual File System - File Watcher) - Flutter UI Complete
+> Version: 1.4 | Last Updated: 2026-01-23
+> Current Phase: Phase Vibe-02 (Vibe Coding Client - Enhanced Features) Complete
 
 ---
 
@@ -84,6 +84,21 @@ Comacode enables developers to maintain their workflow rhythm while away from th
 - **FR6.8**: App must handle empty directories (explicit empty chunk) ✅
 - **FR6.9**: App must protect against path traversal attacks ✅
 - **FR6.10**: App must stream chunks (150 entries/chunk, max 10,000) ✅
+
+#### FR7: Vibe Coding Client (Phase Vibe-01/Vibe-02) ✅
+- **FR7.1**: App must provide chat-style interface for Claude Code CLI ✅ (Phase Vibe-01)
+- **FR7.2**: App must support session tab bar for multiple sessions ✅
+- **FR7.3**: App must provide input bar with command submission ✅
+- **FR7.4**: App must offer quick keys toolbar (ESC, CTRL, TAB, arrows) ✅
+- **FR7.5**: App must support raw/parsed output mode toggle ✅
+- **FR7.6**: App must parse terminal output into structured blocks ✅ (Phase Vibe-02)
+- **FR7.7**: App must detect file paths, diffs, errors, questions in output ✅
+- **FR7.8**: App must provide rich rendering for different block types ✅
+- **FR7.9**: App must support collapsible blocks for plan items ✅
+- **FR7.10**: App must provide search functionality in output ✅
+- **FR7.11**: App must support case-sensitive search toggle ✅
+- **FR7.12**: App must provide search navigation (previous/next) ✅
+- **FR7.13**: App must validate paths in ReadFile handler for security ✅
 
 ---
 

@@ -45,11 +45,29 @@ pub struct TerminalConfig {
 
 impl Default for TerminalConfig {
     fn default() -> Self {
+        // FIX: Get system locale instead of hardcoding en_US.UTF-8
+        // Fallback chain: LANG → LC_ALL → C.UTF-8 → en_US.UTF-8
+        let locale = std::env::var("LANG")
+            .or_else(|_| std::env::var("LC_ALL"))
+            .unwrap_or_else(|_| {
+                // Try common UTF-8 locales
+                if std::path::Path::new("/usr/share/locale/C.UTF-8").exists() {
+                    "C.UTF-8".to_string()
+                } else {
+                    "en_US.UTF-8".to_string()
+                }
+            });
+        
         Self {
             rows: 24,
             cols: 80,
             shell: Self::default_shell(),
-            env: vec![("TERM".to_string(), "xterm-256color".to_string())],
+            env: vec![
+                ("TERM".to_string(), "xterm-256color".to_string()),
+                // Use system locale for proper UTF-8 support (Vietnamese, emoji, etc.)
+                ("LANG".to_string(), locale.clone()),
+                ("LC_ALL".to_string(), locale),
+            ],
         }
     }
 }

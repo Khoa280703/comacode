@@ -112,6 +112,53 @@ pub fn chunk_entries(entries: Vec<DirEntry>, chunk_size: usize) -> Vec<Vec<DirEn
     entries.chunks(chunk_size).map(|c: &[DirEntry]| c.to_vec()).collect()
 }
 
+/// Read file content with size limit
+///
+/// # Arguments
+/// * `path` - Path to the file to read
+/// * `max_size` - Maximum file size in bytes (default: 100KB)
+///
+/// Returns file content as String. For binary files, returns UTF-8 lossy decoded content.
+pub async fn read_file(path: &Path, max_size: usize) -> VfsResult<String> {
+    // Check if path exists
+    if !path.exists() {
+        return Err(VfsError::PathNotFound(path.display().to_string()));
+    }
+
+    // Check if path is a file (not directory)
+    if path.is_dir() {
+        return Err(VfsError::IoError(format!("Path is a directory: {}", path.display())));
+    }
+
+    // Get metadata to check file size
+    let metadata = fs::metadata(path)
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                VfsError::PermissionDenied(path.display().to_string())
+            } else {
+                VfsError::IoError(e.to_string())
+            }
+        })?;
+
+    // Check file size limit
+    if metadata.len() > max_size as u64 {
+        return Err(VfsError::IoError(format!(
+            "File too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            max_size
+        )));
+    }
+
+    // Read file content
+    let content = fs::read(path)
+        .await
+        .map_err(|e| VfsError::IoError(e.to_string()))?;
+
+    // Convert to string (lossy for binary files)
+    Ok(String::from_utf8_lossy(&content).to_string())
+}
+
 /// Validate path for security
 ///
 /// Uses canonicalize to resolve all symlinks and relative components.

@@ -1,7 +1,7 @@
 # Comacode Codebase Summary
 
-> Last Updated: 2026-01-22
-> Version: Phase VFS-2 (Virtual File System - File Watcher) - Flutter UI Complete
+> Last Updated: 2026-01-23
+> Version: Phase Vibe-02 (Vibe Coding Client - Enhanced Features) Complete
 
 ---
 
@@ -59,6 +59,10 @@ Comacode/
 │   │   │   ├── terminal/      # Terminal UI with xterm_flutter
 │   │   │   ├── connection/    # Connection state management (Riverpod)
 │   │   │   ├── vfs/           # VFS browser UI
+│   │   │   ├── vibe/          # Vibe Coding Client (Phase Vibe-01, Vibe-02)
+│   │   │   │   ├── models/    # Output block models, session state
+│   │   │   │   ├── widgets/   # Output parser, parsed view, search overlay
+│   │   │   │   └── services/  # Speech service, session manager
 │   │   │   └── qr_scanner/    # QR scanner with mobile_scanner
 │   │   └── bridge/            # FFI bindings
 │   │       └── bridge_generated.dart
@@ -128,6 +132,58 @@ Comacode/
    - `request_list_dir(path)` - Request directory listing
    - `receive_dir_chunk()` - Receive chunk (non-blocking, returns Option)
    - DirEntry getters: `get_dir_entry_name`, `is_dir_entry_dir`, etc.
+
+### Phase Vibe-01: Vibe Coding Client - MVP ✅
+
+8. **Vibe Session UI** (`mobile/lib/features/vibe/vibe_session_page.dart`)
+   - Chat-style interface for Claude Code CLI
+   - Session tab bar for multiple sessions
+   - Input bar with command submission
+   - Quick keys toolbar (ESC, CTRL, TAB, arrow keys)
+   - Raw/Parsed output mode toggle
+   - Connection state integration with Riverpod
+
+### Phase Vibe-02: Vibe Coding Client - Enhanced Features ✅
+
+9. **Enhanced Output Parsing** (`mobile/lib/features/vibe/`)
+   - **OutputBlock Model** (`models/output_block.dart`)
+     - Block types: raw, file, diff, list, plan, error, question, code, tool
+     - Collapsible blocks with children
+     - Metadata support (file paths, question options, etc.)
+     - Helper methods: `isCollapsible`, `isDiffAdded`, `filePath`, `questionOptions`
+
+   - **OutputParser** (`widgets/output_parser.dart`)
+     - Heuristic pattern matching for terminal output
+     - Detects: file paths, git diffs, questions, lists, plans, code blocks, tool use, errors
+     - Regex patterns for accurate detection
+     - Methods: `parse()`, `extractFilePaths()`, `extractDiffHunks()`, `hasQuestionPrompt()`
+     - Merges consecutive raw blocks for efficiency
+
+   - **ParsedOutputView** (`widgets/parsed_output_view.dart`)
+     - Rich rendering for each block type
+     - File blocks: clickable with icon
+     - Diff blocks: color-coded (green for +, red for -)
+     - Question blocks: interactive option buttons
+     - Plan blocks: collapsible with children
+     - Error blocks: highlighted with warning icon
+     - Code blocks: monospace font with surface background
+     - Tool blocks: spinner with italic text
+
+   - **SearchOverlay** (`widgets/search_overlay.dart`)
+     - Search in terminal output
+     - Case-sensitive toggle (Aa button)
+     - Previous/Next match navigation
+     - Match count display
+     - Clear button
+     - SearchMatch model with position tracking
+     - SearchResults state management
+
+10. **Security Fix: Path Validation** (`crates/hostagent/src/quic_server.rs`)
+    - Added path validation to ReadFile handler
+    - Uses `validate_path()` from vfs module
+    - Prevents path traversal attacks
+    - Returns error response on validation failure
+    - Lines 546-563: validation logic
 
 ### Phase 04.1 Critical Bugfixes ✅
 
@@ -349,9 +405,24 @@ pub fn get_dir_entry_size(entry: &DirEntry) -> Option<u64>;
 
 ## Development Workflow
 
-### Current Phase: Phase VFS-2 - Virtual File System (File Watcher)
+### Current Phase: Phase Vibe-02 - Vibe Coding Client (Enhanced Features)
 
-**Status**: Flutter app complete with terminal, VFS browser, file watcher, QR scanner
+**Status**: Vibe Coding Client complete with enhanced output parsing and search functionality
+
+**Phase Vibe-01 Completed** (Vibe MVP):
+- ✅ Chat-style interface for Claude Code CLI
+- ✅ Session tab bar for multiple sessions
+- ✅ Input bar with command submission
+- ✅ Quick keys toolbar
+- ✅ Raw/Parsed output mode toggle
+- ✅ Connection state integration
+
+**Phase Vibe-02 Completed** (Enhanced Features):
+- ✅ OutputBlock model with 9 block types
+- ✅ OutputParser with heuristic patterns
+- ✅ ParsedOutputView with rich rendering
+- ✅ SearchOverlay with case-sensitive toggle
+- ✅ Security fix: Path validation in ReadFile handler
 
 **Phase VFS-1 Completed**:
 - ✅ VFS module implementation (vfs.rs)
@@ -564,6 +635,6 @@ cargo test -p mobile_bridge
 
 ---
 
-**Last Updated**: 2026-01-22
-**Current Phase**: Phase VFS-2 - Virtual File System (File Watcher) - Flutter UI Complete
+**Last Updated**: 2026-01-23
+**Current Phase**: Phase Vibe-02 - Vibe Coding Client (Enhanced Features) Complete
 **Next Milestone**: Phase VFS-3 - File Operations (Read/Download)

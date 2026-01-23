@@ -178,6 +178,8 @@ pub struct QuicClient {
     dir_chunk_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
     /// File event buffer for VFS file watcher (Phase VFS-3)
     file_event_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
+    /// File content buffer for VFS file reading (Phase VFS-2)
+    file_content_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
 }
 
 impl QuicClient {
@@ -196,6 +198,7 @@ impl QuicClient {
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             dir_chunk_buffer: Arc::new(Mutex::new(Vec::new())),
             file_event_buffer: Arc::new(Mutex::new(Vec::new())),
+            file_content_buffer: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -299,6 +302,7 @@ impl QuicClient {
         let event_buffer = self.event_buffer.clone();
         let dir_chunk_buffer = self.dir_chunk_buffer.clone();
         let file_event_buffer = self.file_event_buffer.clone();
+        let file_content_buffer = self.file_content_buffer.clone();
         let recv_task = tokio::spawn(async move {
             info!("🔄 [RECV_TASK] Background receive task started");
             let mut recv = recv_shared.lock().await;
@@ -343,6 +347,17 @@ impl QuicClient {
                                         buffer.push(msg);
                                     } else {
                                         warn!("📥 [RECV_TASK] File event buffer full (1000), dropping event");
+                                    }
+                                }
+                                // VFS Phase 2: Buffer FileContent messages
+                                // Cap at 10 files to prevent OOM (~10MB max)
+                                Ok(msg @ NetworkMessage::FileContent { .. }) => {
+                                    let mut buffer = file_content_buffer.lock().await;
+                                    if buffer.len() < 10 {
+                                        info!("📥 [RECV_TASK] Received FileContent, buffering ({}/10)", buffer.len() + 1);
+                                        buffer.push(msg);
+                                    } else {
+                                        warn!("📥 [RECV_TASK] FileContent buffer full (10), dropping response");
                                     }
                                 }
                                 Ok(msg) => {
@@ -543,6 +558,8 @@ impl QuicClient {
         dir_buffer.clear();
         let mut file_buffer = self.file_event_buffer.lock().await;
         file_buffer.clear();
+        let mut file_content_buffer = self.file_content_buffer.lock().await;
+        file_content_buffer.clear();
 
         Ok(())
     }
@@ -641,6 +658,59 @@ impl QuicClient {
     /// Get file event buffer length (for monitoring)
     pub async fn file_event_buffer_len(&self) -> usize {
         self.file_event_buffer.lock().await.len()
+    }
+
+    // ===== VFS File Reading Methods - Phase 2 =====
+
+    /// Request server to read a file
+    ///
+    /// Server responds with FileContent message.
+    /// Call receive_file_content() to receive the file content.
+    pub async fn request_read_file(&self, path: String, max_size: usize) -> Result<(), String> {
+        info!("📄 [QUIC_CLIENT] request_read_file: {} (max_size: {})", path, max_size);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let read_file_msg = NetworkMessage::ReadFile { path, max_size };
+        let encoded = MessageCodec::encode(&read_file_msg)
+            .map_err(|e| format!("Failed to encode ReadFile: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send ReadFile: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] ReadFile request sent");
+        Ok(())
+    }
+
+    /// Receive file content from server (NON-BLOCKING)
+    ///
+    /// Returns (path, content, size, truncated) tuple.
+    /// Returns None if no file content available yet.
+    pub async fn receive_file_content(&self) -> Result<Option<(String, String, usize, bool)>, String> {
+        let mut buffer = self.file_content_buffer.lock().await;
+
+        // Find first FileContent message
+        let pos = buffer.iter().position(|m| matches!(m, NetworkMessage::FileContent { .. }));
+
+        match pos {
+            Some(idx) => {
+                let msg = buffer.remove(idx);
+                if let NetworkMessage::FileContent { path, content, size, truncated } = msg {
+                    info!("📥 [QUIC_CLIENT] Received FileContent: {} bytes, truncated={}", size, truncated);
+                    Ok(Some((path, content, size, truncated)))
+                } else {
+                    unreachable!() // We checked above
+                }
+            }
+            None => Ok(None),  // No file content available
+        }
+    }
+
+    /// Get file content buffer length (for monitoring)
+    pub async fn file_content_buffer_len(&self) -> usize {
+        self.file_content_buffer.lock().await.len()
     }
 }
 

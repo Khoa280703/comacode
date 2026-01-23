@@ -47,5 +47,9 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs camera access to scan QR codes for host pairing.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs microphone access for voice input to Claude Code.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app needs speech recognition for dictation when coding with Claude.</string>
 </dict>
 </plist>

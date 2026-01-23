@@ -4,6 +4,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 import 'core/theme.dart';
 import 'features/connection/home_page.dart';
 import 'features/terminal/terminal_page.dart';
+import 'features/vibe/vibe_session_page.dart';
 import 'bridge/frb_generated.dart';
 
 void main() async {
@@ -35,6 +36,7 @@ class ComacodeApp extends StatelessWidget {
       home: const HomePage(),
       routes: {
         '/terminal': (context) => const TerminalPage(),
+        '/vibe': (context) => const VibeSessionPage(),
       },
     );
   }

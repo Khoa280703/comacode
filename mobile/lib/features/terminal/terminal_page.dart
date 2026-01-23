@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:xterm/xterm.dart';
 import '../connection/connection_providers.dart';
 import '../vfs/vfs_page.dart';
 import '../../bridge/bridge_wrapper.dart';
@@ -199,13 +201,13 @@ class _ConnectionStatusIndicator extends StatelessWidget {
   }
 }
 
-/// Terminal widget with basic display
+/// Terminal widget with xterm emulator
 ///
-/// Phase 06: MVP terminal implementation
-/// - Receives events from backend
-/// - Displays output as text
-/// - Sends input via text field
-/// - Supports clipboard copy
+/// Phase 06 Fix: Proper terminal emulation with xterm
+/// - Full VT100/ANSI escape code support
+/// - Proper cursor positioning and colors
+/// - Scrollback buffer
+/// - Real terminal behavior
 class TerminalWidget extends ConsumerStatefulWidget {
   const TerminalWidget({super.key});
 
@@ -214,26 +216,71 @@ class TerminalWidget extends ConsumerStatefulWidget {
 }
 
 class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
-  final ScrollController _scrollController = ScrollController();
+  late final Terminal _terminal;
   final TextEditingController _inputController = TextEditingController();
-  String _output = ''; // Single buffer for all output
   Timer? _eventLoopTimer;
-  bool _isDisposed = false; // Track disposal state
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
+    // Create xterm terminal instance
+    _terminal = Terminal(
+      maxLines: 10000, // Scrollback buffer size
+    );
     _startEventLoop();
+    
+    // Initialize terminal after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeTerminal();
+    });
+  }
+  
+  /// Initialize terminal - send size and trigger prompt
+  Future<void> _initializeTerminal() async {
+    if (_isDisposed || !mounted) return;
+    
+    try {
+      final bridge = ref.read(bridgeWrapperProvider);
+      
+      // Calculate terminal size based on screen
+      // Typical mobile terminal: ~30 rows x 80 cols for portrait
+      // Adjust based on font size (14px) and screen height
+      final size = MediaQuery.of(context).size;
+      final rows = ((size.height - 200) / 18).floor(); // ~18px per line with 14px font
+      final cols = ((size.width - 16) / 8.4).floor();  // ~8.4px per char with 14px font
+      
+      debugPrint('🖥️  [Terminal] Initializing with size: ${rows}x$cols');
+      
+      // FIX: Send resize to backend PTY
+      await bridge.resizePty(rows: rows, cols: cols);
+      
+      // FIX RACE CONDITION: Wait longer for network + PTY processing
+      // Network RTT (~10-50ms) + PTY creation (~50-100ms) + Shell init (~100-200ms)
+      // Total: ~300ms to be safe
+      await Future.delayed(const Duration(milliseconds: 300));
+      
+      // Send newline to trigger prompt display
+      // This will create the PTY session with correct size from pending_resize
+      await bridge.sendCommand('\n');
+      
+      // Wait for prompt to appear
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      // Send clear screen to refresh display (Ctrl+L)
+      await bridge.sendCommand('\x0c');
+      
+      debugPrint('✅ [Terminal] Initialized successfully');
+    } catch (e) {
+      debugPrint('❌ [Terminal] Failed to initialize: $e');
+    }
   }
 
   /// Start event loop to receive terminal output from backend
   ///
-  /// Phase 06 fix: Properly handle disposal to prevent:
-  /// - setState() after dispose crashes
-  /// - Memory leaks from uncanceled timers
+  /// Phase 06 fix: Use xterm terminal emulator for proper ANSI handling
   void _startEventLoop() {
     _eventLoopTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
-      // Check actual connection state from provider
       final connectionState = ref.read(connectionStateProvider);
       if (_isDisposed || !connectionState.isConnected || !mounted) {
         if (!connectionState.isConnected) {
@@ -246,28 +293,32 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
         final bridge = ref.read(bridgeWrapperProvider);
         final event = await bridge.receiveEvent();
 
-        // Double-check mounted after async gap
         if (_isDisposed || !mounted) return;
 
-        setState(() {
-          if (isEventOutput(event)) {
-            final data = getEventData(event);
-            // Append to buffer, strip ANSI escape sequences for display
-            final text = String.fromCharCodes(data);
-            _output += _sanitizeTerminalOutput(text);
-            _scrollToBottom();
-          } else if (isEventError(event)) {
-            final message = getEventErrorMessage(event);
-            _output += 'Error: $message\n';
-            _scrollToBottom();
-          } else if (isEventExit(event)) {
-            final code = getEventExitCode(event);
-            _output += '\nProcess exited with code $code\n';
-            _scrollToBottom();
+        if (isEventOutput(event)) {
+          final data = getEventData(event);
+          if (data.isNotEmpty) {
+            // FIX: Use proper UTF-8 decoder for Vietnamese/emoji support
+            // utf8.decode() handles multi-byte chars correctly
+            // allowMalformed: true prevents crashes on invalid UTF-8
+            try {
+              final text = utf8.decode(data, allowMalformed: true);
+              _terminal.write(text);
+            } catch (e) {
+              // Fallback: Try Latin-1 if UTF-8 fails completely
+              debugPrint('⚠️  [Terminal] UTF-8 decode failed: $e');
+              final text = String.fromCharCodes(data);
+              _terminal.write(text);
+            }
           }
-        });
+        } else if (isEventError(event)) {
+          final message = getEventErrorMessage(event);
+          _terminal.write('\x1b[31mError: $message\x1b[0m\r\n');
+        } else if (isEventExit(event)) {
+          final code = getEventExitCode(event);
+          _terminal.write('\r\n\x1b[33mProcess exited with code $code\x1b[0m\r\n');
+        }
       } catch (e) {
-        // Only log if not disposing (errors during cleanup are expected)
         if (!_isDisposed && mounted) {
           // Could add error reporting here
         }
@@ -275,100 +326,6 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
     });
   }
 
-  void _scrollToBottom() {
-    if (_isDisposed || !mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_isDisposed || !mounted) return;
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      }
-    });
-  }
-
-  /// Sanitize terminal output - strip ANSI and control chars
-  String _sanitizeTerminalOutput(String text) {
-    // Strip ANSI escape sequences (CSI, OSC, application mode, character set)
-    text = text.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
-    text = text.replaceAll(RegExp(r'\x1b\][^\x07\x1b]*[\x07\x1b\\]'), '');
-    text = text.replaceAll(RegExp(r'\x1b[=>]'), '');
-    text = text.replaceAll(RegExp(r'\x1b\([0B]'), '');
-
-    // Process \r (carriage return) - handle \r\n as single newline first
-    // Split into lines, then handle \r within each line
-    final lines = text.split('\n');
-    final processed = <String>[];
-
-    for (final line in lines) {
-      // Within each line, \r means "overwrite" - keep last segment
-      final crSegments = line.split('\r');
-      if (crSegments.isNotEmpty) {
-        // Take the last segment (the visible content after all \r overwrites)
-        processed.add(crSegments.last);
-      }
-    }
-
-    // Remove trailing empty lines
-    while (processed.isNotEmpty && processed.last.trim().isEmpty) {
-      processed.removeLast();
-    }
-
-    // Remove other control chars except \n, \t
-    final buffer = StringBuffer();
-    for (var i = 0; i < processed.length; i++) {
-      final line = processed[i];
-      for (var j = 0; j < line.length; j++) {
-        final code = line.codeUnitAt(j);
-        if (code == 0x09 || code >= 0x20) {
-          buffer.writeCharCode(code);
-        }
-      }
-      // Add newline between lines
-      if (i < processed.length - 1) {
-        buffer.writeCharCode(0x0A);
-      }
-    }
-
-    return buffer.toString();
-  }
-
-  /// Count actual lines in output for display
-  int get _lineCount {
-    if (_output.isEmpty) return 0;
-    return '\n'.allMatches(_output).length + 1;
-  }
-
-  /// Get readable representation of virtual key for logging
-  String _getReadableKey(String key) {
-    if (key.isEmpty) return '<empty>';
-    if (key == '\x1b') return '<ESC>';
-    if (key == '\t') return '<TAB>';
-    if (key == '\r') return '<CR>';
-    if (key == '\n') return '<LF>';
-    if (key.startsWith('\x1b[')) {
-      // Arrow keys: \x1b[A, \x1b[B, \x1b[C, \x1b[D
-      final arrow = key.substring(2);
-      return '<${_arrowName(arrow)}>';
-    }
-    // Control characters
-    if (key.codeUnitAt(0) < 32) {
-      return '<Ctrl-${String.fromCharCode(key.codeUnitAt(0) + 64)}>';
-    }
-    // Truncate if too long
-    if (key.length > 20) {
-      return '${key.substring(0, 20)}...';
-    }
-    return key;
-  }
-
-  String _arrowName(String code) {
-    switch (code) {
-      case 'A': return 'Arrow Up';
-      case 'B': return 'Arrow Down';
-      case 'C': return 'Arrow Right';
-      case 'D': return 'Arrow Left';
-      default: return 'Unknown';
-    }
-  }
 
   /// Send input to terminal
   Future<void> _sendInput(BuildContext context) async {
@@ -398,9 +355,8 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
 
   @override
   void dispose() {
-    _isDisposed = true; // Mark as disposed first
+    _isDisposed = true;
     _eventLoopTimer?.cancel();
-    _scrollController.dispose();
     _inputController.dispose();
     super.dispose();
   }
@@ -433,7 +389,7 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
               ),
               const Spacer(),
               Text(
-                '$_lineCount lines',
+                'Terminal Ready',
                 style: TextStyle(
                   color: CatppuccinMocha.subtext0,
                   fontSize: 12,
@@ -442,43 +398,40 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
             ],
           ),
         ),
-        // Terminal output
+        // Terminal display with xterm
         Expanded(
-          child: GestureDetector(
-            onLongPress: () {
-              // Copy all output to clipboard
-              Clipboard.setData(ClipboardData(text: _output));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Copied to clipboard'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
-            },
-            child: Container(
-              color: CatppuccinMocha.terminalBackground,
-              padding: const EdgeInsets.all(8),
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                child: _output.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Waiting for terminal output...\nType a command and press Send',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: CatppuccinMocha.subtext0,
-                            fontSize: 14,
-                          ),
-                        ),
-                      )
-                    : Text(
-                        _output,
-                        style: TextStyle(
-                          color: CatppuccinMocha.terminalForeground,
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                      ),
+          child: Container(
+            color: CatppuccinMocha.terminalBackground,
+            child: TerminalView(
+              _terminal,
+              textStyle: TerminalStyle(
+                fontSize: 14,
+                fontFamily: 'Courier',
+              ),
+              theme: TerminalTheme(
+                cursor: CatppuccinMocha.green,
+                selection: CatppuccinMocha.surface1,
+                foreground: CatppuccinMocha.terminalForeground,
+                background: CatppuccinMocha.terminalBackground,
+                black: CatppuccinMocha.surface0,
+                red: CatppuccinMocha.red,
+                green: CatppuccinMocha.green,
+                yellow: CatppuccinMocha.yellow,
+                blue: CatppuccinMocha.blue,
+                magenta: CatppuccinMocha.mauve,
+                cyan: CatppuccinMocha.teal,
+                white: CatppuccinMocha.text,
+                brightBlack: CatppuccinMocha.surface1,
+                brightRed: CatppuccinMocha.red,
+                brightGreen: CatppuccinMocha.green,
+                brightYellow: CatppuccinMocha.yellow,
+                brightBlue: CatppuccinMocha.blue,
+                brightMagenta: CatppuccinMocha.mauve,
+                brightCyan: CatppuccinMocha.teal,
+                brightWhite: CatppuccinMocha.text,
+                searchHitBackground: CatppuccinMocha.yellow,
+                searchHitBackgroundCurrent: CatppuccinMocha.peach,
+                searchHitForeground: CatppuccinMocha.base,
               ),
             ),
           ),
@@ -534,17 +487,12 @@ class _TerminalWidgetState extends ConsumerState<TerminalWidget> {
         // Virtual keyboard
         VirtualKeyBar(
           onKeyPressed: (key) async {
-            // Log virtual key press with readable representation
-            final readable = _getReadableKey(key);
-            debugPrint('🔘 [Terminal] Virtual key pressed: $readable');
             final bridge = ref.read(bridgeWrapperProvider);
             final messenger = ScaffoldMessenger.of(context);
             try {
-              debugPrint('📤 [Terminal] Sending virtual key...');
+              // Send virtual key to backend (backend will echo it back)
               await bridge.sendCommand(key);
-              debugPrint('✅ [Terminal] Virtual key sent');
             } catch (e) {
-              debugPrint('❌ [Terminal] Failed to send key: $e');
               if (mounted) {
                 messenger.showSnackBar(
                   SnackBar(

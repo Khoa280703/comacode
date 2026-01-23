@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../qr_scanner/qr_scanner_page.dart';
 import '../terminal/terminal_page.dart';
+import '../vibe/vibe_session_page.dart';
 import 'connection_providers.dart';
 import '../../core/storage.dart';
 import '../../core/theme.dart';
@@ -108,6 +109,11 @@ class _HomePageState extends ConsumerState<HomePage> {
               ),
               const SizedBox(height: 16),
 
+              // Vibe Coding button (new!)
+              _buildVibeButton(context),
+
+              const SizedBox(height: 16),
+
               // Secondary action: Manual connect
               _buildSecondaryButton(
                 context,
@@ -180,6 +186,74 @@ class _HomePageState extends ConsumerState<HomePage> {
                   const SizedBox(height: 4),
                   Text(
                     description,
+                    style: TextStyle(
+                      color: CatppuccinMocha.subtext0,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              color: CatppuccinMocha.subtext0,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVibeButton(BuildContext context) {
+    return InkWell(
+      onTap: () => _navigateToVibe(context),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              CatppuccinMocha.mauve.withValues(alpha: 0.2),
+              CatppuccinMocha.blue.withValues(alpha: 0.2),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: CatppuccinMocha.mauve.withValues(alpha: 0.5),
+            width: 2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [CatppuccinMocha.mauve, CatppuccinMocha.blue],
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.smart_toy,
+                color: CatppuccinMocha.crust,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Vibe Coding',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: CatppuccinMocha.text,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Chat-style interface for Claude Code CLI',
                     style: TextStyle(
                       color: CatppuccinMocha.subtext0,
                       fontSize: 14,
@@ -361,6 +435,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _navigateToScan(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const QrScannerPage()),
+    );
+  }
+
+  void _navigateToVibe(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const VibeSessionPage()),
     );
   }
 

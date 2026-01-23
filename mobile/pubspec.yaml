@@ -36,6 +36,9 @@ dependencies:
   # Permissions
   permission_handler: ^11.0.0
 
+  # Speech Recognition (Vibe Coding - Phase 02)
+  speech_to_text: ^6.6.0
+
   # Wakelock (keep screen on)
   wakelock_plus: ^1.1.0
 

@@ -1,8 +1,8 @@
 # Project Roadmap
 
 **Project**: Comacode
-**Last Updated**: 2026-01-22
-**Current Phase**: VFS-2 (Virtual File System - File Watcher) - Flutter UI Complete
+**Last Updated**: 2026-01-23
+**Current Phase**: Vibe-02 (Vibe Coding Client - Enhanced Output Parsing & Search) Complete
 
 ---
 
@@ -27,6 +27,8 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 | VFS-1 | VFS - Directory Listing | ✅ Done | 100% |
 | VFS-2 | VFS - File Watcher | ✅ Done | 100% |
 | 06 | Flutter UI | ✅ Done | 100% |
+| Vibe-01 | Vibe Coding Client - MVP | ✅ Done | 100% |
+| Vibe-02 | Vibe Coding Client - Enhanced Features | ✅ Done | 100% |
 | VFS-3 | File Operations (Read) | ⏳ TODO | 0% |
 | 07 | Discovery & Auth | ⏳ TODO | 0% |
 | 08 | Production Hardening | ⏳ TODO | 0% |
@@ -131,6 +133,42 @@ Comacode enables remote terminal access via QR code pairing using QUIC protocol.
 
 ---
 
+### Phase Vibe-01: Vibe Coding Client - MVP ✅
+- [x] Chat-style interface for Claude Code CLI
+- [x] Output display with xterm_flutter integration
+- [x] Input bar with command submission
+- [x] Quick keys toolbar (common keys)
+- [x] Session tab bar for multiple sessions
+- [x] Raw/Parsed output mode toggle
+- [x] Connection state integration
+
+**Deliverable**: `mobile/lib/features/vibe/` core UI components
+
+---
+
+### Phase Vibe-02: Vibe Coding Client - Enhanced Features ✅
+- [x] Enhanced output parsing with OutputBlock model
+- [x] OutputParser with heuristic patterns (files, diffs, errors, questions, lists, plans, code blocks, tool use)
+- [x] ParsedOutputView with rich rendering (collapsible blocks, syntax highlighting)
+- [x] Output search functionality with SearchOverlay widget
+- [x] Case-sensitive search toggle
+- [x] Search navigation (previous/next matches)
+- [x] Security fix: Path validation in QUIC server's ReadFile handler
+
+**Files Created**:
+- `mobile/lib/features/vibe/models/output_block.dart` - Output block types and model
+- `mobile/lib/features/vibe/widgets/output_parser.dart` - Heuristic pattern parser
+- `mobile/lib/features/vibe/widgets/parsed_output_view.dart` - Rich output rendering
+- `mobile/lib/features/vibe/widgets/search_overlay.dart` - Search functionality
+
+**Files Modified**:
+- `mobile/lib/features/vibe/vibe_session_page.dart` - Added search button, stateful widget
+- `crates/hostagent/src/quic_server.rs` - Added path validation for ReadFile security
+
+**Deliverable**: Enhanced Vibe Coding Client with smart output parsing and search
+
+---
+
 ## Upcoming Phases
 
 ### Phase VFS-3: File Operations (Read/Download)
@@ -229,6 +267,8 @@ See `plans/260106-2127-comacode-mvp/known-issues-technical-debt.md`
 2026-01-12  │ Phase VFS-1: VFS Directory Listing Complete
 2026-01-15  │ Phase VFS-2: VFS File Watcher Complete
 2026-01-22  │ Phase 06: Flutter UI Complete
+2026-01-23  │ Phase Vibe-01: Vibe Coding Client MVP Complete
+2026-01-23  │ Phase Vibe-02: Vibe Enhanced Features Complete
 ────────────┼───────────────────────────────────
 TBD         │ Phase VFS-3: File Operations Read (8-12h)
 TBD         │ Phase VFS-4: File Operations Write (8-12h)

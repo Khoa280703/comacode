@@ -5,8 +5,8 @@ import '../../core/theme.dart';
 ///
 /// Phase 04: Mobile App
 /// Provides ESC, CTRL, TAB, Arrow keys that mobile keyboards lack
-/// Includes keyboard toggle button
-class VirtualKeyBar extends StatelessWidget {
+/// Phase 06 Fix: Added Ctrl combinations (Ctrl+C, Ctrl+D, Ctrl+Z)
+class VirtualKeyBar extends StatefulWidget {
   final Function(String) onKeyPressed;
   final VoidCallback onToggleKeyboard;
 
@@ -15,6 +15,13 @@ class VirtualKeyBar extends StatelessWidget {
     required this.onKeyPressed,
     required this.onToggleKeyboard,
   });
+
+  @override
+  State<VirtualKeyBar> createState() => _VirtualKeyBarState();
+}
+
+class _VirtualKeyBarState extends State<VirtualKeyBar> {
+  bool _showCtrlKeys = false;
 
   @override
   Widget build(BuildContext context) {
@@ -29,62 +36,120 @@ class VirtualKeyBar extends StatelessWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          // Special keys
-          _KeyButton(
-            label: 'ESC',
-            keySequence: '\x1b',
-            color: CatppuccinMocha.mauve,
-            onPressed: onKeyPressed,
-          ),
-          _KeyButton(
-            label: 'CTRL',
-            keySequence: '',
-            color: CatppuccinMocha.blue,
-            isToggle: true,
-            onPressed: onKeyPressed,
-          ),
-          _KeyButton(
-            label: 'TAB',
-            keySequence: '\t',
-            color: CatppuccinMocha.teal,
-            onPressed: onKeyPressed,
-          ),
-          const SizedBox(width: 4),
-          _ArrowButton(label: '↑', keySequence: '\x1b[A', onPressed: onKeyPressed),
-          _ArrowButton(label: '↓', keySequence: '\x1b[B', onPressed: onKeyPressed),
-          _ArrowButton(label: '←', keySequence: '\x1b[D', onPressed: onKeyPressed),
-          _ArrowButton(label: '→', keySequence: '\x1b[C', onPressed: onKeyPressed),
+      child: _showCtrlKeys ? _buildCtrlKeys() : _buildNormalKeys(),
+    );
+  }
 
-          const Spacer(),
+  Widget _buildNormalKeys() {
+    return Row(
+      children: [
+        // Special keys
+        _KeyButton(
+          label: 'ESC',
+          keySequence: '\x1b',
+          color: CatppuccinMocha.mauve,
+          onPressed: widget.onKeyPressed,
+        ),
+        _KeyButton(
+          label: 'CTRL',
+          keySequence: '',
+          color: CatppuccinMocha.blue,
+          onPressed: (_) => setState(() => _showCtrlKeys = true),
+          highlighted: _showCtrlKeys,
+        ),
+        _KeyButton(
+          label: 'TAB',
+          keySequence: '\t',
+          color: CatppuccinMocha.teal,
+          onPressed: widget.onKeyPressed,
+        ),
+        const SizedBox(width: 4),
+        _ArrowButton(label: '↑', keySequence: '\x1b[A', onPressed: widget.onKeyPressed),
+        _ArrowButton(label: '↓', keySequence: '\x1b[B', onPressed: widget.onKeyPressed),
+        _ArrowButton(label: '←', keySequence: '\x1b[D', onPressed: widget.onKeyPressed),
+        _ArrowButton(label: '→', keySequence: '\x1b[C', onPressed: widget.onKeyPressed),
 
-          // Toggle controls (right side)
-          _ToggleButton(
-            icon: Icons.keyboard,
-            tooltip: 'Toggle keyboard',
-            onPressed: onToggleKeyboard,
-          ),
-        ],
-      ),
+        const Spacer(),
+
+        // Toggle controls (right side)
+        _ToggleButton(
+          icon: Icons.keyboard,
+          tooltip: 'Toggle keyboard',
+          onPressed: widget.onToggleKeyboard,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCtrlKeys() {
+    return Row(
+      children: [
+        // Ctrl combinations
+        _KeyButton(
+          label: 'Ctrl+C',
+          keySequence: '\x03', // ETX - End of Text
+          color: CatppuccinMocha.red,
+          onPressed: (key) {
+            widget.onKeyPressed(key);
+            setState(() => _showCtrlKeys = false);
+          },
+        ),
+        _KeyButton(
+          label: 'Ctrl+D',
+          keySequence: '\x04', // EOT - End of Transmission
+          color: CatppuccinMocha.yellow,
+          onPressed: (key) {
+            widget.onKeyPressed(key);
+            setState(() => _showCtrlKeys = false);
+          },
+        ),
+        _KeyButton(
+          label: 'Ctrl+Z',
+          keySequence: '\x1a', // SUB - Suspend
+          color: CatppuccinMocha.blue,
+          onPressed: (key) {
+            widget.onKeyPressed(key);
+            setState(() => _showCtrlKeys = false);
+          },
+        ),
+        _KeyButton(
+          label: 'Ctrl+L',
+          keySequence: '\x0c', // FF - Form Feed (clear screen)
+          color: CatppuccinMocha.teal,
+          onPressed: (key) {
+            widget.onKeyPressed(key);
+            setState(() => _showCtrlKeys = false);
+          },
+        ),
+
+        const Spacer(),
+
+        // Back button
+        _KeyButton(
+          label: '← Back',
+          keySequence: '',
+          color: CatppuccinMocha.mauve,
+          onPressed: (_) => setState(() => _showCtrlKeys = false),
+        ),
+      ],
     );
   }
 }
 
-/// Special key button (ESC, CTRL, TAB)
+/// Special key button (ESC, CTRL, TAB, Ctrl+X)
 class _KeyButton extends StatelessWidget {
   final String label;
   final String keySequence;
   final Color color;
-  final bool isToggle;
   final Function(String) onPressed;
+  final bool highlighted;
 
   const _KeyButton({
     required this.label,
     required this.keySequence,
     required this.color,
     required this.onPressed,
-    this.isToggle = false,
+    this.highlighted = false,
   });
 
   @override
@@ -99,9 +164,10 @@ class _KeyButton extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
+              color: highlighted ? color.withValues(alpha: 0.2) : Colors.transparent,
               border: Border.all(
-                color: color.withValues(alpha: 0.5),
-                width: 1,
+                color: color.withValues(alpha: highlighted ? 1.0 : 0.5),
+                width: highlighted ? 2 : 1,
               ),
               borderRadius: BorderRadius.circular(4),
             ),
@@ -110,7 +176,7 @@ class _KeyButton extends StatelessWidget {
               style: TextStyle(
                 color: color,
                 fontSize: 12,
-                fontWeight: FontWeight.w500,
+                fontWeight: highlighted ? FontWeight.bold : FontWeight.w500,
               ),
             ),
           ),

@@ -759,6 +759,188 @@ pub async fn file_event_buffer_len() -> Result<usize, String> {
     Ok(client.file_event_buffer_len().await)
 }
 
+// ===== VFS File Reading Functions - Phase 2 =====
+
+/// Request server to read a file
+///
+/// Server responds with file content. Call receive_file_content() to get the result.
+///
+/// # Arguments
+/// * `path` - Absolute path to file (e.g., "/tmp/file.txt", "~/Documents/file.md")
+/// * `max_size` - Maximum file size in bytes (default: 100KB = 102400)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn request_read_file(path: String, max_size: usize) -> Result<(), String> {
+    tracing::info!("📄 [FRB] request_read_file: {} (max_size: {})", path, max_size);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.request_read_file(path, max_size).await
+}
+
+/// File content data (for Dart)
+#[derive(Debug, Clone)]
+#[frb(sync)]
+pub struct FileContentData {
+    /// File path
+    pub path: String,
+    /// File content (UTF-8 string)
+    pub content: String,
+    /// Content size in bytes
+    pub size: usize,
+    /// True if file was truncated due to size limit
+    pub truncated: bool,
+}
+
+impl Default for FileContentData {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            content: String::new(),
+            size: 0,
+            truncated: false,
+        }
+    }
+}
+
+/// Receive next file content from server (NON-BLOCKING)
+///
+/// Returns file content received from server.
+/// Call repeatedly in a loop to process all responses.
+/// Returns None if no content available yet.
+///
+/// # Returns
+/// * `Some(FileContentData)` - File content received
+/// * `None` - No content available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn receive_file_content() -> Result<Option<FileContentData>, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+
+    match client.receive_file_content().await? {
+        Some((path, content, size, truncated)) => Ok(Some(FileContentData {
+            path,
+            content,
+            size,
+            truncated,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// Get file content buffer length (for monitoring)
+///
+/// Returns number of buffered file contents waiting to be processed.
+#[frb]
+pub async fn file_content_buffer_len() -> Result<usize, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    Ok(client.file_content_buffer_len().await)
+}
+
+// ===== Vibe Coding Session API =====
+//
+// Phase 02: Multi-PTY Session support
+// These functions allow Flutter to manage multiple PTY sessions
+
+/// Session command for Vibe Coding
+///
+/// Phase 02: Multi-session management
+#[frb]
+pub enum SessionCommand {
+    /// Create new session
+    Create { project_path: String, project_name: String },
+    /// Switch active session
+    Switch { session_id: String },
+    /// Close session
+    Close { session_id: String },
+    /// List all sessions
+    List,
+}
+
+/// Session data for Flutter
+///
+/// Phase 02: Session metadata
+#[frb]
+pub struct SessionData {
+    pub id: String,
+    pub project_name: String,
+    pub project_path: String,
+    pub status: String,
+}
+
+/// Execute session command
+///
+/// Phase 02: Entry point for session management
+/// Note: This is a placeholder - actual multi-PTY requires backend session manager
+#[frb]
+pub async fn session_command(cmd: SessionCommand) -> Result<Vec<SessionData>, String> {
+    match cmd {
+        SessionCommand::List => {
+            // Return empty list for now - Flutter manages sessions locally
+            Ok(vec![])
+        }
+        SessionCommand::Create { project_path, project_name } => {
+            // Placeholder - Flutter creates session locally
+            tracing::info!("Session create request: {} at {}", project_name, project_path);
+            Ok(vec![])
+        }
+        SessionCommand::Switch { session_id } => {
+            tracing::info!("Session switch request: {}", session_id);
+            Ok(vec![])
+        }
+        SessionCommand::Close { session_id } => {
+            tracing::info!("Session close request: {}", session_id);
+            Ok(vec![])
+        }
+    }
+}
+
+/// Unified Vibe input
+///
+/// Phase 02: Support for different input types
+#[frb]
+pub enum VibeInput {
+    /// Plain text prompt
+    Text { prompt: String },
+    /// Special key (arrows, Ctrl+C, etc)
+    Key { key_code: String },
+    /// Raw bytes
+    Raw { data: Vec<u8> },
+}
+
+/// Send input to specific session
+///
+/// Phase 02: Send input to a session
+#[frb]
+pub async fn send_vibe_input(_session_id: String, input: VibeInput) -> Result<(), String> {
+    match input {
+        VibeInput::Text { prompt } => {
+            send_terminal_command(prompt).await
+        }
+        VibeInput::Key { key_code } => {
+            // Convert key code to terminal escape sequence
+            let seq = match key_code.as_str() {
+                "ArrowUp" => "\x1b[A",
+                "ArrowDown" => "\x1b[B",
+                "Enter" => "\r",
+                "CtrlC" => "\x03",
+                _ => "",
+            };
+            send_terminal_command(seq.to_string()).await
+        }
+        VibeInput::Raw { data } => {
+            // Send raw bytes
+            let text = String::from_utf8_lossy(&data);
+            send_terminal_command(text.into_owned()).await
+        }
+    }
+}
+
 // ===== Test functions =====
 
 /// Simple add function for testing FFI

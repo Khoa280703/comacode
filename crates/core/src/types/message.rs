@@ -117,6 +117,22 @@ pub enum NetworkMessage {
         watcher_id: String,
         error: String,
     },
+
+    // ===== VFS File Reading - Phase 2 =====
+
+    /// Request to read file content
+    ReadFile {
+        path: String,
+        max_size: usize,  // Maximum file size in bytes
+    },
+
+    /// File content response
+    FileContent {
+        path: String,
+        content: String,
+        size: usize,
+        truncated: bool,  // True if file was larger than max_size
+    },
 }
 
 /// Directory entry for VFS browsing
@@ -222,6 +238,16 @@ impl NetworkMessage {
     /// Create snapshot message
     pub fn snapshot(data: Vec<u8>, rows: u16, cols: u16) -> Self {
         Self::Snapshot { data, rows, cols }
+    }
+
+    /// Create ReadFile message
+    pub fn read_file(path: String, max_size: usize) -> Self {
+        Self::ReadFile { path, max_size }
+    }
+
+    /// Create FileContent response
+    pub fn file_content(path: String, content: String, size: usize, truncated: bool) -> Self {
+        Self::FileContent { path, content, size, truncated }
     }
 }
 

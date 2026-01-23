@@ -532,6 +532,61 @@ impl QuicServer {
                             tracing::warn!("Failed to unwatch {}: {}", watcher_id, e);
                         }
                     }
+                    // ===== VFS: File Reading - Phase 2 =====
+                    NetworkMessage::ReadFile { path, max_size } => {
+                        if !authenticated {
+                            tracing::warn!("ReadFile received before authentication from {}", peer_addr);
+                            break;
+                        }
+
+                        tracing::info!("ReadFile request: {} (max_size: {})", path, max_size);
+
+                        let path_buf = PathBuf::from(&path);
+
+                        // Security: Validate path is within allowed boundaries
+                        // Use current directory as allowed_base to prevent path traversal attacks
+                        let current_dir = std::env::current_dir()
+                            .unwrap_or_else(|_| PathBuf::from("/"));
+
+                        if let Err(e) = crate::vfs::validate_path(&path_buf, &current_dir) {
+                            tracing::warn!("ReadFile path validation failed: {}", e);
+                            // Return error response
+                            let response = NetworkMessage::FileContent {
+                                path: path.clone(),
+                                content: String::new(),
+                                size: 0,
+                                truncated: false,
+                            };
+                            let mut send_lock = send_shared.lock().await;
+                            let _ = Self::send_message(&mut *send_lock, &response).await;
+                            continue;
+                        }
+
+                        let response = match crate::vfs::read_file(&path_buf, max_size).await {
+                            Ok(content) => {
+                                let size = content.len();
+                                NetworkMessage::FileContent {
+                                    path: path.clone(),
+                                    content,
+                                    size,
+                                    truncated: false,
+                                }
+                            }
+                            Err(e) => {
+                                // Return error as FileContent with empty content
+                                tracing::warn!("ReadFile failed: {}", e);
+                                NetworkMessage::FileContent {
+                                    path: path.clone(),
+                                    content: String::new(),
+                                    size: 0,
+                                    truncated: false,
+                                }
+                            }
+                        };
+
+                        let mut send_lock = send_shared.lock().await;
+                        let _ = Self::send_message(&mut *send_lock, &response).await;
+                    }
                     _ => {
                         tracing::warn!("Unhandled message type");
                     }
