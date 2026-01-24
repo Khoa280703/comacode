@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'models/project.dart';
+import 'models/models.dart';
 
 /// Local storage for projects per connection
 ///
@@ -113,6 +113,46 @@ class ProjectStorage {
       return projects.isNotEmpty;
     } catch (e) {
       return false;
+    }
+  }
+
+  /// Add session to project
+  static Future<void> addSession(
+    String fingerprint,
+    String projectId,
+    SessionMetadata session,
+  ) async {
+    try {
+      final projects = await loadProjects(fingerprint);
+      final index = projects.indexWhere((p) => p.id == projectId);
+      if (index >= 0) {
+        final updatedProject = projects[index].addSession(session);
+        final updated = List<Project>.from(projects);
+        updated[index] = updatedProject;
+        await saveProjects(fingerprint, updated);
+      }
+    } catch (e) {
+      throw ProjectStorageException('Failed to add session: $e');
+    }
+  }
+
+  /// Remove session from project
+  static Future<void> removeSession(
+    String fingerprint,
+    String projectId,
+    String sessionId,
+  ) async {
+    try {
+      final projects = await loadProjects(fingerprint);
+      final index = projects.indexWhere((p) => p.id == projectId);
+      if (index >= 0) {
+        final updatedProject = projects[index].removeSession(sessionId);
+        final updated = List<Project>.from(projects);
+        updated[index] = updatedProject;
+        await saveProjects(fingerprint, updated);
+      }
+    } catch (e) {
+      throw ProjectStorageException('Failed to remove session: $e');
     }
   }
 }

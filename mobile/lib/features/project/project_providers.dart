@@ -41,6 +41,16 @@ class ProjectNotifier extends StateNotifier<List<Project>> {
     await ProjectStorage.deleteProject(_fingerprint, projectId);
     await _loadProjects();
   }
+
+  Future<void> addSession(String projectId, SessionMetadata session) async {
+    await ProjectStorage.addSession(_fingerprint, projectId, session);
+    await _loadProjects();
+  }
+
+  Future<void> removeSession(String projectId, String sessionId) async {
+    await ProjectStorage.removeSession(_fingerprint, projectId, sessionId);
+    await _loadProjects();
+  }
 }
 
 /// Provider for project notifier

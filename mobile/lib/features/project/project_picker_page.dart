@@ -5,6 +5,7 @@ import '../connection/connection_providers.dart';
 import '../../core/theme.dart';
 import 'models/models.dart';
 import 'project_providers.dart';
+import 'session_picker_page.dart';
 import 'widgets/project_list.dart';
 import 'widgets/vfs_file_picker.dart';
 
@@ -262,11 +263,10 @@ class _ProjectPickerPageState extends ConsumerState<ProjectPickerPage> {
   }
 
   void _showSessions(BuildContext context, Project project) {
-    // TODO: Navigate to SessionPickerPage (Phase 03)
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Session picker coming soon (Phase 03)'),
-        backgroundColor: CatppuccinMocha.yellow,
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SessionPickerPage(project: project),
       ),
     );
   }
