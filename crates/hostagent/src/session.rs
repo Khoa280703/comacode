@@ -2,6 +2,7 @@
 //!
 //! Manages lifecycle of PTY sessions with automatic cleanup.
 //! Phase 04: Extended to support UUID-based sessions with history buffers.
+//! Phase 05: Added PTY pump lifecycle management with TaggedOutput support.
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -16,8 +17,7 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::StreamReader;
 
-/// Session data with UUID key (Phase 04)
-#[allow(dead_code)]  // Phase 04: Fields used for future history tracking
+/// Session data with UUID key (Phase 04/05)
 pub struct SessionData {
     /// PTY session handle
     pub pty_session: Arc<Mutex<PtySession>>,
@@ -29,16 +29,24 @@ pub struct SessionData {
     pub config: TerminalConfig,
     /// Working directory (project path)
     pub working_dir: String,
+
+    // Phase 05: PTY pump lifecycle management
+    /// PTY output receiver (taken when spawning pump task)
+    output_rx: Option<tokio::sync::mpsc::Receiver<Bytes>>,
+    /// Pump task handle (for aborting on session switch)
+    pump_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Abort handle for force-stopping pump task
+    abort_handle: Option<tokio::task::AbortHandle>,
 }
 
-#[allow(dead_code)]  // Phase 04: API methods used by mobile bridge
 impl SessionData {
-    /// Create new session data
+    /// Create new session data (Phase 05: with output_rx)
     pub fn new(
         pty_session: Arc<Mutex<PtySession>>,
         config: TerminalConfig,
         working_dir: String,
         history_rx: tokio::sync::mpsc::Receiver<String>,
+        output_rx: tokio::sync::mpsc::Receiver<Bytes>,
     ) -> Self {
         Self {
             pty_session,
@@ -46,6 +54,44 @@ impl SessionData {
             history_rx,
             config,
             working_dir,
+            output_rx: Some(output_rx),
+            pump_handle: None,
+            abort_handle: None,
+        }
+    }
+
+    /// Take PTY output receiver (consumes the receiver, returns None on subsequent calls)
+    pub fn take_output_rx(&mut self) -> Option<tokio::sync::mpsc::Receiver<Bytes>> {
+        self.output_rx.take()
+    }
+
+    /// Set pump task handle
+    pub fn set_pump_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
+        self.abort_handle = Some(handle.abort_handle());
+        self.pump_handle = Some(handle);
+    }
+
+    /// Stop pump task if running
+    pub async fn stop_pump(&mut self) {
+        if let Some(handle) = self.pump_handle.take() {
+            if !handle.is_finished() {
+                handle.abort();
+                // Wait for task to actually stop
+                let _ = tokio::time::timeout(
+                    tokio::time::Duration::from_secs(1),
+                    handle
+                ).await;
+            }
+        }
+        self.abort_handle = None;
+    }
+
+    /// Check if pump task is running
+    pub fn is_pump_running(&self) -> bool {
+        if let Some(ref handle) = self.pump_handle {
+            !handle.is_finished()
+        } else {
+            false
         }
     }
 
@@ -184,6 +230,7 @@ impl SessionManager {
 
     /// Create session with UUID from mobile
     /// Phase 04: Project & Session Management
+    /// Phase 05: Added output_rx for TaggedOutput pump support
     ///
     /// Creates PTY session and spawns background history capture task.
     pub async fn create_session_with_uuid(
@@ -200,7 +247,7 @@ impl SessionManager {
         let mut config_with_dir = config.clone();
         config_with_dir.shell = shell_cmd;
 
-        let (session, _output_rx) = PtySession::spawn(temp_id, config_with_dir.clone())
+        let (session, output_rx) = PtySession::spawn(temp_id, config_with_dir.clone())
             .with_context(|| format!("Failed to create PTY session {}", session_id))?;
 
         // Create history channel (buffer 100 lines, non-blocking)
@@ -213,6 +260,7 @@ impl SessionManager {
             config_with_dir,
             working_dir.to_string(),
             history_rx,
+            output_rx,  // Phase 05: Pass output_rx for pump task
         );
 
         // Spawn background history capture task
@@ -302,11 +350,16 @@ impl SessionManager {
     }
 
     /// Close UUID session
+    /// Phase 05: Stop pump task before cleanup
     pub async fn close_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.sessions_uuid.lock().await;
 
-        if let Some(session_data) = sessions.remove(session_id) {
+        if let Some(mut session_data) = sessions.remove(session_id) {
             tracing::info!("Closing PTY session {}", session_id);
+
+            // Phase 05: Stop pump task first
+            session_data.stop_pump().await;
+
             let mut sess = session_data.pty_session.lock().await;
 
             if let Err(e) = sess.kill() {
@@ -314,6 +367,7 @@ impl SessionManager {
             }
 
             drop(sess);
+            drop(session_data);
 
             // Clean up history sender
             let mut history_senders = self.history_senders.lock().await;
@@ -342,6 +396,39 @@ impl SessionManager {
     pub async fn uuid_session_count(&self) -> usize {
         let sessions = self.sessions_uuid.lock().await;
         sessions.len()
+    }
+
+    // ===== Phase 05: Pump Lifecycle Management =====
+
+    /// Take PTY output receiver for session (consumes the receiver)
+    /// Returns None if receiver already taken or session not found
+    pub async fn take_output_rx_for_session(&self, session_id: &str) -> Option<tokio::sync::mpsc::Receiver<Bytes>> {
+        let mut sessions = self.sessions_uuid.lock().await;
+        sessions.get_mut(session_id)?.take_output_rx()
+    }
+
+    /// Set pump task handle for session
+    pub async fn set_pump_handle_for_session(&self, session_id: &str, handle: tokio::task::JoinHandle<()>) {
+        let mut sessions = self.sessions_uuid.lock().await;
+        if let Some(session_data) = sessions.get_mut(session_id) {
+            session_data.set_pump_handle(handle);
+        }
+    }
+
+    /// Stop pump task for session (if running)
+    pub async fn stop_pump_for_session(&self, session_id: &str) {
+        let mut sessions = self.sessions_uuid.lock().await;
+        if let Some(session_data) = sessions.get_mut(session_id) {
+            session_data.stop_pump().await;
+        }
+    }
+
+    /// Check if pump task is running for session
+    pub async fn is_pump_running_for_session(&self, session_id: &str) -> bool {
+        let sessions = self.sessions_uuid.lock().await;
+        sessions.get(session_id)
+            .map(|sd| sd.is_pump_running())
+            .unwrap_or(false)
     }
 
     // ===== Shared cleanup =====

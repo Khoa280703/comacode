@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use comacode_core::{
     protocol::MessageCodec,
-    transport::{configure_server, stream::pump_pty_to_quic},
+    transport::{configure_server, stream::pump_pty_to_quic, stream::pump_pty_to_quic_tagged},
     types::{NetworkMessage, SessionMessage, TerminalEvent},
 };
 use quinn::{Endpoint, TokioRuntime};
@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
+use tokio_stream::StreamExt;
 use rcgen::KeyPair;
 
 use crate::auth::TokenStore;
@@ -675,6 +676,12 @@ impl QuicServer {
                                     break;
                                 }
 
+                                // Phase 05: Stop pump task for previous session
+                                if let Some(ref old_session_id) = active_session_id {
+                                    tracing::info!("Stopping pump for previous session: {}", old_session_id);
+                                    session_mgr.stop_pump_for_session(old_session_id).await;
+                                }
+
                                 // Get history buffer
                                 let history = session_mgr.get_history(&session_id).await;
 
@@ -689,6 +696,37 @@ impl QuicServer {
 
                                 // Update active session
                                 active_session_id = Some(session_id.clone());
+
+                                // Phase 05: Start TaggedOutput pump for new active session
+                                if let Some(output_rx) = session_mgr.take_output_rx_for_session(&session_id).await {
+                                    let history_tx = session_mgr.get_history_sender(&session_id).await;
+                                    let session_key = session_id.clone();
+                                    let send_clone = send_shared.clone();
+
+                                    let pump_handle = tokio::spawn(async move {
+                                        let mut send_lock = send_clone.lock().await;
+                                        if let Err(e) = pump_pty_to_quic_tagged(
+                                            // Convert Receiver to AsyncRead
+                                            {
+                                                let stream = tokio_stream::wrappers::ReceiverStream::new(output_rx)
+                                                    .map(Ok::<_, std::io::Error>);
+                                                tokio_util::io::StreamReader::new(stream)
+                                            },
+                                            &mut *send_lock,
+                                            session_key.clone(),
+                                            history_tx,
+                                        ).await {
+                                            tracing::error!("TaggedOutput pump error for session {}: {}", session_key, e);
+                                        }
+                                        tracing::debug!("TaggedOutput pump completed for session {}", session_key);
+                                    });
+
+                                    // Store pump handle
+                                    session_mgr.set_pump_handle_for_session(&session_id, pump_handle).await;
+                                    tracing::info!("TaggedOutput pump started for session {}", session_id);
+                                } else {
+                                    tracing::warn!("No PTY output receiver available for session {} (pump already started?)", session_id);
+                                }
 
                                 // Send SessionSwitched event
                                 let mut send_lock = send_shared.lock().await;
