@@ -439,8 +439,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _navigateToVibe(BuildContext context) {
+    // Phase 06: Navigate to Project Picker first (not direct to Vibe Session)
+    // User will select project/session, then navigate to VibeSessionPage
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const VibeSessionPage()),
+      MaterialPageRoute(builder: (_) => const ProjectPickerPage()),
     );
   }
 
