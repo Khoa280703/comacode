@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../qr_scanner/qr_scanner_page.dart';
 import '../project/project_picker_page.dart';
-import '../vibe/vibe_session_page.dart';
 import 'connection_providers.dart';
 import '../../core/storage.dart';
 import '../../core/theme.dart';

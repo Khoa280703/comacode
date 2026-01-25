@@ -193,7 +193,8 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
               if (value == 'disconnect') {
                 ref.read(connectionStateProvider.notifier).disconnect();
                 if (context.mounted) {
-                  Navigator.of(context).pop();
+                  // Phase 07: Navigate all the way back to HomePage on disconnect
+                  Navigator.of(context).popUntil((route) => route.isFirst);
                 }
               } else if (value == 'clear') {
                 vibeState.terminal.eraseDisplay();
