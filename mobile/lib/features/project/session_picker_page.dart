@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme.dart';
 import '../connection/connection_providers.dart';
+import '../vibe/vibe_session_page.dart';
 import 'models/models.dart';
 import 'project_providers.dart';
 import 'widgets/session_list.dart';
@@ -175,11 +176,14 @@ class _SessionPickerPageState extends ConsumerState<SessionPickerPage> {
   }
 
   void _startSession(BuildContext context, SessionMetadata session) {
-    // TODO: Navigate to VibeSessionPage with project + session context (Phase 05)
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Starting "${session.name}"... (Phase 05)'),
-        backgroundColor: CatppuccinMocha.yellow,
+    // Phase 05: Navigate to VibeSessionPage with project + session context
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VibeSessionPage(
+          project: widget.project,
+          session: session,
+        ),
       ),
     );
   }

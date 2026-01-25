@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme.dart';
+import '../../bridge/bridge_wrapper.dart';
 import '../connection/connection_providers.dart';
+import '../project/models/project.dart';
+import '../project/models/session_metadata.dart';
 import 'models/vibe_session_state.dart';
 import 'vibe_session_providers.dart';
 import 'widgets/input_bar.dart';
@@ -21,8 +24,22 @@ import 'widgets/session_tab_bar.dart';
 /// Phase 02: Enhanced Features
 /// - Enhanced output parsing (files, diffs, collapsible)
 /// - Output search functionality
+///
+/// Phase 05: Multi-session support
+/// - Accept optional Project and SessionMetadata context
+/// - Re-attach/re-spawn logic for session restoration
 class VibeSessionPage extends ConsumerStatefulWidget {
-  const VibeSessionPage({super.key});
+  /// Project context (optional - null for direct connection)
+  final Project? project;
+
+  /// Session metadata (optional - null for direct connection)
+  final SessionMetadata? session;
+
+  const VibeSessionPage({
+    this.project,
+    this.session,
+    super.key,
+  });
 
   @override
   ConsumerState<VibeSessionPage> createState() => _VibeSessionPageState();
@@ -30,18 +47,113 @@ class VibeSessionPage extends ConsumerStatefulWidget {
 
 class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   bool _showSearch = false;
+  bool _isRestoring = false;
+  String? _restoreMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    // Phase 05: Initialize session with re-attach/re-spawn logic
+    if (widget.project != null && widget.session != null) {
+      _initializeSessionWithRetry();
+    }
+  }
+
+  /// Initialize session with re-attach/re-spawn logic
+  ///
+  /// Phase 05: When app restarts, mobile has session metadata but server PTYs may be dead.
+  /// Strategy:
+  /// 1. Check if session exists on server
+  /// 2. If exists → Re-attach (reuse existing PTY)
+  /// 3. If not exists → Re-spawn (create new PTY with same config)
+  Future<void> _initializeSessionWithRetry() async {
+    setState(() => _isRestoring = true);
+
+    try {
+      final sessionId = widget.session!.id;
+      final projectPath = widget.project!.path;
+
+      setState(() => _restoreMessage = 'Checking session...');
+
+      // Step 1: Check if session exists on server
+      final bridge = ref.read(bridgeWrapperProvider);
+      final exists = await bridge.checkSession(sessionId);
+
+      if (exists) {
+        // Re-attach: Server PTY still alive, just connect
+        setState(() => _restoreMessage = 'Restoring session...');
+        await _attachToExistingSession(sessionId);
+      } else {
+        // Re-spawn: Create new PTY with same config
+        setState(() => _restoreMessage = 'Starting new session...');
+        await bridge.createSession(
+          projectPath: projectPath,
+          sessionId: sessionId,
+        );
+      }
+
+      // Step 2: Switch to this session on server
+      setState(() => _restoreMessage = 'Connecting...');
+      await bridge.switchSession(sessionId);
+
+      // Step 3: Clear restore message after delay
+      if (mounted) {
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) setState(() => _restoreMessage = null);
+        });
+      }
+
+    } catch (e) {
+      if (mounted) {
+        setState(() => _restoreMessage = 'Failed: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRestoring = false);
+      }
+    }
+  }
+
+  Future<void> _attachToExistingSession(String sessionId) async {
+    // Subscribe to TaggedOutput for this session_id
+    // Local output buffer will be populated from history
+    // TODO: Implement when FRB bindings support history receive
+  }
 
   @override
   Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
     final vibeState = ref.watch(vibeSessionProvider);
 
+    // Phase 05: Show restoring state
+    if (_isRestoring) {
+      return Scaffold(
+        backgroundColor: CatppuccinMocha.base,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: CatppuccinMocha.blue),
+              const SizedBox(height: 16),
+              Text(
+                _restoreMessage ?? 'Restoring session...',
+                style: TextStyle(
+                  color: CatppuccinMocha.text,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: CatppuccinMocha.base,
       appBar: AppBar(
         title: Text(
           connectionState.isConnected
-              ? 'Vibe Session'
+              ? (widget.session?.name ?? 'Vibe Session')
               : 'Not Connected',
           style: TextStyle(
             color: CatppuccinMocha.text,

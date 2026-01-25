@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../../bridge/bridge_wrapper.dart';
 import '../models/session_status.dart';
 import '../models/vibe_session.dart';
 
@@ -43,10 +44,12 @@ class SessionState {
 /// Session manager provider
 ///
 /// Phase 02: Multi-Session Tab Architecture
+/// Phase 05: Added backend integration via BridgeWrapper
 /// Manages multiple PTY sessions with persistence
 final sessionManagerProvider =
     StateNotifierProvider<SessionManager, SessionState>((ref) {
-  return SessionManager();
+  final bridge = ref.watch(bridgeWrapperProvider);
+  return SessionManager(bridge);
 });
 
 /// Session manager for multi-PTY support
@@ -55,6 +58,7 @@ final sessionManagerProvider =
 /// - Max 5 sessions limit
 /// - 30-minute idle timeout
 /// - Persistence to shared_preferences
+/// - Phase 05: Backend integration for remote sessions
 class SessionManager extends StateNotifier<SessionState> {
   static const String _keySessions = 'vibe_sessions';
   static const String _keyActive = 'vibe_active_session';
@@ -64,8 +68,9 @@ class SessionManager extends StateNotifier<SessionState> {
 
   Timer? _idleCheckTimer;
   SharedPreferences? _prefs;
+  final BridgeWrapper _bridge;
 
-  SessionManager() : super(const SessionState()) {
+  SessionManager(this._bridge) : super(const SessionState()) {
     _init();
   }
 
@@ -131,7 +136,9 @@ class SessionManager extends StateNotifier<SessionState> {
   }
 
   /// Switch active session
-  void switchSession(String sessionId) {
+  ///
+  /// Phase 05: Also notifies backend to switch active session
+  Future<void> switchSession(String sessionId) async {
     if (!state.sessions.containsKey(sessionId)) {
       state = state.copyWith(error: 'Session not found');
       return;
@@ -149,11 +156,27 @@ class SessionManager extends StateNotifier<SessionState> {
       error: null,
     );
 
-    _saveSessions();
+    await _saveSessions();
+
+    // Phase 05: Notify backend to switch session
+    try {
+      await _bridge.switchSession(sessionId);
+    } catch (e) {
+      debugPrint('⚠️ Failed to switch backend session: $e');
+    }
   }
 
   /// Close session
+  ///
+  /// Phase 05: Also notifies backend to close session
   Future<void> closeSession(String sessionId) async {
+    // Phase 05: Notify backend first
+    try {
+      await _bridge.closeSession(sessionId);
+    } catch (e) {
+      debugPrint('⚠️ Failed to close backend session: $e');
+    }
+
     final newSessions = Map<String, VibeSession>.from(state.sessions);
     newSessions.remove(sessionId);
 

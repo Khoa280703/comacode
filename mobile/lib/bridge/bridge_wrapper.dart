@@ -122,4 +122,48 @@ class BridgeWrapper {
       throw Exception('Invalid QR payload: $e');
     }
   }
+
+  // ===== Session Management (Phase 05) =====
+  // Note: FRB bindings not regenerated yet, using placeholder implementation
+  // TODO: Replace with actual FRB calls when bindings are updated
+
+  /// Create new session on backend
+  Future<void> createSession({
+    required String projectPath,
+    required String sessionId,
+  }) async {
+    debugPrint('📝 [BridgeWrapper] createSession: $sessionId at $projectPath');
+    // TODO: Call FRB when bindings regenerated
+    // await frb_api.createSession(projectPath: projectPath, sessionId: sessionId);
+  }
+
+  /// Check if session exists (for re-attach)
+  Future<bool> checkSession(String sessionId) async {
+    debugPrint('🔍 [BridgeWrapper] checkSession: $sessionId');
+    // TODO: Call FRB when bindings regenerated
+    // return await frb_api.checkSession(sessionId: sessionId);
+    return false; // Placeholder
+  }
+
+  /// Switch active session
+  Future<void> switchSession(String sessionId) async {
+    debugPrint('🔄 [BridgeWrapper] switchSession: $sessionId');
+    // TODO: Call FRB when bindings regenerated
+    // await frb_api.switchSession(sessionId: sessionId);
+  }
+
+  /// Close session
+  Future<void> closeSession(String sessionId) async {
+    debugPrint('❌ [BridgeWrapper] closeSession: $sessionId');
+    // TODO: Call FRB when bindings regenerated
+    // await frb_api.closeSession(sessionId: sessionId);
+  }
+
+  /// List all active sessions
+  Future<List<String>> listSessions() async {
+    debugPrint('📋 [BridgeWrapper] listSessions');
+    // TODO: Call FRB when bindings regenerated
+    // return await frb_api.listSessions();
+    return []; // Placeholder
+  }
 }

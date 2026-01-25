@@ -45,8 +45,10 @@ class SessionTabBar extends ConsumerWidget {
                 return TabItem(
                   session: session,
                   isActive: isActive,
-                  onTap: () =>
-                      ref.read(sessionManagerProvider.notifier).switchSession(session.id),
+                  onTap: () async {
+                    // Phase 05: Async switch session
+                    await ref.read(sessionManagerProvider.notifier).switchSession(session.id);
+                  },
                   onLongPress: () => _showSessionMenu(context, ref, session),
                 );
               },
@@ -148,7 +150,7 @@ class SessionTabBar extends ConsumerWidget {
   void _showCloseDialog(BuildContext context, WidgetRef ref, dynamic session) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: CatppuccinMocha.surface,
         title: Text(
           'Close Session',
@@ -160,13 +162,14 @@ class SessionTabBar extends ConsumerWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              ref.read(sessionManagerProvider.notifier).closeSession(session.id);
-              Navigator.pop(context);
+            onPressed: () async {
+              // Phase 05: Async close session
+              await ref.read(sessionManagerProvider.notifier).closeSession(session.id);
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
             },
             child: Text(
               'Close',
