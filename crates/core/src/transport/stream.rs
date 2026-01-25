@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::protocol::MessageCodec;
-use crate::types::{NetworkMessage, TerminalEvent};
+use crate::types::{NetworkMessage, TerminalEvent, TaggedOutput};
 use crate::{CoreError, Result};
 
 /// Smart buffering configuration for PTY→QUIC streaming
@@ -188,6 +188,95 @@ where
                 send_batch(&batch_buf, send).await?;
                 batch_buf.clear();
             }
+        }
+    }
+
+    let _ = send.finish();
+    Ok(())
+}
+
+/// Pump data from PTY to QUIC stream with session tagging (Phase 04)
+///
+/// Multi-session variant that wraps output in TaggedOutput for routing.
+/// Also captures output to history buffer for session replay.
+///
+/// # Arguments
+/// * `pty` - Async reader from PTY
+/// * `send` - QUIC send stream
+/// * `session_id` - UUID of the session generating this output
+/// * `history_tx` - Optional channel sender to push history lines (for inactive sessions)
+///
+/// # History Capture
+/// - Splits output by newlines (\n)
+/// - Maintains incomplete UTF-8 sequences between chunks
+/// - Max 100 lines in history buffer
+pub async fn pump_pty_to_quic_tagged<R>(
+    mut pty: R,
+    send: &mut SendStream,
+    session_id: String,
+    history_tx: Option<tokio::sync::mpsc::Sender<String>>,
+) -> Result<()>
+where
+    R: AsyncReadExt + Unpin + Send,
+{
+    let mut buf = vec![0u8; 8192];
+    let mut line_accumulator = Vec::new(); // For handling split UTF-8
+
+    loop {
+        let n = pty.read(&mut buf).await?;
+        if n == 0 {
+            tracing::debug!("PTY EOF for session {}, closing stream", session_id);
+            break;
+        }
+
+        let data = &buf[..n];
+
+        // FAST PATH: Send to network immediately (no waiting for history)
+        let msg = NetworkMessage::TaggedOutput(TaggedOutput {
+            session_id: session_id.clone(),
+            data: data.to_vec(),
+        });
+        let encoded = MessageCodec::encode(&msg)?;
+        send.write_all(&encoded).await?;
+
+        // SLOW PATH: Capture to history (best effort, non-blocking)
+        if let Some(ref tx) = history_tx {
+            // Accumulate bytes and try to extract complete lines
+            line_accumulator.extend_from_slice(data);
+
+            // Try to parse as UTF-8 and extract lines
+            if let Ok(text) = String::from_utf8(line_accumulator.clone()) {
+                let mut lines = text.split('\n').peekable();
+                let mut has_incomplete = false;
+
+                while let Some(line) = lines.next() {
+                    if lines.peek().is_some() {
+                        // Complete line (before \n)
+                        let _ = tx.try_send(line.to_string()); // Non-blocking, drops if full
+                    } else {
+                        // Last segment (may be incomplete if no trailing \n)
+                        if !text.ends_with('\n') && !line.is_empty() {
+                            line_accumulator = line.as_bytes().to_vec();
+                            has_incomplete = true;
+                        }
+                    }
+                }
+
+                if !has_incomplete {
+                    line_accumulator.clear();
+                }
+            } else {
+                // Invalid UTF-8 - this happens when multi-byte char is split across chunks
+                // Keep the bytes and wait for next chunk to complete the character
+                // Safety: Prevent unbounded growth from binary garbage
+                if line_accumulator.len() > 10000 {
+                    line_accumulator.clear();
+                }
+            }
+
+            tracing::trace!("Sent {} bytes from PTY session {} to QUIC (history captured)", n, session_id);
+        } else {
+            tracing::trace!("Sent {} bytes from PTY session {} to QUIC (no history)", n, session_id);
         }
     }
 

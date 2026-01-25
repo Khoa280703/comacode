@@ -7,7 +7,7 @@
 
 pub mod stream;
 
-pub use stream::{BufferConfig, pump_pty_to_quic, pump_pty_to_quic_smart};
+pub use stream::{BufferConfig, pump_pty_to_quic, pump_pty_to_quic_smart, pump_pty_to_quic_tagged};
 
 use quinn::{ClientConfig, ServerConfig, TransportConfig};
 use std::sync::Arc;

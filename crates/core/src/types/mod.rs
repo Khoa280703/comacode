@@ -7,5 +7,5 @@ mod qr;
 
 pub use command::TerminalCommand;
 pub use event::TerminalEvent;
-pub use message::{NetworkMessage, DirEntry, FileEventType};
+pub use message::{NetworkMessage, DirEntry, FileEventType, TaggedOutput, SessionMessage};
 pub use qr::QrPayload;

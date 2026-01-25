@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use comacode_core::{
     protocol::MessageCodec,
     transport::{configure_server, stream::pump_pty_to_quic},
-    types::NetworkMessage,
+    types::{NetworkMessage, SessionMessage, TerminalEvent},
 };
 use quinn::{Endpoint, TokioRuntime};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -199,7 +199,8 @@ impl QuicServer {
         watcher_mgr: Arc<WatcherManager>,
         peer_addr: SocketAddr,
     ) -> Result<()> {
-        let mut session_id: Option<u64> = None;
+        let mut session_id: Option<u64> = None;  // Legacy session ID
+        let mut active_session_id: Option<String> = None;  // Phase 04: Active UUID session
         let mut authenticated = false;
         let mut pty_task: Option<tokio::task::JoinHandle<()>> = None;
         let mut pending_resize: Option<(u16, u16)> = None; // Store (rows, cols) before session created
@@ -291,20 +292,14 @@ impl QuicServer {
                         break;
                     }
 
-                    // Log input for debugging (printable chars only)
-                    if let Ok(text) = std::str::from_utf8(&data) {
-                        let printable: String = text.chars().filter(|c| c.is_ascii() && !c.is_ascii_control()).collect();
-                        if !printable.is_empty() {
-                            tracing::info!("Input: session={:?} data={:?}", session_id, printable);
-                        } else if data.contains(&b'\n') {
-                            tracing::info!("Input: session={:?} data=<newline>", session_id);
-                        } else if data.contains(&b'\r') {
-                            tracing::info!("Input: session={:?} data=<CR>", session_id);
+                    // Phase 04: Check for active UUID session first, then legacy session
+                    if let Some(ref uuid) = active_session_id {
+                        // Write to UUID session
+                        if let Err(e) = session_mgr.write_to_uuid_session(uuid, &data).await {
+                            tracing::error!("Failed to write input to UUID session {}: {}", uuid, e);
                         }
-                    }
-
-                    if let Some(id) = session_id {
-                        // Write raw bytes directly to PTY
+                    } else if let Some(id) = session_id {
+                        // Write raw bytes directly to legacy PTY
                         if let Err(e) = session_mgr.write_to_session(id, &data).await {
                             tracing::error!("Failed to write input to PTY: {}", e);
                         }
@@ -329,7 +324,12 @@ impl QuicServer {
                         break;
                     }
 
-                    if let Some(id) = session_id {
+                    // Phase 04: Check for active UUID session first, then legacy session
+                    if let Some(ref uuid) = active_session_id {
+                        if let Err(e) = session_mgr.write_to_uuid_session(uuid, cmd.text.as_bytes()).await {
+                            tracing::error!("Failed to write command to UUID session {}: {}", uuid, e);
+                        }
+                    } else if let Some(id) = session_id {
                         if let Err(e) = session_mgr.write_to_session(id, cmd.text.as_bytes()).await {
                             tracing::error!("Failed to write to PTY: {}", e);
                         }
@@ -352,7 +352,12 @@ impl QuicServer {
                     Self::send_message(&mut *send_lock, &response).await?;
                     }
                     NetworkMessage::Resize { rows, cols } => {
-                    if let Some(id) = session_id {
+                    // Phase 04: Check for active UUID session first, then legacy session
+                    if let Some(ref uuid) = active_session_id {
+                        if let Err(e) = session_mgr.resize_uuid_session(uuid, rows, cols).await {
+                            tracing::error!("Failed to resize UUID session {}: {}", uuid, e);
+                        }
+                    } else if let Some(id) = session_id {
                         if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
                             tracing::error!("Failed to resize PTY: {}", e);
                         }
@@ -586,6 +591,152 @@ impl QuicServer {
 
                         let mut send_lock = send_shared.lock().await;
                         let _ = Self::send_message(&mut *send_lock, &response).await;
+                    }
+                    // ===== Multi-Session Support - Phase 04 =====
+                    NetworkMessage::Session(session_msg) => {
+                        if !authenticated {
+                            tracing::warn!("Session message received before authentication from {}", peer_addr);
+                            break;
+                        }
+
+                        tracing::info!("Session message: {:?}", std::mem::discriminant(&session_msg));
+
+                        match session_msg {
+                            SessionMessage::CreateSession { project_path, session_id } => {
+                                tracing::info!("CreateSession: project={}, session={}", project_path, session_id);
+
+                                // Validate project path exists
+                                let path_buf = PathBuf::from(&project_path);
+                                if !path_buf.exists() {
+                                    let error_msg = format!("Project path not found: {}", project_path);
+                                    tracing::warn!("{}", error_msg);
+                                    let mut send_lock = send_shared.lock().await;
+                                    let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                        TerminalEvent::Error { message: error_msg },
+                                    )).await;
+                                    break;
+                                }
+
+                                // Build terminal config
+                                let mut config = comacode_core::terminal::TerminalConfig::default();
+                                if let Some((rows, cols)) = pending_resize {
+                                    config.rows = rows;
+                                    config.cols = cols;
+                                    config.env.push(("COLUMNS".to_string(), cols.to_string()));
+                                    config.env.push(("LINES".to_string(), rows.to_string()));
+                                }
+
+                                // Create UUID session
+                                match session_mgr.create_session_with_uuid(
+                                    session_id.clone(),
+                                    config,
+                                    &project_path,
+                                ).await {
+                                    Ok(()) => {
+                                        // Send SessionCreated event
+                                        let mut send_lock = send_shared.lock().await;
+                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                            TerminalEvent::session_created(session_id.clone()),
+                                        )).await;
+
+                                        tracing::info!("Session {} created for project {}", session_id, project_path);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to create session {}: {}", session_id, e);
+                                        let mut send_lock = send_shared.lock().await;
+                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                            TerminalEvent::Error { message: format!("Failed to create session: {}", e) },
+                                        )).await;
+                                    }
+                                }
+                            }
+                            SessionMessage::CheckSession { session_id } => {
+                                tracing::info!("CheckSession: {}", session_id);
+
+                                let exists = session_mgr.session_exists(&session_id).await;
+                                let event = if exists {
+                                    TerminalEvent::session_reattach(session_id.clone())
+                                } else {
+                                    TerminalEvent::session_not_found(session_id.clone())
+                                };
+
+                                let mut send_lock = send_shared.lock().await;
+                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(event)).await;
+                            }
+                            SessionMessage::SwitchSession { session_id } => {
+                                tracing::info!("SwitchSession: {}", session_id);
+
+                                // Check if session exists
+                                if !session_mgr.session_exists(&session_id).await {
+                                    let mut send_lock = send_shared.lock().await;
+                                    let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                        TerminalEvent::session_not_found(session_id.clone()),
+                                    )).await;
+                                    break;
+                                }
+
+                                // Get history buffer
+                                let history = session_mgr.get_history(&session_id).await;
+
+                                // Send history if available
+                                if !history.is_empty() {
+                                    let mut send_lock = send_shared.lock().await;
+                                    let _ = Self::send_message(&mut *send_lock, &NetworkMessage::SessionHistory {
+                                        session_id: session_id.clone(),
+                                        lines: history,
+                                    }).await;
+                                }
+
+                                // Update active session
+                                active_session_id = Some(session_id.clone());
+
+                                // Send SessionSwitched event
+                                let mut send_lock = send_shared.lock().await;
+                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                    TerminalEvent::session_switched(session_id.clone()),
+                                )).await;
+
+                                tracing::info!("Switched to active session: {}", session_id);
+                            }
+                            SessionMessage::CloseSession { session_id } => {
+                                tracing::info!("CloseSession: {}", session_id);
+
+                                match session_mgr.close_session(&session_id).await {
+                                    Ok(()) => {
+                                        // Send SessionClosed event
+                                        let mut send_lock = send_shared.lock().await;
+                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                            TerminalEvent::session_closed(session_id.clone()),
+                                        )).await;
+
+                                        // Clear active session if it was the closed one
+                                        if active_session_id.as_ref() == Some(&session_id) {
+                                            active_session_id = None;
+                                        }
+
+                                        tracing::info!("Session {} closed", session_id);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to close session {}: {}", session_id, e);
+                                        let mut send_lock = send_shared.lock().await;
+                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                            TerminalEvent::Error { message: format!("Failed to close session: {}", e) },
+                                        )).await;
+                                    }
+                                }
+                            }
+                            SessionMessage::ListSessions => {
+                                tracing::info!("ListSessions requested");
+
+                                let sessions = session_mgr.list_uuid_sessions().await;
+                                let response_text = format!("Active sessions:\n{}", sessions.join("\n"));
+
+                                let mut send_lock = send_shared.lock().await;
+                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                    TerminalEvent::Output { data: response_text.into_bytes() },
+                                )).await;
+                            }
+                        }
                     }
                     _ => {
                         tracing::warn!("Unhandled message type");

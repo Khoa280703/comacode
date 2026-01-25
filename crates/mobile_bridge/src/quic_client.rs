@@ -16,7 +16,7 @@
 use comacode_core::{TerminalEvent, AuthToken};
 use comacode_core::types::DirEntry;
 use comacode_core::protocol::MessageCodec;
-use comacode_core::types::{NetworkMessage, TerminalCommand, FileEventType};
+use comacode_core::types::{NetworkMessage, TerminalCommand, FileEventType, SessionMessage, TaggedOutput};
 use quinn::{Endpoint, Connection, SendStream};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -180,6 +180,11 @@ pub struct QuicClient {
     file_event_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
     /// File content buffer for VFS file reading (Phase VFS-2)
     file_content_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
+    /// Session history buffer for multi-session support (Phase 04)
+    /// Stores SessionHistory messages for inactive sessions
+    session_history_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
+    /// Active session ID (Phase 04)
+    active_session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl QuicClient {
@@ -199,6 +204,8 @@ impl QuicClient {
             dir_chunk_buffer: Arc::new(Mutex::new(Vec::new())),
             file_event_buffer: Arc::new(Mutex::new(Vec::new())),
             file_content_buffer: Arc::new(Mutex::new(Vec::new())),
+            session_history_buffer: Arc::new(Mutex::new(Vec::new())),
+            active_session_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -303,6 +310,8 @@ impl QuicClient {
         let dir_chunk_buffer = self.dir_chunk_buffer.clone();
         let file_event_buffer = self.file_event_buffer.clone();
         let file_content_buffer = self.file_content_buffer.clone();
+        let session_history_buffer = self.session_history_buffer.clone();
+        let active_session_id = self.active_session_id.clone();
         let recv_task = tokio::spawn(async move {
             info!("🔄 [RECV_TASK] Background receive task started");
             let mut recv = recv_shared.lock().await;
@@ -358,6 +367,30 @@ impl QuicClient {
                                         buffer.push(msg);
                                     } else {
                                         warn!("📥 [RECV_TASK] FileContent buffer full (10), dropping response");
+                                    }
+                                }
+                                // Phase 04: Multi-session support
+                                // Buffer SessionHistory messages
+                                Ok(msg @ NetworkMessage::SessionHistory { .. }) => {
+                                    let mut buffer = session_history_buffer.lock().await;
+                                    if buffer.len() < 100 {
+                                        info!("📥 [RECV_TASK] Received SessionHistory, buffering ({}/100)", buffer.len() + 1);
+                                        buffer.push(msg);
+                                    } else {
+                                        warn!("📥 [RECV_TASK] SessionHistory buffer full (100), dropping message");
+                                    }
+                                }
+                                // Phase 04: Handle TaggedOutput
+                                // Only forward to event buffer if from active session
+                                Ok(NetworkMessage::TaggedOutput(TaggedOutput { session_id, data })) => {
+                                    let current_active = active_session_id.lock().await;
+                                    if current_active.as_ref() == Some(&session_id) {
+                                        info!("📥 [RECV_TASK] Received TaggedOutput from active session {}, buffering", session_id);
+                                        drop(current_active); // Release lock before pushing
+                                        let mut buffer = event_buffer.lock().await;
+                                        buffer.push(TerminalEvent::Output { data });
+                                    } else {
+                                        info!("📥 [RECV_TASK] Received TaggedOutput from inactive session {}, ignoring", session_id);
                                     }
                                 }
                                 Ok(msg) => {
@@ -711,6 +744,180 @@ impl QuicClient {
     /// Get file content buffer length (for monitoring)
     pub async fn file_content_buffer_len(&self) -> usize {
         self.file_content_buffer.lock().await.len()
+    }
+
+    // ===== Multi-Session Management - Phase 04 =====
+
+    /// Create a new PTY session with UUID
+    ///
+    /// Sends CreateSession message to server. Server responds with SessionCreated event.
+    ///
+    /// # Arguments
+    /// * `project_path` - Absolute path to project directory
+    /// * `session_id` - UUID string for the session (from Flutter)
+    pub async fn create_session(&self, project_path: String, session_id: String) -> Result<(), String> {
+        info!("📝 [QUIC_CLIENT] create_session: {} at {}", session_id, project_path);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let session_msg = SessionMessage::CreateSession { project_path, session_id };
+        let msg = NetworkMessage::Session(session_msg);
+        let encoded = MessageCodec::encode(&msg)
+            .map_err(|e| format!("Failed to encode CreateSession: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send CreateSession: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] CreateSession request sent");
+        Ok(())
+    }
+
+    /// Check if session exists on server (for re-attach)
+    ///
+    /// Sends CheckSession message. Server responds with SessionReAttach or SessionNotFound.
+    ///
+    /// # Arguments
+    /// * `session_id` - UUID string to check
+    pub async fn check_session(&self, session_id: String) -> Result<(), String> {
+        info!("🔍 [QUIC_CLIENT] check_session: {}", session_id);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let session_msg = SessionMessage::CheckSession { session_id };
+        let msg = NetworkMessage::Session(session_msg);
+        let encoded = MessageCodec::encode(&msg)
+            .map_err(|e| format!("Failed to encode CheckSession: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send CheckSession: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] CheckSession request sent");
+        Ok(())
+    }
+
+    /// Switch active session
+    ///
+    /// Sends SwitchSession message. Server responds with SessionHistory (if available)
+    /// and SessionSwitched event. Only active session's output is pumped.
+    ///
+    /// # Arguments
+    /// * `session_id` - UUID string to switch to
+    pub async fn switch_session(&self, session_id: String) -> Result<(), String> {
+        info!("🔄 [QUIC_CLIENT] switch_session: {}", session_id);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let session_msg = SessionMessage::SwitchSession { session_id: session_id.clone() };
+        let msg = NetworkMessage::Session(session_msg);
+        let encoded = MessageCodec::encode(&msg)
+            .map_err(|e| format!("Failed to encode SwitchSession: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send SwitchSession: {}", e))?;
+
+        // Update local active session ID
+        let mut active_id = self.active_session_id.lock().await;
+        *active_id = Some(session_id);
+        drop(active_id);
+
+        info!("✅ [QUIC_CLIENT] SwitchSession request sent");
+        Ok(())
+    }
+
+    /// Close a session
+    ///
+    /// Sends CloseSession message. Server responds with SessionClosed event.
+    ///
+    /// # Arguments
+    /// * `session_id` - UUID string to close
+    pub async fn close_session(&self, session_id: String) -> Result<(), String> {
+        info!("❌ [QUIC_CLIENT] close_session: {}", session_id);
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let session_msg = SessionMessage::CloseSession { session_id: session_id.clone() };
+        let msg = NetworkMessage::Session(session_msg);
+        let encoded = MessageCodec::encode(&msg)
+            .map_err(|e| format!("Failed to encode CloseSession: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send CloseSession: {}", e))?;
+
+        // Clear local active session ID if it was the closed one
+        let mut active_id = self.active_session_id.lock().await;
+        if active_id.as_ref() == Some(&session_id) {
+            *active_id = None;
+        }
+
+        info!("✅ [QUIC_CLIENT] CloseSession request sent");
+        Ok(())
+    }
+
+    /// List all active sessions
+    ///
+    /// Sends ListSessions message. Server responds with text list.
+    pub async fn list_sessions(&self) -> Result<(), String> {
+        info!("📋 [QUIC_CLIENT] list_sessions");
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let session_msg = SessionMessage::ListSessions;
+        let msg = NetworkMessage::Session(session_msg);
+        let encoded = MessageCodec::encode(&msg)
+            .map_err(|e| format!("Failed to encode ListSessions: {}", e))?;
+
+        let mut send = send_stream.lock().await;
+        send.write_all(&encoded).await
+            .map_err(|e| format!("Failed to send ListSessions: {}", e))?;
+
+        info!("✅ [QUIC_CLIENT] ListSessions request sent");
+        Ok(())
+    }
+
+    /// Receive session history from server (NON-BLOCKING)
+    ///
+    /// Returns Ok(Some((session_id, lines))) if history available.
+    /// Returns Ok(None) if no history available yet.
+    ///
+    /// Called after SwitchSession to receive history buffer for inactive session.
+    pub async fn receive_session_history(&self) -> Result<Option<(String, Vec<String>)>, String> {
+        let mut buffer = self.session_history_buffer.lock().await;
+
+        // Find first SessionHistory message
+        let pos = buffer.iter().position(|m| matches!(m, NetworkMessage::SessionHistory { .. }));
+
+        match pos {
+            Some(idx) => {
+                let msg = buffer.remove(idx);
+                if let NetworkMessage::SessionHistory { session_id, lines } = msg {
+                    info!("📥 [QUIC_CLIENT] Received SessionHistory: {} lines", lines.len());
+                    Ok(Some((session_id, lines)))
+                } else {
+                    unreachable!()
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get active session ID
+    pub async fn get_active_session_id(&self) -> Option<String> {
+        self.active_session_id.lock().await.clone()
+    }
+
+    /// Set active session ID locally (for sync with server)
+    pub async fn set_active_session_id(&self, session_id: String) {
+        let mut active_id = self.active_session_id.lock().await;
+        *active_id = Some(session_id);
     }
 }
 

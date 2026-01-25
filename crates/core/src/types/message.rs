@@ -133,6 +133,62 @@ pub enum NetworkMessage {
         size: usize,
         truncated: bool,  // True if file was larger than max_size
     },
+
+    // ===== Multi-Session Support - Phase 04 =====
+
+    /// Tagged output for multi-session routing
+    /// Only active session's output is pumped; inactive sessions get history buffer on switch
+    TaggedOutput(TaggedOutput),
+
+    /// Session management messages
+    Session(SessionMessage),
+
+    /// History buffer for inactive session (100 lines)
+    /// Sent when switching to an inactive session
+    SessionHistory {
+        session_id: String,
+        lines: Vec<String>,
+    },
+}
+
+/// Tagged output for multi-session routing
+/// Phase 04: Project & Session Management
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaggedOutput {
+    /// UUID of the session that generated this output
+    pub session_id: String,
+    /// Raw output data from PTY
+    pub data: Vec<u8>,
+}
+
+/// Session management messages
+/// Phase 04: Project & Session Management
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SessionMessage {
+    /// Create new PTY session in specific directory
+    /// session_id is UUID from mobile - server uses it directly as key
+    CreateSession {
+        project_path: String,
+        session_id: String,
+    },
+
+    /// Check if session exists (for re-attach on app restart)
+    CheckSession {
+        session_id: String,
+    },
+
+    /// Switch active session (triggers history buffer send)
+    SwitchSession {
+        session_id: String,
+    },
+
+    /// Close session
+    CloseSession {
+        session_id: String,
+    },
+
+    /// List active sessions
+    ListSessions,
 }
 
 /// Directory entry for VFS browsing

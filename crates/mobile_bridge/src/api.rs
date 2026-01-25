@@ -842,6 +842,140 @@ pub async fn file_content_buffer_len() -> Result<usize, String> {
     Ok(client.file_content_buffer_len().await)
 }
 
+// ===== Multi-Session Management - Phase 04 =====
+
+/// Create a new PTY session with UUID
+///
+/// Sends CreateSession message to server. Server creates PTY in project directory.
+///
+/// # Arguments
+/// * `project_path` - Absolute path to project directory
+/// * `session_id` - UUID string for the session
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn create_session(project_path: String, session_id: String) -> Result<(), String> {
+    tracing::info!("📝 [FRB] create_session: {} at {}", session_id, project_path);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.create_session(project_path, session_id).await
+}
+
+/// Check if session exists on server (for re-attach on app restart)
+///
+/// Sends CheckSession message. Server responds with SessionReAttach or SessionNotFound event.
+///
+/// # Arguments
+/// * `session_id` - UUID string to check
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn check_session(session_id: String) -> Result<(), String> {
+    tracing::info!("🔍 [FRB] check_session: {}", session_id);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.check_session(session_id).await
+}
+
+/// Switch active session
+///
+/// Sends SwitchSession message. Server responds with SessionHistory and SessionSwitched event.
+/// Only the active session's output is pumped to the client.
+///
+/// # Arguments
+/// * `session_id` - UUID string to switch to
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn switch_session(session_id: String) -> Result<(), String> {
+    tracing::info!("🔄 [FRB] switch_session: {}", session_id);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.switch_session(session_id).await
+}
+
+/// Close a session
+///
+/// Sends CloseSession message. Server responds with SessionClosed event.
+///
+/// # Arguments
+/// * `session_id` - UUID string to close
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn close_session(session_id: String) -> Result<(), String> {
+    tracing::info!("❌ [FRB] close_session: {}", session_id);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.close_session(session_id).await
+}
+
+/// List all active sessions
+///
+/// Sends ListSessions message. Server responds with text list via Output event.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn list_sessions() -> Result<(), String> {
+    tracing::info!("📋 [FRB] list_sessions");
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.list_sessions().await
+}
+
+/// Session history data (for Dart)
+#[derive(Debug, Clone)]
+#[frb(sync)]
+pub struct SessionHistoryData {
+    /// Session ID
+    pub session_id: String,
+    /// History lines (max 100)
+    pub lines: Vec<String>,
+}
+
+/// Receive session history from server (NON-BLOCKING)
+///
+/// Returns history buffer for inactive session after switch.
+/// Call repeatedly until None is returned.
+///
+/// # Returns
+/// * `Some(SessionHistoryData)` - History received
+/// * `None` - No history available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn receive_session_history() -> Result<Option<SessionHistoryData>, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+
+    match client.receive_session_history().await? {
+        Some((session_id, lines)) => Ok(Some(SessionHistoryData { session_id, lines })),
+        None => Ok(None),
+    }
+}
+
+/// Get active session ID
+///
+/// Returns the UUID of the currently active session, or None if no session is active.
+#[frb]
+pub async fn get_active_session_id() -> Option<String> {
+    let lock = QUIC_CLIENT.get_or_init(|| tokio::sync::RwLock::new(None));
+    let client_guard = lock.read().await;
+
+    if let Some(client_arc) = client_guard.as_ref() {
+        let client = client_arc.lock().await;
+        client.get_active_session_id().await
+    } else {
+        None
+    }
+}
+
 // ===== Vibe Coding Session API =====
 //
 // Phase 02: Multi-PTY Session support

@@ -16,6 +16,23 @@ pub enum TerminalEvent {
 
     /// Terminal resize acknowledgement
     Resized { rows: u16, cols: u16 },
+
+    // ===== Multi-Session Events - Phase 04 =====
+
+    /// Session created successfully
+    SessionCreated { session_id: String },
+
+    /// Session exists and can be re-attached
+    SessionReAttach { session_id: String },
+
+    /// Session not found (need to re-spawn)
+    SessionNotFound { session_id: String },
+
+    /// Active session switched
+    SessionSwitched { session_id: String },
+
+    /// Session closed successfully
+    SessionClosed { session_id: String },
 }
 
 impl TerminalEvent {
@@ -44,6 +61,33 @@ impl TerminalEvent {
     /// Create resized event
     pub fn resized(rows: u16, cols: u16) -> Self {
         Self::Resized { rows, cols }
+    }
+
+    // ===== Session event helpers - Phase 04 =====
+
+    /// Create session created event
+    pub fn session_created(session_id: String) -> Self {
+        Self::SessionCreated { session_id }
+    }
+
+    /// Create session re-attach event
+    pub fn session_reattach(session_id: String) -> Self {
+        Self::SessionReAttach { session_id }
+    }
+
+    /// Create session not found event
+    pub fn session_not_found(session_id: String) -> Self {
+        Self::SessionNotFound { session_id }
+    }
+
+    /// Create session switched event
+    pub fn session_switched(session_id: String) -> Self {
+        Self::SessionSwitched { session_id }
+    }
+
+    /// Create session closed event
+    pub fn session_closed(session_id: String) -> Self {
+        Self::SessionClosed { session_id }
     }
 }
 
