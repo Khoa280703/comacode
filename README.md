@@ -1,30 +1,71 @@
 # Comacode
 
-> Truy cập terminal từ xa bằng QR code - Remote terminal control via QR code
+> **"Vibe Coding" từ xa qua QR code** - Remote terminal with chat-style interface
 
-Quét mã QR → Kết nối ngay → Điều khiển terminal từ điện thoại
+Quét QR → Kết nối ngay → Chat-style terminal với multi-session
 
 ## Bắt đầu nhanh
 
 ```bash
-# Khởi chạy host agent (server)
-cargo run --bin hostagent -- --qr-terminal
+# Khởi chạy host agent
+cargo run -p hostagent -- --qr-terminal
 
 # Quét QR bằng app điện thoại → Đã kết nối
 ```
 
 ## Mục lục
 
-- [Kiến trúc](#kiến-trúc)
 - [Tính năng](#tính-năng)
+- [Kiến trúc](#kiến-trúc)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Thiết lập development](#thiết-lập-development)
 - [Chạy local](#chạy-local)
 - [Thiết lập Mobile App](#thiết-lập-mobile-app)
 - [Hướng dẫn build iOS](#hướng-dẫn-build-ios)
 - [Testing](#testing)
-- [Debug](#debug)
 - [Xử lý sự cố](#xử-lý-sự-cố)
+- [Tài liệu](#tài-liệu)
+
+---
+
+## Tính năng
+
+### Vibe Coding Interface ✅
+- Chat-style terminal với multi-tab (max 5 sessions)
+- Output parsing thông minh (file, diff, error, question, list, plan, code block)
+- Speech input support
+- Output search với case-sensitive toggle
+- Raw/Parsed mode toggle
+- File attachment support
+- Haptic feedback
+
+### Multi-Session Management ✅
+- Project/session organization với persistence
+- Re-attach/re-spawn logic (session restoration sau app restart)
+- TaggedOutput pump integration (backend multi-session streaming)
+- VFS integration cho project path selection
+- Session switching trong realtime
+
+### Terminal Access
+- Real-time terminal output qua QUIC protocol
+- Virtual key bar (ESC, CTRL, TAB, Arrow keys)
+- Catppuccin Mocha theme
+- Screen wakelock toggle
+- Font size adjustment (11-16px)
+
+### Security
+- TOFU (Trust On First Use) fingerprint verification
+- 256-bit AuthToken for authentication
+- Secure credential storage (Keychain/Keystore)
+- Rate limiting cho authentication attempts
+- TLS 1.3 with forward secrecy
+
+### Virtual File System (VFS)
+- Directory listing với metadata
+- Chunked streaming (150 entries/chunk, max 10,000)
+- Path traversal protection
+- File watcher với push events
+- Sorted entries (directories first)
 
 ---
 
@@ -33,13 +74,13 @@ cargo run --bin hostagent -- --qr-terminal
 ```
 ┌─────────────────┐    QUIC/TLS    ┌─────────────────┐
 │   Flutter App   │  ───────────►   │   Host Agent    │
-│   (iOS/Android) │  (encrypted)    │   (Rust)        │
+│   (iOS/13.0+)   │  (encrypted)    │   (Rust)        │
 │                 │                 │                 │
-│  - QR Scanner   │                 │  - QUIC Server  │
-│  - Terminal UI  │                 │  - PTY Manager  │
+│  - Vibe Client  │                 │  - QUIC Server  │
+│  - Multi-Session│                 │  - PTY Manager  │
 │  - VFS Browser  │                 │  - VFS Module   │
-│  - File Watcher │                 │  - File Watcher │
-└─────────────────┘                 │  - Web Dashboard │
+│  - QR Scanner   │                 │  - Web Dashboard │
+└─────────────────┘                 │  - Session Mgr  │
                                       └────────┬────────┘
                                                │
                                                ▼
@@ -56,53 +97,23 @@ cargo run --bin hostagent -- --qr-terminal
 
 ---
 
-## Tính năng
-
-### Terminal Access
-- Real-time terminal output via QUIC protocol
-- Virtual key bar (ESC, CTRL, TAB, Arrow keys)
-- Catppuccin Mocha theme
-- Screen wakelock toggle
-- Font size adjustment (11-16px)
-
-### Security
-- TOFU (Trust On First Use) fingerprint verification
-- 256-bit AuthToken for authentication
-- Secure credential storage (Keychain/Keystore)
-- Rate limiting for authentication attempts
-- TLS 1.3 with forward secrecy
-
-### Virtual File System (VFS)
-- Directory listing with metadata
-- Chunked streaming (150 entries/chunk, max 10,000)
-- Path traversal protection
-- File watcher with push events
-- Sorted entries (directories first)
-
-### Discovery
-- QR code pairing (zero-config setup)
-- Web dashboard with QR display
-- mDNS service discovery (planned)
-
----
-
 ## Cấu trúc dự án
 
 ```
 Comacode/
-├── crates/
-│   ├── core/           # Library chia sẻ (types, protocol, transport)
-│   ├── hostagent/      # Binary server desktop (QUIC server, PTY, VFS)
-│   ├── mobile_bridge/  # FFI bridge cho Flutter (QUIC client)
-│   └── cli_client/     # CLI client binary (SSH-like terminal)
-├── mobile/
-│   ├── ios/            # iOS native code & framework
-│   └── lib/            # Flutter app (Dart)
-│       ├── core/       # Theme, storage
-│       ├── bridge/     # FFI bindings
-│       └── features/   # Terminal, VFS, QR scanner
-├── docs/               # Tài liệu
-└── plans/              # Implementation plans
+├── crates/                    # Rust workspace (4 crates)
+│   ├── core/                  # Shared types, protocol, transport
+│   ├── hostagent/             # Binary server (QUIC, PTY, VFS, Session)
+│   ├── mobile_bridge/         # FFI bridge (QUIC client)
+│   └── cli_client/            # CLI client (SSH-like)
+├── mobile/                    # Flutter app
+│   ├── ios/                   # iOS native code & framework
+│   └── lib/
+│       ├── core/              # Theme, storage
+│       ├── bridge/            # FFI bindings
+│       └── features/          # Vibe, Project, Connection, VFS, QR
+├── docs/                      # Documentation
+└── plans/                     # Implementation plans
 ```
 
 ---
@@ -236,99 +247,47 @@ flutter run
 
 ## Testing
 
-### Unit Tests (Rust)
-
 ```bash
-# Tất cả tests
-cargo test
+# Rust unit tests
+cargo test --workspace
 
-# Crate cụ thể
-cargo test -p comacode-core
-cargo test -p mobile_bridge
-
-# Với output
-cargo test -- --nocapture
+# Flutter tests (developer handles manually)
+flutter test  # Run by developer only
 ```
 
-### Integration Tests
-
-```bash
-# Chạy host agent với config test
-cargo run --bin hostagent -- --bind 127.0.0.1:8443
-
-# Terminal khác, chạy mobile bridge tests
-cargo test -p mobile_bridge --test integration
-```
-
----
-
-## Debug
-
-### Host Agent
-
-```bash
-# Bật debug logging
-RUST_LOG=debug cargo run --bin hostagent -- --qr-terminal
-
-# Trace level (chi tiết)
-RUST_LOG=trace cargo run --bin hostagent --
-
-# Module cụ thể
-RUST_LOG=comacode::quic=debug cargo run --bin hostagent --
-```
-
-### Mobile Bridge (Rust)
-
-```bash
-# Xem logging cho FFI calls
-RUST_BACKTRACE=1 cargo run --bin hostagent --
-```
+**Note**: Flutter testing được developer xử lý manual (xem [code-standards.md](docs/code-standards.md)).
 
 ---
 
 ## Xử lý sự cố
 
-### "Client already initialized"
+| Issue | Giải pháp |
+|-------|-----------|
+| Client already initialized | Gọi `disconnect_from_host()` trước khi reconnect |
+| CryptoProvider panic | Thêm `features = ["ring"]` vào rustls dependency |
+| iOS framework not found | Kiểmtra Build Phases → Link Binary With Libraries |
+| QUIC connection timeout | Kiểm tra firewall, IP/port, certificate fingerprint |
 
-**Nguyên nhân:** Static QUIC_CLIENT không được clear sau disconnect.
-
-**Giải pháp:** Gọi `disconnect_from_host()` trước khi reconnect, hoặc restart app.
-
-### CryptoProvider panic (rustls)
-
-**Lỗi:** `Could not automatically determine CryptoProvider`
-
-**Giải pháp:**
-```toml
-# Trong Cargo.toml
-rustls = { version = "0.23", features = ["ring"] }
-```
-
-### iOS framework not found
-
-**Kiểm tra:**
-1. Framework path trong Xcode: `Build Phases → Link Binary With Libraries`
-2. Framework Search Paths trong Build Settings
-3. Code signature: `codesign -dv mobile/ios/Frameworks/`
-
-### QUIC connection timeout
-
-**Nguyên nhân có thể:**
-1. Firewall chặn UDP
-2. Sai IP/port trong QR code
-3. Certificate fingerprint không khớp
+Xem thêm troubleshooting trong [docs/](docs/).
 
 ---
 
 ## Tài liệu
 
+- [Tổng quan dự án & PDR](docs/project-overview-pdr.md)
 - [Kiến trúc hệ thống](docs/system-architecture.md)
 - [Lộ trình dự án](docs/project-roadmap.md)
 - [Tiêu chuẩn code](docs/code-standards.md)
-- [Tổng quan dự án](docs/project-overview-pdr.md)
+- [Codebase summary](docs/codebase-summary.md)
 
 ---
 
 ## License
 
 MIT
+
+---
+
+**Last Updated**: 2026-01-25
+**Status**: Multi-Session Management Complete (Phases 01-07)
+**Next Phase**: VFS-3 (File Operations - Read/Download)

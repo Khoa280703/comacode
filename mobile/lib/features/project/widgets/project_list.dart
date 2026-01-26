@@ -19,59 +19,25 @@ class ProjectList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final projectsAsync = ref.watch(projectsProvider(fingerprint));
+    // Watch projectNotifierProvider (mutable state) instead of projectsProvider (static Future)
+    // This ensures UI updates when projects are added/deleted
+    final projects = ref.watch(projectNotifierProvider(fingerprint));
 
-    return projectsAsync.when(
-      data: (projects) {
-        if (projects.isEmpty) {
-          return const _EmptyState();
-        }
+    if (projects.isEmpty) {
+      return const _EmptyState();
+    }
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: projects.length,
-          itemBuilder: (context, index) {
-            final project = projects[index];
-            return ProjectTile(
-              project: project,
-              onTap: () => onProjectTap(project),
-              onDelete: () => _handleDeleteProject(context, ref, project),
-            );
-          },
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: projects.length,
+      itemBuilder: (context, index) {
+        final project = projects[index];
+        return ProjectTile(
+          project: project,
+          onTap: () => onProjectTap(project),
+          onDelete: () => _handleDeleteProject(context, ref, project),
         );
       },
-      loading: () => const Center(
-        child: CircularProgressIndicator(),
-      ),
-      error: (e, _) => Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 48,
-              color: CatppuccinMocha.red,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Error loading projects',
-              style: TextStyle(
-                fontSize: 16,
-                color: CatppuccinMocha.text,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              e.toString(),
-              style: TextStyle(
-                color: CatppuccinMocha.subtext0,
-                fontSize: 12,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
     );
   }
 

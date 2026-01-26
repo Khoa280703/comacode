@@ -126,9 +126,18 @@ class ConnectionState extends _$ConnectionState {
   }
 
   /// Auto-reconnect to last saved host
+  /// Silent reconnect: automatically disconnects if already connected
   Future<void> reconnectLast() async {
     final last = await storage.AppStorage.getLastHost();
     if (last != null) {
+      // Silent disconnect if already connected (no error thrown to user)
+      if (state.isConnected) {
+        try {
+          await disconnect();
+        } catch (_) {
+          // Ignore disconnect errors - proceed with reconnect
+        }
+      }
       await connect(last.toJson());
     } else {
       state = ConnectionModel.error('No saved host found');

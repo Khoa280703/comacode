@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:riverpod/riverpod.dart';
 import 'ffi_helpers.dart';
-import '../models/dir_entry.dart';
 import 'api.dart' as frb_api;
 
 part 'bridge_wrapper.g.dart';
@@ -99,17 +98,15 @@ class BridgeWrapper {
 
   /// List directory entries from remote server using Stream API
   ///
-  /// Phase VFS-Fix: Stream now properly awaits all data before emitting.
-  /// The Rust side collects all entries, then sends single chunk.
-  /// This fixes the race condition where onDone fired before onData.
+  /// Phase VFS-Fix: Return raw stream to avoid .map() breaking Rust stream.
+  /// The transformation to VfsEntry happens in the notifier instead.
+  /// This fixes the bug where .map() silently fails with RustStreamSink.
   ///
-  /// Returns a Stream that emits a single chunk with all entries.
-  Stream<List<VfsEntry>> listDirectory(String path) {
+  /// Returns a Stream that emits List of DirEntry (raw FRB type).
+  Stream<List<DirEntry>> listDirectory(String path) {
     debugPrint('📁 [BridgeWrapper] listDirectory: $path');
-    // Map DirEntry → VfsEntry
-    return frb_api.streamListDir(path: path).map(
-      (dirEntries) => dirEntries.map((e) => VfsEntry.fromFrb(e)).toList(),
-    );
+    // Return raw stream - transform happens in vfs_notifier
+    return frb_api.streamListDir(path: path);
   }
 
   /// Parse QR payload from JSON string

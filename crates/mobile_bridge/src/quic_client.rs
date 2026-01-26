@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{info, error, debug, warn};
+use bytes::{BytesMut, BufMut, Buf};
 
 // Rustls imports for custom certificate verification
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -315,26 +316,83 @@ impl QuicClient {
         let recv_task = tokio::spawn(async move {
             info!("🔄 [RECV_TASK] Background receive task started");
             let mut recv = recv_shared.lock().await;
-            let mut read_buf = vec![0u8; 8192];
+
+            // Persistent buffer that grows as needed (fixes partial read bug)
+            let mut recv_buffer = BytesMut::with_capacity(8192);
+            let mut decode_failures = 0u32;
+            const MAX_DECODE_FAILURES: u32 = 10;
+            const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
             loop {
-                // Read from stream (blocking is OK in background task)
-                match recv.read(&mut read_buf).await {
-                    Ok(Some(n)) => {
-                        if n > 0 {
-                            // Decode and push to buffer
-                            match MessageCodec::decode(&read_buf[..n]) {
-                                Ok(NetworkMessage::Event(event)) => {
-                                    info!("📥 [RECV_TASK] Received event, buffering");
+                // Ensure capacity for next read
+                if recv_buffer.remaining_mut() < 4096 {
+                    recv_buffer.reserve(4096);
+                }
+
+                // Read into buffer (manually extend BytesMut)
+                let mut temp_buf = vec![0u8; 8192];
+                let n = match recv.read(&mut temp_buf).await {
+                    Ok(Some(n)) => n,
+                    Ok(None) => {
+                        info!("📥 [RECV_TASK] Connection closed");
+                        break;
+                    }
+                    Err(e) => {
+                        error!("📥 [RECV_TASK] Read error: {}", e);
+                        break;
+                    }
+                };
+
+                if n == 0 {
+                    break;
+                }
+
+                // Append to recv_buffer
+                recv_buffer.extend_from_slice(&temp_buf[..n]);
+
+                // Process ALL complete messages in buffer
+                while recv_buffer.len() >= 4 {
+                    // Read length prefix (big endian)
+                    let len = u32::from_be_bytes([
+                        recv_buffer[0], recv_buffer[1], recv_buffer[2], recv_buffer[3]
+                    ]) as usize;
+
+                    // Validate size (prevent DoS)
+                    if len > MAX_MESSAGE_SIZE {
+                        error!("❌ [RECV_TASK] Message too large: {} bytes. Killing connection.", len);
+                        return;
+                    }
+
+                    // Check if complete
+                    if recv_buffer.len() < 4 + len {
+                        // Incomplete - wait for more data
+                        break;
+                    }
+
+                    // Decode message (inline for error handling)
+                    // MessageCodec::decode expects buffer WITH length prefix
+                    match MessageCodec::decode(&recv_buffer[0..4 + len]) {
+                        Ok(msg) => {
+                            recv_buffer.advance(4 + len);
+                            decode_failures = 0; // Reset on success
+
+                            // Reset buffer if empty but capacity too large (memory management)
+                            if recv_buffer.is_empty() && recv_buffer.capacity() > 65536 {
+                                debug!("🧹 [RECV_TASK] Resetting buffer capacity");
+                                recv_buffer = BytesMut::with_capacity(8192);
+                            }
+
+                            // Route message to appropriate buffer
+                            match msg {
+                                NetworkMessage::Event(event) => {
+                                    info!("📥 [RECV_TASK] Received event");
                                     let mut buffer = event_buffer.lock().await;
                                     buffer.push(event);
                                 }
-                                // VFS Phase 1: Buffer DirChunk messages
-                                // Cap at 100 chunks to prevent OOM (~15MB max)
-                                Ok(NetworkMessage::DirChunk { ref entries, ref has_more, .. }) => {
+                                NetworkMessage::DirChunk { ref entries, ref has_more, .. } => {
                                     let mut buffer = dir_chunk_buffer.lock().await;
                                     if buffer.len() < 100 {
-                                        info!("📥 [RECV_TASK] Received DirChunk, buffering ({}/100)", buffer.len() + 1);
+                                        info!("📥 [RECV_TASK] Received DirChunk with {} entries", entries.len());
                                         buffer.push(NetworkMessage::DirChunk {
                                             chunk_index: 0,
                                             total_chunks: 0,
@@ -342,76 +400,58 @@ impl QuicClient {
                                             has_more: *has_more,
                                         });
                                     } else {
-                                        warn!("📥 [RECV_TASK] DirChunk buffer full (100), dropping chunk");
+                                        warn!("📥 [RECV_TASK] DirChunk buffer full, dropping");
                                     }
                                 }
-                                // VFS Phase 3: Buffer file watcher events
-                                // Cap at 1000 events to prevent OOM (~500KB max)
-                                Ok(msg @ NetworkMessage::FileEvent { .. })
-                                | Ok(msg @ NetworkMessage::WatchStarted { .. })
-                                | Ok(msg @ NetworkMessage::WatchError { .. }) => {
+                                NetworkMessage::FileEvent { .. }
+                                | NetworkMessage::WatchStarted { .. }
+                                | NetworkMessage::WatchError { .. } => {
                                     let mut buffer = file_event_buffer.lock().await;
                                     if buffer.len() < 1000 {
-                                        info!("📥 [RECV_TASK] Received file watcher event, buffering ({}/1000)", buffer.len() + 1);
                                         buffer.push(msg);
                                     } else {
-                                        warn!("📥 [RECV_TASK] File event buffer full (1000), dropping event");
+                                        warn!("📥 [RECV_TASK] File event buffer full");
                                     }
                                 }
-                                // VFS Phase 2: Buffer FileContent messages
-                                // Cap at 10 files to prevent OOM (~10MB max)
-                                Ok(msg @ NetworkMessage::FileContent { .. }) => {
+                                NetworkMessage::FileContent { .. } => {
                                     let mut buffer = file_content_buffer.lock().await;
                                     if buffer.len() < 10 {
-                                        info!("📥 [RECV_TASK] Received FileContent, buffering ({}/10)", buffer.len() + 1);
                                         buffer.push(msg);
                                     } else {
-                                        warn!("📥 [RECV_TASK] FileContent buffer full (10), dropping response");
+                                        warn!("📥 [RECV_TASK] FileContent buffer full");
                                     }
                                 }
-                                // Phase 04: Multi-session support
-                                // Buffer SessionHistory messages
-                                Ok(msg @ NetworkMessage::SessionHistory { .. }) => {
+                                NetworkMessage::SessionHistory { .. } => {
                                     let mut buffer = session_history_buffer.lock().await;
                                     if buffer.len() < 100 {
-                                        info!("📥 [RECV_TASK] Received SessionHistory, buffering ({}/100)", buffer.len() + 1);
                                         buffer.push(msg);
                                     } else {
-                                        warn!("📥 [RECV_TASK] SessionHistory buffer full (100), dropping message");
+                                        warn!("📥 [RECV_TASK] SessionHistory buffer full");
                                     }
                                 }
-                                // Phase 04: Handle TaggedOutput
-                                // Only forward to event buffer if from active session
-                                Ok(NetworkMessage::TaggedOutput(TaggedOutput { session_id, data })) => {
+                                NetworkMessage::TaggedOutput(TaggedOutput { session_id, data }) => {
                                     let current_active = active_session_id.lock().await;
                                     if current_active.as_ref() == Some(&session_id) {
-                                        info!("📥 [RECV_TASK] Received TaggedOutput from active session {}, buffering", session_id);
-                                        drop(current_active); // Release lock before pushing
+                                        drop(current_active);
                                         let mut buffer = event_buffer.lock().await;
                                         buffer.push(TerminalEvent::Output { data });
-                                    } else {
-                                        info!("📥 [RECV_TASK] Received TaggedOutput from inactive session {}, ignoring", session_id);
                                     }
                                 }
-                                Ok(msg) => {
-                                    debug!("📥 [RECV_TASK] Received non-event message: {:?}", std::mem::discriminant(&msg));
-                                }
-                                Err(e) => {
-                                    warn!("📥 [RECV_TASK] Failed to decode message: {}", e);
+                                _ => {
+                                    debug!("📥 [RECV_TASK] Unhandled message type");
                                 }
                             }
-                        } else {
-                            info!("📥 [RECV_TASK] Connection closed (EOF)");
-                            break;
                         }
-                    }
-                    Ok(None) => {
-                        info!("📥 [RECV_TASK] Connection closed (None)");
-                        break;
-                    }
-                    Err(e) => {
-                        error!("📥 [RECV_TASK] Read error: {}", e);
-                        break;
+                        Err(e) => {
+                            error!("❌ [RECV_TASK] Decode error: {}", e);
+                            recv_buffer.advance(4 + len); // Skip corrupted message
+                            decode_failures += 1;
+
+                            if decode_failures > MAX_DECODE_FAILURES {
+                                error!("❌ [RECV_TASK] Too many decode failures ({}). Killing connection.", decode_failures);
+                                return;
+                            }
+                        }
                     }
                 }
             }
@@ -1027,5 +1067,95 @@ mod tests {
         let result = client.connect("127.0.0.1".to_string(), 8443, "invalid".to_string()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid auth token"));
+    }
+
+    // Phase 1 fix: BytesMut buffer decoding tests
+    #[test]
+    fn test_bytesmut_partial_message() {
+        use bytes::BytesMut;
+
+        // Test partial message handling with BytesMut
+        let msg = NetworkMessage::Close;
+        let encoded = MessageCodec::encode(&msg).unwrap();
+
+        // Verify length prefix format
+        assert!(encoded.len() >= 4);
+        let payload_len = u32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) as usize;
+        assert_eq!(payload_len + 4, encoded.len());
+
+        // Decode with full buffer (happy path)
+        let mut buf = BytesMut::with_capacity(8192);
+        buf.extend_from_slice(&encoded);
+        let decoded = MessageCodec::decode(&buf).unwrap();
+        assert!(matches!(decoded, NetworkMessage::Close));
+    }
+
+    #[test]
+    fn test_bytesmut_advance() {
+        use bytes::BytesMut;
+
+        // Test buffer advance (critical for processing multiple messages)
+        let msg1 = NetworkMessage::Close;
+        let msg2 = NetworkMessage::Pong { timestamp: 12345 };
+
+        let enc1 = MessageCodec::encode(&msg1).unwrap();
+        let enc2 = MessageCodec::encode(&msg2).unwrap();
+
+        let mut buf = BytesMut::with_capacity(8192);
+        buf.extend_from_slice(&enc1);
+        buf.extend_from_slice(&enc2);
+
+        // Process first message
+        let len1 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        let total1 = 4 + len1;
+        assert!(buf.len() >= total1);
+        buf.advance(total1); // Move cursor past first message
+
+        // Process second message
+        let len2 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        let total2 = 4 + len2;
+        assert!(buf.len() >= total2);
+        buf.advance(total2);
+
+        // Buffer should now be empty at cursor
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_bytesmut_large_dirchunk() {
+        use bytes::BytesMut;
+
+        // Create a large DirChunk (100 entries)
+        let entries: Vec<DirEntry> = (0..100).map(|i| DirEntry {
+            name: format!("file{}", i),
+            path: format!("/path/file{}", i),
+            is_dir: i % 2 == 0,
+            size: Some(i * 1024),
+            modified: Some(i as u64),
+            is_symlink: false,
+            permissions: None,
+        }).collect();
+
+        let msg = NetworkMessage::DirChunk {
+            chunk_index: 0,
+            total_chunks: 1,
+            entries: entries.clone(),
+            has_more: false,
+        };
+
+        let encoded = MessageCodec::encode(&msg).unwrap();
+
+        // BytesMut can handle any size (grows as needed)
+        let mut buf = BytesMut::with_capacity(8192);
+        buf.extend_from_slice(&encoded);
+
+        // Decode successfully
+        let decoded = MessageCodec::decode(&buf).unwrap();
+        match decoded {
+            NetworkMessage::DirChunk { entries: decoded_entries, .. } => {
+                assert_eq!(decoded_entries.len(), 100);
+            }
+            _ => panic!("Expected DirChunk"),
+        }
     }
 }

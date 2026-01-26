@@ -9,11 +9,27 @@ import '../../vfs/widgets/entry_tile.dart';
 ///
 /// Phase 02: Project & Session Management
 /// Returns selected directory path to caller
-class VfsFilePicker extends ConsumerWidget {
+class VfsFilePicker extends ConsumerStatefulWidget {
   const VfsFilePicker({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<VfsFilePicker> createState() => _VfsFilePickerState();
+}
+
+class _VfsFilePickerState extends ConsumerState<VfsFilePicker> {
+  @override
+  void initState() {
+    super.initState();
+    // CRITICAL FIX: Load root directory when widget opens
+    // Previously: ConsumerWidget never called loadDirectory → empty state
+    // Now: StatefulWidget loads '/' in initState after frame is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(vfsProvider.notifier).loadDirectory('/');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final vfsState = ref.watch(vfsProvider);
     final notifier = ref.read(vfsProvider.notifier);
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme.dart';
+import '../../connection/connection_providers.dart';
 import '../models/file_attachment.dart';
 import '../services/haptic_service.dart';
 import '../vibe_session_providers.dart';
@@ -90,7 +91,8 @@ class _InputBarState extends ConsumerState<InputBar> {
   @override
   Widget build(BuildContext context) {
     final sessionState = ref.watch(vibeSessionProvider);
-    final isConnected = sessionState.isConnected;
+    final connectionState = ref.watch(connectionStateProvider);
+    final isConnected = connectionState.isConnected;
     final isSending = sessionState.isSending;
 
     return Column(
@@ -117,26 +119,33 @@ class _InputBarState extends ConsumerState<InputBar> {
               ),
               // Text field
               Expanded(
-                child: TextField(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  enabled: isConnected && !isSending,
-                  style: TextStyle(
-                    color: CatppuccinMocha.text,
-                    fontSize: 16,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Type your prompt...',
-                    hintStyle: TextStyle(
-                      color: CatppuccinMocha.overlay1,
+                child: GestureDetector(
+                  onTap: () {
+                    if (isConnected && !isSending) {
+                      _focusNode.requestFocus();
+                    }
+                  },
+                  child: TextField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    enabled: isConnected && !isSending,
+                    style: TextStyle(
+                      color: CatppuccinMocha.text,
+                      fontSize: 16,
                     ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
+                    decoration: InputDecoration(
+                      hintText: 'Type your prompt...',
+                      hintStyle: TextStyle(
+                        color: CatppuccinMocha.overlay1,
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    maxLines: null,
+                    minLines: 1,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _sendPrompt(),
                   ),
-                  maxLines: null,
-                  minLines: 1,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _sendPrompt(),
                 ),
               ),
               const SizedBox(width: 8),

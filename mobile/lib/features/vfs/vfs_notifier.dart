@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../bridge/bridge_wrapper.dart';
+import '../../../bridge/ffi_helpers.dart';
 import '../../../models/dir_entry.dart';
 
 /// VFS state for directory browsing
@@ -70,9 +71,10 @@ class VfsState {
 ///
 /// Phase VFS-2: State management for file browser
 /// Phase VFS-Fix: Stream now emits single chunk with all data (no race condition)
+/// Phase VFS-Fix2: Transform DirEntry→VfsEntry in onData (bridge returns raw stream)
 class VfsNotifier extends StateNotifier<VfsState> {
   final BridgeWrapper _bridge;
-  StreamSubscription<List<VfsEntry>>? _dirSubscription;
+  StreamSubscription<List<DirEntry>>? _dirSubscription;
 
   VfsNotifier(this._bridge) : super(VfsState.initial());
 
@@ -96,14 +98,18 @@ class VfsNotifier extends StateNotifier<VfsState> {
     try {
       // Stream-based directory listing
       // Rust now waits for ALL data before emitting single chunk
+      // Phase VFS-Fix2: Transform DirEntry→VfsEntry here (not in bridge)
       _dirSubscription = _bridge.listDirectory(path).listen(
-        // onData: Single chunk with all entries
-        (entries) {
-          debugPrint('📦 [VfsNotifier] RAW entries: ${entries.length}');
+        // onData: Single chunk with all DirEntry items
+        (dirEntries) {
+          debugPrint('📦 [VfsNotifier] Received ${dirEntries.length} DirEntry items');
+
+          // Transform DirEntry → VfsEntry
+          final vfsEntries = dirEntries.map((e) => VfsEntry.fromFrb(e)).toList();
 
           // CRITICAL: Create NEW list to avoid mutating original
           // Also sort safely
-          final sortedEntries = List<VfsEntry>.from(entries);
+          final sortedEntries = List<VfsEntry>.from(vfsEntries);
           sortedEntries.sort((a, b) {
             if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
             return a.name.compareTo(b.name);
