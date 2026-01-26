@@ -24,34 +24,54 @@ class QuickKeysToolbar extends StatelessWidget {
           top: BorderSide(color: CatppuccinMocha.surface1, width: 1),
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _QuickKeyButton(
-            label: SpecialKey.arrowUp.label,
-            specialKey: SpecialKey.arrowUp,
-            onTap: () => onKeyPressed(SpecialKey.arrowUp),
-            isDestructive: false,
-          ),
-          _QuickKeyButton(
-            label: SpecialKey.arrowDown.label,
-            specialKey: SpecialKey.arrowDown,
-            onTap: () => onKeyPressed(SpecialKey.arrowDown),
-            isDestructive: false,
-          ),
-          _QuickKeyButton(
-            label: SpecialKey.enter.label,
-            specialKey: SpecialKey.enter,
-            onTap: () => onKeyPressed(SpecialKey.enter),
-            isDestructive: false,
-          ),
-          _QuickKeyButton(
-            label: SpecialKey.ctrlC.label,
-            specialKey: SpecialKey.ctrlC,
-            onTap: () => onKeyPressed(SpecialKey.ctrlC),
-            isDestructive: true,
-          ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _QuickKeyButton(
+              label: SpecialKey.arrowUp.label,
+              specialKey: SpecialKey.arrowUp,
+              onTap: () => onKeyPressed(SpecialKey.arrowUp),
+              isDestructive: false,
+            ),
+            _QuickKeyButton(
+              label: SpecialKey.arrowDown.label,
+              specialKey: SpecialKey.arrowDown,
+              onTap: () => onKeyPressed(SpecialKey.arrowDown),
+              isDestructive: false,
+            ),
+            _QuickKeyButton(
+              label: SpecialKey.tab.label,
+              specialKey: SpecialKey.tab,
+              onTap: () => onKeyPressed(SpecialKey.tab),
+              isDestructive: false,
+            ),
+            _QuickKeyButton(
+              label: SpecialKey.ctrlD.label,
+              specialKey: SpecialKey.ctrlD,
+              onTap: () => onKeyPressed(SpecialKey.ctrlD),
+              isDestructive: false,
+            ),
+            _QuickKeyButton(
+              label: SpecialKey.ctrlL.label,
+              specialKey: SpecialKey.ctrlL,
+              onTap: () => onKeyPressed(SpecialKey.ctrlL),
+              isDestructive: false,
+            ),
+            _QuickKeyButton(
+              label: SpecialKey.enter.label,
+              specialKey: SpecialKey.enter,
+              onTap: () => onKeyPressed(SpecialKey.enter),
+              isDestructive: false,
+            ),
+            _QuickKeyButton(
+              label: SpecialKey.ctrlC.label,
+              specialKey: SpecialKey.ctrlC,
+              onTap: () => onKeyPressed(SpecialKey.ctrlC),
+              isDestructive: true,
+            ),
+          ],
+        ),
       ),
     );
   }

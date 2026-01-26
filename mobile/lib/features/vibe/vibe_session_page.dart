@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme.dart';
@@ -6,6 +7,7 @@ import '../../bridge/bridge_wrapper.dart';
 import '../connection/connection_providers.dart';
 import '../project/models/project.dart';
 import '../project/models/session_metadata.dart';
+import 'models/special_key.dart';
 import 'models/vibe_session_state.dart';
 import 'vibe_session_providers.dart';
 import 'widgets/input_bar.dart';
@@ -49,6 +51,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   bool _showSearch = false;
   bool _isRestoring = false;
   String? _restoreMessage;
+  final FocusNode _keyboardFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -57,6 +60,74 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
     if (widget.project != null && widget.session != null) {
       _initializeSessionWithRetry();
     }
+    // Auto-focus for physical keyboard support
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _keyboardFocusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _keyboardFocusNode.dispose();
+    super.dispose();
+  }
+
+  /// Handle physical keyboard events (Bluetooth/USB keyboards)
+  KeyEventResult _handleKeyEvent(KeyEvent event, WidgetRef ref) {
+    // Only handle key down events
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    final modifiers = HardwareKeyboard.instance.logicalKeysPressed;
+
+    // Check modifier state
+    final isCtrl = modifiers.contains(LogicalKeyboardKey.controlLeft) ||
+                   modifiers.contains(LogicalKeyboardKey.controlRight);
+    final isAlt = modifiers.contains(LogicalKeyboardKey.altLeft) ||
+                  modifiers.contains(LogicalKeyboardKey.altRight);
+
+    // Handle Ctrl combinations
+    if (isCtrl) {
+      switch (key) {
+        case LogicalKeyboardKey.keyC:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.ctrlC);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.keyD:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.ctrlD);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.keyL:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.ctrlL);
+          return KeyEventResult.handled;
+      }
+    }
+
+    // Handle special keys without Alt (Alt is often used for system shortcuts)
+    if (!isAlt) {
+      switch (key) {
+        case LogicalKeyboardKey.tab:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.tab);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowUp:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowUp);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowDown:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowDown);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowLeft:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowUp);
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowRight:
+          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowDown);
+          return KeyEventResult.handled;
+      }
+    }
+
+    // Let TextField handle regular character input
+    return KeyEventResult.ignored;
   }
 
   /// Initialize session with re-attach/re-spawn logic
@@ -236,8 +307,11 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
 
   Widget _buildConnected(BuildContext context, WidgetRef ref,
       VibeSessionState vibeState) {
-    return Stack(
-      children: [
+    return Focus(
+      focusNode: _keyboardFocusNode,
+      onKeyEvent: (node, event) => _handleKeyEvent(event, ref),
+      child: Stack(
+        children: [
         Column(
           children: [
             // Tab bar for multi-session (Phase 02)
@@ -252,7 +326,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
                   : _buildParsedOutput(context, ref, vibeState),
             ),
             // Input bar + Quick keys
-            const InputBar(),
+            InputBar(),
             // Error banner
             if (vibeState.error != null)
               Container(
@@ -295,6 +369,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
             ),
           ),
       ],
+    ),
     );
   }
 

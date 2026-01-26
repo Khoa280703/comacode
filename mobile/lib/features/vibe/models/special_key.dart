@@ -4,6 +4,9 @@ enum SpecialKey {
   arrowDown,
   enter,
   ctrlC,
+  ctrlD,
+  tab,
+  ctrlL,
 }
 
 extension SpecialKeyExtension on SpecialKey {
@@ -17,6 +20,12 @@ extension SpecialKeyExtension on SpecialKey {
         return '\r';
       case SpecialKey.ctrlC:
         return '\x03';
+      case SpecialKey.ctrlD:
+        return '\x04';
+      case SpecialKey.tab:
+        return '\t';
+      case SpecialKey.ctrlL:
+        return '\x0c';
     }
   }
 
@@ -30,6 +39,12 @@ extension SpecialKeyExtension on SpecialKey {
         return 'Enter';
       case SpecialKey.ctrlC:
         return 'Ctrl+C';
+      case SpecialKey.ctrlD:
+        return 'Ctrl+D';
+      case SpecialKey.tab:
+        return 'Tab';
+      case SpecialKey.ctrlL:
+        return 'Clr';
     }
   }
 
@@ -38,6 +53,9 @@ extension SpecialKeyExtension on SpecialKey {
     SpecialKey.arrowUp,
     SpecialKey.arrowDown,
     SpecialKey.enter,
+    SpecialKey.tab,
+    SpecialKey.ctrlD,
+    SpecialKey.ctrlL,
     SpecialKey.ctrlC,
   ];
 }
