@@ -124,6 +124,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  FileContentData dco_decode_box_autoadd_file_content_data(dynamic raw);
+
+  @protected
   FileWatcherEventData dco_decode_box_autoadd_file_watcher_event_data(
     dynamic raw,
   );
@@ -135,7 +138,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SessionCommand dco_decode_box_autoadd_session_command(dynamic raw);
+
+  @protected
+  SessionHistoryData dco_decode_box_autoadd_session_history_data(dynamic raw);
+
+  @protected
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
+
+  @protected
+  VibeInput dco_decode_box_autoadd_vibe_input(dynamic raw);
+
+  @protected
+  FileContentData dco_decode_file_content_data(dynamic raw);
 
   @protected
   FileWatcherEventData dco_decode_file_watcher_event_data(dynamic raw);
@@ -150,13 +165,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<SessionData> dco_decode_list_session_data(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  FileContentData? dco_decode_opt_box_autoadd_file_content_data(dynamic raw);
 
   @protected
   FileWatcherEventData? dco_decode_opt_box_autoadd_file_watcher_event_data(
@@ -170,6 +194,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SessionHistoryData? dco_decode_opt_box_autoadd_session_history_data(
+    dynamic raw,
+  );
+
+  @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
@@ -177,6 +206,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
     dynamic raw,
   );
+
+  @protected
+  SessionCommand dco_decode_session_command(dynamic raw);
+
+  @protected
+  SessionData dco_decode_session_data(dynamic raw);
+
+  @protected
+  SessionHistoryData dco_decode_session_history_data(dynamic raw);
 
   @protected
   TerminalConfig dco_decode_terminal_config(dynamic raw);
@@ -198,6 +236,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt dco_decode_usize(dynamic raw);
+
+  @protected
+  VibeInput dco_decode_vibe_input(dynamic raw);
 
   @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
@@ -287,6 +328,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  FileContentData sse_decode_box_autoadd_file_content_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   FileWatcherEventData sse_decode_box_autoadd_file_watcher_event_data(
     SseDeserializer deserializer,
   );
@@ -298,7 +344,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SessionCommand sse_decode_box_autoadd_session_command(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SessionHistoryData sse_decode_box_autoadd_session_history_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  VibeInput sse_decode_box_autoadd_vibe_input(SseDeserializer deserializer);
+
+  @protected
+  FileContentData sse_decode_file_content_data(SseDeserializer deserializer);
 
   @protected
   FileWatcherEventData sse_decode_file_watcher_event_data(
@@ -315,13 +377,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<SessionData> sse_decode_list_session_data(SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  FileContentData? sse_decode_opt_box_autoadd_file_content_data(
+    SseDeserializer deserializer,
+  );
 
   @protected
   FileWatcherEventData? sse_decode_opt_box_autoadd_file_watcher_event_data(
@@ -335,11 +408,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SessionHistoryData? sse_decode_opt_box_autoadd_session_history_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   (int, List<DirEntry>, bool)
   sse_decode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SessionCommand sse_decode_session_command(SseDeserializer deserializer);
+
+  @protected
+  SessionData sse_decode_session_data(SseDeserializer deserializer);
+
+  @protected
+  SessionHistoryData sse_decode_session_history_data(
     SseDeserializer deserializer,
   );
 
@@ -363,6 +452,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
+
+  @protected
+  VibeInput sse_decode_vibe_input(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -468,6 +560,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_file_content_data(
+    FileContentData self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_file_watcher_event_data(
     FileWatcherEventData self,
     SseSerializer serializer,
@@ -481,7 +579,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_session_command(
+    SessionCommand self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_session_history_data(
+    SessionHistoryData self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_vibe_input(
+    VibeInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_file_content_data(
+    FileContentData self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_file_watcher_event_data(
@@ -500,6 +622,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
@@ -509,7 +634,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_session_data(
+    List<SessionData> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_file_content_data(
+    FileContentData? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_file_watcher_event_data(
@@ -525,12 +662,33 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_session_history_data(
+    SessionHistoryData? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
   void
   sse_encode_record_u_32_list_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_dir_entry_bool(
     (int, List<DirEntry>, bool) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_session_command(
+    SessionCommand self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_session_data(SessionData self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_session_history_data(
+    SessionHistoryData self,
     SseSerializer serializer,
   );
 
@@ -557,6 +715,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_vibe_input(VibeInput self, SseSerializer serializer);
 }
 
 // Section: wire_class

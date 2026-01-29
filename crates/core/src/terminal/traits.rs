@@ -67,6 +67,8 @@ impl Default for TerminalConfig {
                 // Use system locale for proper UTF-8 support (Vietnamese, emoji, etc.)
                 ("LANG".to_string(), locale.clone()),
                 ("LC_ALL".to_string(), locale),
+                // FIX: Hide zsh % marker for incomplete lines
+                ("PROMPT_EOL_MARK".to_string(), "".to_string()),
             ],
         }
     }

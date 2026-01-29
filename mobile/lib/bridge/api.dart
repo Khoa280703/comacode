@@ -5,9 +5,11 @@
 
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
+part 'api.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `get_client`, `init_crypto_provider`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
 
 /// Connect to remote host
 ///
@@ -214,22 +216,27 @@ Future<void> requestListDir({required String path}) =>
 Future<(int, List<DirEntry>, bool)?> receiveDirChunk() =>
     RustLib.instance.api.crateApiReceiveDirChunk();
 
-/// Stream directory entries incrementally (zero-polling API)
+/// List directory entries using Future API
 ///
-/// This is the RECOMMENDED method for directory listing.
-/// Returns a Stream&lt;List&lt;VfsEntry&gt;&gt; that emits chunks as they arrive.
+/// Phase VFS-Fix: Refactored from Stream to Future for reliability.
+/// Stream API had race condition where onDone fired before onData.
+/// Future API is deterministic - data is returned when complete.
 ///
-/// Usage in Dart:
-/// ```dart
-/// final stream = streamListDir(path: '/');
-/// await for (final chunk in stream) {
-///   entries.addAll(chunk);
-/// }
-/// ```
+/// # Arguments
+/// * `path` - Directory path to list
 ///
-/// # Implementation
-/// Uses internal polling (20ms interval, 3s timeout) but exposed as
-/// clean Stream API to Dart. Each chunk is emitted as it arrives.
+/// # Returns
+/// * `Ok(Vec<DirEntry>)` - All entries in directory
+/// * `Err(String)` - Error message
+Future<List<DirEntry>> listDirectory({required String path}) =>
+    RustLib.instance.api.crateApiListDirectory(path: path);
+
+/// Stream directory entries (DEPRECATED - for FRB codegen compatibility)
+///
+/// This function exists only for compatibility with generated code.
+/// Use `list_directory()` instead (Future API, no race condition).
+///
+/// Phase VFS-Fix: Added delay after sink.add() to ensure Dart processes data.
 Stream<List<DirEntry>> streamListDir({required String path}) =>
     RustLib.instance.api.crateApiStreamListDir(path: path);
 
@@ -305,6 +312,141 @@ Future<FileWatcherEventData?> receiveFileEvent() =>
 Future<BigInt> fileEventBufferLen() =>
     RustLib.instance.api.crateApiFileEventBufferLen();
 
+/// Request server to read a file
+///
+/// Server responds with file content. Call receive_file_content() to get the result.
+///
+/// # Arguments
+/// * `path` - Absolute path to file (e.g., "/tmp/file.txt", "~/Documents/file.md")
+/// * `max_size` - Maximum file size in bytes (default: 100KB = 102400)
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> requestReadFile({required String path, required BigInt maxSize}) =>
+    RustLib.instance.api.crateApiRequestReadFile(path: path, maxSize: maxSize);
+
+/// Receive next file content from server (NON-BLOCKING)
+///
+/// Returns file content received from server.
+/// Call repeatedly in a loop to process all responses.
+/// Returns None if no content available yet.
+///
+/// # Returns
+/// * `Some(FileContentData)` - File content received
+/// * `None` - No content available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<FileContentData?> receiveFileContent() =>
+    RustLib.instance.api.crateApiReceiveFileContent();
+
+/// Get file content buffer length (for monitoring)
+///
+/// Returns number of buffered file contents waiting to be processed.
+Future<BigInt> fileContentBufferLen() =>
+    RustLib.instance.api.crateApiFileContentBufferLen();
+
+/// Create a new PTY session with UUID
+///
+/// Sends CreateSession message to server. Server creates PTY in project directory.
+///
+/// # Arguments
+/// * `project_path` - Absolute path to project directory
+/// * `session_id` - UUID string for the session
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> createSession({
+  required String projectPath,
+  required String sessionId,
+}) => RustLib.instance.api.crateApiCreateSession(
+  projectPath: projectPath,
+  sessionId: sessionId,
+);
+
+/// Check if session exists on server (for re-attach on app restart)
+///
+/// Sends CheckSession message. Server responds with SessionReAttach or SessionNotFound event.
+///
+/// # Arguments
+/// * `session_id` - UUID string to check
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> checkSession({required String sessionId}) =>
+    RustLib.instance.api.crateApiCheckSession(sessionId: sessionId);
+
+/// Switch active session
+///
+/// Sends SwitchSession message. Server responds with SessionHistory and SessionSwitched event.
+/// Only the active session's output is pumped to the client.
+///
+/// # Arguments
+/// * `session_id` - UUID string to switch to
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> switchSession({required String sessionId}) =>
+    RustLib.instance.api.crateApiSwitchSession(sessionId: sessionId);
+
+/// Close a session
+///
+/// Sends CloseSession message. Server responds with SessionClosed event.
+///
+/// # Arguments
+/// * `session_id` - UUID string to close
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> closeSession({required String sessionId}) =>
+    RustLib.instance.api.crateApiCloseSession(sessionId: sessionId);
+
+/// List all active sessions
+///
+/// Sends ListSessions message. Server responds with text list via Output event.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> listSessions() => RustLib.instance.api.crateApiListSessions();
+
+/// Receive session history from server (NON-BLOCKING)
+///
+/// Returns history buffer for inactive session after switch.
+/// Call repeatedly until None is returned.
+///
+/// # Returns
+/// * `Some(SessionHistoryData)` - History received
+/// * `None` - No history available yet
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<SessionHistoryData?> receiveSessionHistory() =>
+    RustLib.instance.api.crateApiReceiveSessionHistory();
+
+/// Get active session ID
+///
+/// Returns the UUID of the currently active session, or None if no session is active.
+Future<String?> getActiveSessionId() =>
+    RustLib.instance.api.crateApiGetActiveSessionId();
+
+/// Execute session command
+///
+/// Phase 02: Entry point for session management
+/// Note: This is a placeholder - actual multi-PTY requires backend session manager
+Future<List<SessionData>> sessionCommand({required SessionCommand cmd}) =>
+    RustLib.instance.api.crateApiSessionCommand(cmd: cmd);
+
+/// Send input to specific session
+///
+/// Phase 02: Send input to a session
+Future<void> sendVibeInput({
+  required String sessionId,
+  required VibeInput input,
+}) => RustLib.instance.api.crateApiSendVibeInput(
+  sessionId: sessionId,
+  input: input,
+);
+
 /// Simple add function for testing FFI
 int add({required int a, required int b}) =>
     RustLib.instance.api.crateApiAdd(a: a, b: b);
@@ -324,6 +466,45 @@ abstract class TerminalCommand implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<TerminalEvent>>
 abstract class TerminalEvent implements RustOpaqueInterface {}
+
+/// File content data (for Dart)
+class FileContentData {
+  /// File path
+  final String path;
+
+  /// File content (UTF-8 string)
+  final String content;
+
+  /// Content size in bytes
+  final BigInt size;
+
+  /// True if file was truncated due to size limit
+  final bool truncated;
+
+  const FileContentData({
+    required this.path,
+    required this.content,
+    required this.size,
+    required this.truncated,
+  });
+
+  static Future<FileContentData> default_() =>
+      RustLib.instance.api.crateApiFileContentDataDefault();
+
+  @override
+  int get hashCode =>
+      path.hashCode ^ content.hashCode ^ size.hashCode ^ truncated.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FileContentData &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          content == other.content &&
+          size == other.size &&
+          truncated == other.truncated;
+}
 
 /// File watcher event data (for Dart)
 class FileWatcherEventData {
@@ -385,6 +566,84 @@ class FileWatcherEventData {
           error == other.error;
 }
 
+@freezed
+sealed class SessionCommand with _$SessionCommand {
+  const SessionCommand._();
+
+  /// Create new session
+  const factory SessionCommand.create({
+    required String projectPath,
+    required String projectName,
+  }) = SessionCommand_Create;
+
+  /// Switch active session
+  const factory SessionCommand.switch_({required String sessionId}) =
+      SessionCommand_Switch;
+
+  /// Close session
+  const factory SessionCommand.close({required String sessionId}) =
+      SessionCommand_Close;
+
+  /// List all sessions
+  const factory SessionCommand.list() = SessionCommand_List;
+}
+
+/// Session data for Flutter
+///
+/// Phase 02: Session metadata
+class SessionData {
+  final String id;
+  final String projectName;
+  final String projectPath;
+  final String status;
+
+  const SessionData({
+    required this.id,
+    required this.projectName,
+    required this.projectPath,
+    required this.status,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      projectName.hashCode ^
+      projectPath.hashCode ^
+      status.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SessionData &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          projectName == other.projectName &&
+          projectPath == other.projectPath &&
+          status == other.status;
+}
+
+/// Session history data (for Dart)
+class SessionHistoryData {
+  /// Session ID
+  final String sessionId;
+
+  /// History lines (max 100)
+  final List<String> lines;
+
+  const SessionHistoryData({required this.sessionId, required this.lines});
+
+  @override
+  int get hashCode => sessionId.hashCode ^ lines.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SessionHistoryData &&
+          runtimeType == other.runtimeType &&
+          sessionId == other.sessionId &&
+          lines == other.lines;
+}
+
 /// Terminal configuration for Flutter
 class TerminalConfig {
   final int rows;
@@ -411,4 +670,18 @@ class TerminalConfig {
           rows == other.rows &&
           cols == other.cols &&
           shell == other.shell;
+}
+
+@freezed
+sealed class VibeInput with _$VibeInput {
+  const VibeInput._();
+
+  /// Plain text prompt
+  const factory VibeInput.text({required String prompt}) = VibeInput_Text;
+
+  /// Special key (arrows, Ctrl+C, etc)
+  const factory VibeInput.key({required String keyCode}) = VibeInput_Key;
+
+  /// Raw bytes
+  const factory VibeInput.raw({required Uint8List data}) = VibeInput_Raw;
 }

@@ -28,6 +28,12 @@ class _InputBarState extends ConsumerState<InputBar> {
   void initState() {
     super.initState();
     _controller = TextEditingController();
+    // Listen to text changes to update send button state
+    _controller.addListener(() {
+      if (mounted) {
+        setState(() {}); // Rebuild when text changes
+      }
+    });
     // Auto-focus on mount
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -121,14 +127,14 @@ class _InputBarState extends ConsumerState<InputBar> {
               Expanded(
                 child: GestureDetector(
                   onTap: () {
-                    if (isConnected && !isSending) {
+                    if (isConnected) {
                       _focusNode.requestFocus();
                     }
                   },
                   child: TextField(
                     controller: _controller,
                     focusNode: _focusNode,
-                    enabled: isConnected && !isSending,
+                    enabled: isConnected,
                     style: TextStyle(
                       color: CatppuccinMocha.text,
                       fontSize: 16,

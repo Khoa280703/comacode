@@ -30,6 +30,14 @@ class _SessionPickerPageState extends ConsumerState<SessionPickerPage> {
     final connectionState = ref.watch(connectionStateProvider);
     final fingerprint = connectionState.currentHost?.fingerprint ?? '';
 
+    // FIX: Watch provider để get fresh project data (không dùng stale widget.project)
+    // Khi backend tạo session mới, provider update → widget rebuild → show latest sessions
+    final projects = ref.watch(projectNotifierProvider(fingerprint));
+    final freshProject = projects.firstWhere(
+      (p) => p.id == widget.project.id,
+      orElse: () => widget.project,
+    );
+
     return Scaffold(
       backgroundColor: CatppuccinMocha.base,
       appBar: AppBar(
@@ -38,7 +46,7 @@ class _SessionPickerPageState extends ConsumerState<SessionPickerPage> {
           children: [
             const Text('Select Session', style: TextStyle(fontSize: 18)),
             Text(
-              widget.project.name,
+              freshProject.name,
               style: TextStyle(
                 fontSize: 12,
                 color: CatppuccinMocha.subtext0,
@@ -56,7 +64,7 @@ class _SessionPickerPageState extends ConsumerState<SessionPickerPage> {
         ],
       ),
       body: SessionList(
-        project: widget.project,
+        project: freshProject,
         onSessionTap: (session) => _startSession(context, session),
         onDelete: (session) => _handleDeleteSession(context, fingerprint, session),
       ),
@@ -64,7 +72,13 @@ class _SessionPickerPageState extends ConsumerState<SessionPickerPage> {
   }
 
   void _createNewSession(BuildContext context, String fingerprint) {
-    final defaultName = 'Session ${widget.project.sessions.length + 1}';
+    // Use freshProject for current session count
+    final freshProject = ref.read(projectNotifierProvider(fingerprint));
+    final currentProject = freshProject.firstWhere(
+      (p) => p.id == widget.project.id,
+      orElse: () => widget.project,
+    );
+    final defaultName = 'Session ${currentProject.sessions.length + 1}';
     bool isCreating = false;
 
     showDialog(
@@ -177,7 +191,9 @@ class _SessionPickerPageState extends ConsumerState<SessionPickerPage> {
 
   void _startSession(BuildContext context, SessionMetadata session) {
     // Phase 05: Navigate to VibeSessionPage with project + session context
-    Navigator.pushReplacement(
+    // FIX: Use push() instead of pushReplacement() to keep SessionPickerPage in stack
+    // This allows proper back navigation from VibeSessionPage → SessionPickerPage
+    Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => VibeSessionPage(

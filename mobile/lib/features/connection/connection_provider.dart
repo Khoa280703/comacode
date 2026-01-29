@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../../bridge/bridge_wrapper.dart';
 import '../../core/storage.dart';
 
 /// Connection state for Comacode
@@ -12,6 +13,7 @@ class ConnectionProvider extends ChangeNotifier {
   QrPayload? _currentHost;
   String? _error;
   final List<String> _terminalOutput = [];
+  final BridgeWrapper _bridge = BridgeWrapper();
 
   // Getters
   bool get isConnected => _isConnected;
@@ -40,18 +42,13 @@ class ConnectionProvider extends ChangeNotifier {
       // Parse QR payload
       final payload = QrPayload.fromJson(qrJson);
 
-      // TODO: Call Rust Bridge here when implemented
-      // For now, simulate connection
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // Simulate success (stub implementation)
-      // In real implementation:
-      // await ComacodeBridge.connect(
-      //   host: payload.ip,
-      //   port: payload.port,
-      //   token: payload.token,
-      //   fingerprint: payload.fingerprint,
-      // );
+      // Call Rust Bridge to connect
+      await _bridge.connect(
+        host: payload.ip,
+        port: payload.port,
+        token: payload.token,
+        fingerprint: payload.fingerprint,
+      );
 
       // If successful, persist credentials (TOFU)
       await AppStorage.saveHost(payload);
@@ -90,6 +87,12 @@ class ConnectionProvider extends ChangeNotifier {
 
   /// Disconnect from host
   Future<void> disconnect() async {
+    try {
+      await _bridge.disconnect();
+    } catch (_) {
+      // Ignore disconnect errors
+    }
+
     _isConnected = false;
     _currentHost = null;
 

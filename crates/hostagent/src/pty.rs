@@ -8,7 +8,7 @@ use bytes::Bytes;
 use comacode_core::terminal::TerminalConfig;
 use comacode_core::OutputStream;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -66,7 +66,13 @@ impl PtySession {
             .context("Failed to spawn shell")?;
 
         // Get writer from master
-        let writer = pty_pair.master.take_writer()?;
+        let mut writer = pty_pair.master.take_writer()?;
+        
+        // OPTIMIZATION: Trigger initial prompt immediately after shell spawn
+        // This eliminates need for client-side delays and forced clear screens
+        // Small delay to let shell initialize, then send newline
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = writer.write(b"\n");  // Trigger prompt display
 
         // Create bounded output stream (channel capacity = 1024 messages)
         let (output_stream, output_rx) = OutputStream::new(1024);

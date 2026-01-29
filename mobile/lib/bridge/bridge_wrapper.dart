@@ -121,46 +121,55 @@ class BridgeWrapper {
   }
 
   // ===== Session Management (Phase 05) =====
-  // Note: FRB bindings not regenerated yet, using placeholder implementation
-  // TODO: Replace with actual FRB calls when bindings are updated
+  // Note: FRB bindings regenerated - now calls actual FRB functions
 
   /// Create new session on backend
   Future<void> createSession({
     required String projectPath,
     required String sessionId,
   }) async {
-    debugPrint('📝 [BridgeWrapper] createSession: $sessionId at $projectPath');
-    // TODO: Call FRB when bindings regenerated
-    // await frb_api.createSession(projectPath: projectPath, sessionId: sessionId);
+    try {
+      await frb_api.createSession(
+        projectPath: projectPath,
+        sessionId: sessionId,
+      );
+    } catch (e) {
+      throw Exception('Failed to create session: $e');
+    }
   }
 
   /// Check if session exists (for re-attach)
   Future<bool> checkSession(String sessionId) async {
-    debugPrint('🔍 [BridgeWrapper] checkSession: $sessionId');
-    // TODO: Call FRB when bindings regenerated
-    // return await frb_api.checkSession(sessionId: sessionId);
-    return false; // Placeholder
+    try {
+      await frb_api.checkSession(sessionId: sessionId);
+      return true; // If no error, session exists
+    } catch (e) {
+      return false; // Error means session doesn't exist
+    }
   }
 
   /// Switch active session
   Future<void> switchSession(String sessionId) async {
-    debugPrint('🔄 [BridgeWrapper] switchSession: $sessionId');
-    // TODO: Call FRB when bindings regenerated
-    // await frb_api.switchSession(sessionId: sessionId);
+    try {
+      await frb_api.switchSession(sessionId: sessionId);
+    } catch (e) {
+      throw Exception('Failed to switch session: $e');
+    }
   }
 
   /// Close session
   Future<void> closeSession(String sessionId) async {
-    debugPrint('❌ [BridgeWrapper] closeSession: $sessionId');
-    // TODO: Call FRB when bindings regenerated
-    // await frb_api.closeSession(sessionId: sessionId);
+    try {
+      await frb_api.closeSession(sessionId: sessionId);
+    } catch (e) {
+      throw Exception('Failed to close session: $e');
+    }
   }
 
   /// List all active sessions
   Future<List<String>> listSessions() async {
-    debugPrint('📋 [BridgeWrapper] listSessions');
-    // TODO: Call FRB when bindings regenerated
-    // return await frb_api.listSessions();
-    return []; // Placeholder
+    // TODO: Implement when FRB bindings support return value
+    // For now, return empty list
+    return [];
   }
 }

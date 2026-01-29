@@ -181,6 +181,60 @@ RUST_LOG=debug cargo run --bin hostagent -- --qr-terminal
 
 ---
 
+## Build Commands
+
+### Backend (Rust)
+
+```bash
+# Development build
+cargo build
+
+# Release build
+cargo build --release
+
+# Chạy host agent với QR
+cargo run --bin hostagent -- --qr-terminal
+```
+
+### Flutter (iOS)
+
+```bash
+cd mobile
+
+# Get dependencies
+flutter pub get
+
+# Debug build (simulator)
+flutter run
+
+# Release build cho device
+flutter build ios --release
+
+# Archive và export (via Xcode)
+open ios/Runner.xcworkspace
+# Xcode → Product → Archive
+```
+
+### Full iOS Build Workflow
+
+```bash
+# 1. Build Rust library (device)
+cargo build --release --target aarch64-apple-ios --package mobile_bridge
+
+# 2. Copy binary
+cp target/aarch64-apple-ios/release/libmobile_bridge.a \
+   mobile/ios/Frameworks/libmobile_bridge.a
+
+# 3. Code sign
+codesign --force --sign - mobile/ios/Frameworks/libmobile_bridge.a
+
+# 4. Build Flutter app
+cd mobile
+flutter build ios --release
+```
+
+---
+
 ## Thiết lập Mobile App
 
 ### Cài Flutter Dependencies

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:xterm/xterm.dart';
 
 import '../../core/theme.dart';
 import '../../bridge/bridge_wrapper.dart';
@@ -53,6 +56,14 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   String? _restoreMessage;
   final FocusNode _keyboardFocusNode = FocusNode();
 
+  // Phase 02: Terminal resize tracking
+  Timer? _resizeTimer;
+  int? _cachedCols;
+  int? _cachedRows;
+  int? _lastSentCols;
+  int? _lastSentRows;
+  bool _resizeCallbackSetup = false;
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +82,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   @override
   void dispose() {
     _keyboardFocusNode.dispose();
+    _resizeTimer?.cancel(); // Cancel pending resize timer
     super.dispose();
   }
 
@@ -143,8 +155,9 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
     try {
       final sessionId = widget.session!.id;
       final projectPath = widget.project!.path;
+      final vibeNotifier = ref.read(vibeSessionProvider.notifier);
 
-      setState(() => _restoreMessage = 'Checking session...');
+      setState(() => _restoreMessage = 'Attaching to session...');
 
       // Step 1: Check if session exists on server
       final bridge = ref.read(bridgeWrapperProvider);
@@ -164,10 +177,21 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
       }
 
       // Step 2: Switch to this session on server
+      // This tells the server to pump output for this session
       setState(() => _restoreMessage = 'Connecting...');
       await bridge.switchSession(sessionId);
 
-      // Step 3: Clear restore message after delay
+      // Step 3: CRITICAL - Attach session to ensure event loop is running
+      // This is now called every time we enter the session page
+      // The attachSession() method is smart enough to handle re-entry properly
+      await vibeNotifier.attachSession(sessionId);
+
+      // Step 4: Send a test command to verify PTY is alive
+      // This ensures we're connected to a working PTY
+      // Empty command just pings the PTY without executing anything
+      await bridge.sendCommand('\r'); // Send Enter to refresh prompt
+
+      // Step 5: Clear restore message after delay
       if (mounted) {
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted) setState(() => _restoreMessage = null);
@@ -186,15 +210,98 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   }
 
   Future<void> _attachToExistingSession(String sessionId) async {
-    // Subscribe to TaggedOutput for this session_id
-    // Local output buffer will be populated from history
-    // TODO: Implement when FRB bindings support history receive
+    // Session exists on server, just attach to receive output
+    // Event loop will be restarted via attachSession() after switchSession()
+    debugPrint('📌 [VibeSession] Attaching to existing session: $sessionId');
+  }
+
+  /// Phase 02: Setup terminal resize callback
+  ///
+  /// Called once when terminal is available. Handles:
+  /// - Time A: onResize from xterm (first mount + screen rotation)
+  /// - Time B: on connection established (sync cached size)
+  void _setupResizeCallback(Terminal terminal, WidgetRef ref) {
+    if (_resizeCallbackSetup) return;
+    _resizeCallbackSetup = true;
+
+    terminal.onResize = (width, height, pixelWidth, pixelHeight) {
+      // width = cols, height = rows from xterm.dart
+      _cachedCols = width;
+      _cachedRows = height;
+
+      final connectionState = ref.read(connectionStateProvider);
+      if (connectionState.isConnected) {
+        _debouncedResize(height, width);
+      }
+    };
+  }
+
+  /// Debounced resize to avoid PTY spam
+  void _debouncedResize(int rows, int cols) {
+    // Skip if same as last sent
+    if (cols == _lastSentCols && rows == _lastSentRows) return;
+
+    _resizeTimer?.cancel();
+    _resizeTimer = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        final bridge = ref.read(bridgeWrapperProvider);
+        await bridge.resizePty(rows: rows, cols: cols);
+        _lastSentCols = cols;
+        _lastSentRows = rows;
+        debugPrint('✅ Terminal resized: ${cols}x$rows');
+        
+        // OPTIMIZATION: Let shell handle prompt naturally
+        // No need to force clear screen - causes flickering
+      } catch (e) {
+        debugPrint('❌ Resize failed: $e');
+      }
+    });
+  }
+
+  /// Send cached size when connection is established
+  ///
+  /// OPTIMIZATION: Simplified init - no artificial delays or forced clears
+  /// Backend now handles prompt trigger automatically after PTY spawn
+  void _onConnectionEstablished(WidgetRef ref) {
+    if (_cachedCols != null && _cachedRows != null) {
+      // Send immediately without debounce for connection-time sync
+      _resizeTimer?.cancel();
+      Future.microtask(() async {
+        try {
+          final bridge = ref.read(bridgeWrapperProvider);
+          await bridge.resizePty(rows: _cachedRows!, cols: _cachedCols!);
+          _lastSentCols = _cachedCols;
+          _lastSentRows = _cachedRows;
+          debugPrint('✅ Initial terminal size: ${_cachedCols}x$_cachedRows');
+          
+          // Backend will trigger prompt automatically - no need to force it
+        } catch (e) {
+          debugPrint('❌ Initial resize failed: $e');
+        }
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
     final vibeState = ref.watch(vibeSessionProvider);
+
+    // Setup resize callback on first build
+    if (!_resizeCallbackSetup && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _setupResizeCallback(vibeState.terminal, ref);
+      });
+    }
+
+    // Handle connection-established resize (Time B)
+    // Check if we just became connected and have cached size
+    final wasConnected = _lastSentCols != null;
+    if (connectionState.isConnected && !wasConnected && _cachedCols != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _onConnectionEstablished(ref);
+      });
+    }
 
     // Phase 05: Show restoring state
     if (_isRestoring) {
@@ -264,8 +371,9 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
               if (value == 'disconnect') {
                 ref.read(connectionStateProvider.notifier).disconnect();
                 if (context.mounted) {
-                  // Phase 07: Navigate all the way back to HomePage on disconnect
-                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  // Phase 07: Navigate back to SessionPickerPage, not HomePage
+                  // pop() once returns to SessionPickerPage (which is now kept in stack)
+                  Navigator.of(context).pop();
                 }
               } else if (value == 'clear') {
                 vibeState.terminal.eraseDisplay();
@@ -427,8 +535,8 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Scan QR Code'),
+            icon: const Icon(Icons.arrow_back),
+            label: const Text('Go Back'),
             style: ElevatedButton.styleFrom(
               backgroundColor: CatppuccinMocha.mauve,
               foregroundColor: CatppuccinMocha.crust,
