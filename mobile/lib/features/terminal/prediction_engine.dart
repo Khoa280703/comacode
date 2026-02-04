@@ -11,7 +11,7 @@ class PredictionEngine {
   final void Function(Duration rtt) onLatencyUpdate;
 
   final Queue<PredictionRecord> _pending = Queue();
-  bool _enabled = true;
+  bool _enabled = false;
   bool _inPasswordMode = false;
   Duration _currentLatency = Duration.zero;
 

@@ -77,12 +77,27 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
     super.initState();
     // Phase 05: Initialize session with re-attach/re-spawn logic
     if (widget.project != null && widget.session != null) {
-      _initializeSessionWithRetry().then((_) {
-        // SSH Terminal Mode - Initialize input handler AFTER session is ready
-        if (mounted) {
-          _initTerminalInputHandler();
-        }
-      });
+      final sessionId = widget.session!.id;
+      final vibeNotifier = ref.read(vibeSessionProvider.notifier);
+
+      // Skip createSession if provider đã attached tới session này
+      // (navigate back → tap lại → initState chạy lại nhưng PTY vẫn alive)
+      if (vibeNotifier.isAttachedTo(sessionId)) {
+        debugPrint('[VibeSession] Already attached to $sessionId, skipping create');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _keyboardFocusNode.requestFocus();
+            _initTerminalInputHandler();
+          }
+        });
+      } else {
+        _initializeSessionWithRetry().then((_) {
+          // SSH Terminal Mode - Initialize input handler AFTER session is ready
+          if (mounted) {
+            _initTerminalInputHandler();
+          }
+        });
+      }
     } else {
       // Direct connection mode - initialize immediately
       WidgetsBinding.instance.addPostFrameCallback((_) {
