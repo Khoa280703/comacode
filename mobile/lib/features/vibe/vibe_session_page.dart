@@ -209,12 +209,6 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
     }
   }
 
-  Future<void> _attachToExistingSession(String sessionId) async {
-    // Session exists on server, just attach to receive output
-    // Event loop will be restarted via attachSession() after switchSession()
-    debugPrint('[VibeSession] Attaching to existing session: $sessionId');
-  }
-
   /// Phase 02: Setup terminal resize callback
   ///
   /// Called once when terminal is available. Handles:
@@ -356,13 +350,6 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
               tooltip: 'Search in output',
             ),
           const SizedBox(width: 4),
-          // Mode toggle
-          _ModeToggle(
-            isRaw: vibeState.isOutputModeRaw,
-            onTap: () =>
-                ref.read(vibeSessionProvider.notifier).toggleOutputMode(),
-          ),
-          const SizedBox(width: 8),
           // Menu
           PopupMenuButton<String>(
             icon: Icon(Icons.more_vert, color: CatppuccinMocha.text),
@@ -427,14 +414,12 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
           children: [
             // Tab bar for multi-session (Phase 02)
             const SessionTabBar(),
-            // Output display (xterm or parsed)
+            // Output display
             Expanded(
-              child: vibeState.isOutputModeRaw
-                  ? OutputView(
-                      terminal: vibeState.terminal,
-                      isParsedMode: false,
-                    )
-                  : _buildParsedOutput(context, ref, vibeState),
+              child: OutputView(
+                terminal: vibeState.terminal,
+                isParsedMode: false,
+              ),
             ),
             // Quick keys toolbar only (SSH Terminal Mode - direct input)
             QuickKeysToolbar(
@@ -487,25 +472,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
     );
   }
 
-  Widget _buildParsedOutput(BuildContext context, WidgetRef ref,
-      VibeSessionState vibeState) {
-    // For now, use xterm in parsed mode with highlighting enabled
-    // Full parsed output view would require capturing terminal buffer
-    return OutputView(
-      terminal: vibeState.terminal,
-      isParsedMode: true,
-      onFileTap: () {
-        // TODO: Navigate to VFS with file path
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('File tap detected'),
-            backgroundColor: CatppuccinMocha.blue,
-            duration: Duration(seconds: 1),
-          ),
-        );
-      },
-    );
-  }
+
 
   Widget _buildDisconnected(BuildContext context, ConnectionModel state) {
     return Center(
@@ -608,49 +575,3 @@ class _ConnectionStatusBadge extends StatelessWidget {
   }
 }
 
-class _ModeToggle extends StatelessWidget {
-  final bool isRaw;
-  final VoidCallback onTap;
-
-  const _ModeToggle({
-    required this.isRaw,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: CatppuccinMocha.surface0,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: CatppuccinMocha.surface1,
-            width: 1,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              isRaw ? 'Raw' : 'Parsed',
-              style: TextStyle(
-                color: CatppuccinMocha.text,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Icon(
-              Icons.swap_horiz,
-              size: 16,
-              color: CatppuccinMocha.overlay1,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

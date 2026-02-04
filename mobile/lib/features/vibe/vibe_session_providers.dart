@@ -122,11 +122,6 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
     }
   }
 
-  /// Toggle between Raw and Parsed mode
-  void toggleOutputMode() {
-    state = state.copyWith(isOutputModeRaw: !state.isOutputModeRaw);
-  }
-
   /// Clear error state
   void clearError() {
     state = state.copyWith(error: null);
