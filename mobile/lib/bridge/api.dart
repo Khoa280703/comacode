@@ -67,6 +67,36 @@ Future<void> sendTerminalCommand({required String command}) =>
 Future<void> sendRawInput({required List<int> data}) =>
     RustLib.instance.api.crateApiSendRawInput(data: data);
 
+/// Send batched keystrokes (SSH Terminal Mode - Phase 1)
+///
+/// Sends keystrokes with sequence tracking for latency measurement and
+/// future prediction support (Phase 2). More efficient than individual
+/// send_raw_input() calls due to batching.
+///
+/// # Arguments
+/// * `keys` - Raw keystroke bytes (escape sequences already converted)
+/// * `sequence_num` - Monotonically increasing sequence number for ACK tracking
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<void> sendKeyBatch({
+  required List<int> keys,
+  required PlatformInt64 sequenceNum,
+}) => RustLib.instance.api.crateApiSendKeyBatch(
+  keys: keys,
+  sequenceNum: sequenceNum,
+);
+
+/// Poll for KeyBatchAck messages (SSH Terminal Mode - Phase 2)
+///
+/// Returns the highest sequence number that has been acknowledged by the server.
+/// Returns 0 if no pending acknowledgments.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+Future<PlatformInt64> pollKeyBatchAck() =>
+    RustLib.instance.api.crateApiPollKeyBatchAck();
+
 /// Resize PTY (for screen rotation support)
 ///
 /// Phase 06: Send resize event to update PTY size on server.

@@ -162,7 +162,7 @@ class SessionManager extends StateNotifier<SessionState> {
     try {
       await _bridge.switchSession(sessionId);
     } catch (e) {
-      debugPrint('⚠️ Failed to switch backend session: $e');
+      debugPrint('[SessionManager] Failed to switch backend session: $e');
     }
   }
 
@@ -174,7 +174,7 @@ class SessionManager extends StateNotifier<SessionState> {
     try {
       await _bridge.closeSession(sessionId);
     } catch (e) {
-      debugPrint('⚠️ Failed to close backend session: $e');
+      debugPrint('[SessionManager] Failed to close backend session: $e');
     }
 
     final newSessions = Map<String, VibeSession>.from(state.sessions);
@@ -243,7 +243,7 @@ class SessionManager extends StateNotifier<SessionState> {
         await prefs.remove(_keyActive);
       }
     } catch (e) {
-      debugPrint('⚠️ Failed to save sessions: $e');
+      debugPrint('[SessionManager] Failed to save sessions: $e');
     }
   }
 
@@ -277,7 +277,7 @@ class SessionManager extends StateNotifier<SessionState> {
             restoredSessions.containsKey(activeId) ? activeId : null,
       );
     } catch (e) {
-      debugPrint('⚠️ Failed to load sessions: $e');
+      debugPrint('[SessionManager] Failed to load sessions: $e');
     }
   }
 

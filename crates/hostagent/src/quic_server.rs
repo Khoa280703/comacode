@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use comacode_core::{
     protocol::MessageCodec,
-    transport::{configure_server, stream::pump_pty_to_quic, stream::pump_pty_to_quic_tagged},
+    transport::configure_server,
     types::{NetworkMessage, SessionMessage, TerminalEvent},
 };
 use quinn::{Endpoint, TokioRuntime};
@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use rcgen::KeyPair;
 
@@ -206,8 +206,21 @@ impl QuicServer {
         let mut pty_task: Option<tokio::task::JoinHandle<()>> = None;
         let mut pending_resize: Option<(u16, u16)> = None; // Store (rows, cols) before session created
 
-        // Share send stream for PTY output forwarding
-        let send_shared = Arc::new(Mutex::new(send));
+        // Channel-based writer: avoids deadlock where pump holds send lock forever.
+        // All writers (pump + main loop) encode → send bytes into channel.
+        // Single writer task owns SendStream, drains channel, writes to QUIC.
+        let (send_tx, send_rx) = mpsc::channel::<Vec<u8>>(256);
+        let _writer_task = tokio::spawn(async move {
+            let mut send = send;
+            let mut rx = send_rx;
+            while let Some(bytes) = rx.recv().await {
+                if let Err(e) = send.write_all(&bytes).await {
+                    tracing::error!("QUIC writer error: {}", e);
+                    break;
+                }
+            }
+            tracing::debug!("QUIC writer task completed");
+        });
 
         // Message receive loop - read length-prefixed messages properly
         let mut recv_buffer = Vec::new(); // Buffer for incomplete reads
@@ -233,13 +246,16 @@ impl QuicServer {
 
             // Append to recv buffer
             recv_buffer.extend_from_slice(&read_buf[..n]);
-            tracing::debug!("Received {} bytes, buffer size: {}", n, recv_buffer.len());
+            tracing::info!("🟣 [BACKEND RECV] Received {} bytes, buffer_size={}, raw_chunk={:?}",
+                n, recv_buffer.len(), &read_buf[..n.min(64)]);
 
             // Process all complete messages in buffer
             while let Some((msg, remaining)) = Self::try_decode_message(&recv_buffer) {
+                let remaining_len = remaining.len();
                 recv_buffer = remaining.to_vec();
 
-                tracing::info!("Received message: {:?}", std::mem::discriminant(&msg));
+                tracing::info!("🟣 [BACKEND DECODE] Received message: {:?}, remaining_buffer={} bytes",
+                    std::mem::discriminant(&msg), remaining_len);
 
                 // Handle message
                 match msg {
@@ -261,8 +277,9 @@ impl QuicServer {
                         let _ = rate_limiter.record_auth_failure(peer_addr.ip()).await;
 
                         // Send error response and close
-                        let mut send_lock = send_shared.lock().await;
-                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
+                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::hello(None)) {
+                            let _ = send_tx.send(encoded).await;
+                        }
                         break;
                     }
 
@@ -274,16 +291,15 @@ impl QuicServer {
                     // Validate protocol version
                     if let Err(e) = msg.validate_handshake() {
                         tracing::error!("Handshake validation failed: {}", e);
-                        // Send error and close
-                        let mut send_lock = send_shared.lock().await;
-                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::hello(None)).await;
+                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::hello(None)) {
+                            let _ = send_tx.send(encoded).await;
+                        }
                         break;
                     }
 
                     // Respond with Hello
-                    let response = NetworkMessage::hello(None);
-                    let mut send_lock = send_shared.lock().await;
-                    Self::send_message(&mut *send_lock, &response).await?;
+                    let encoded = MessageCodec::encode(&NetworkMessage::hello(None))?;
+                    send_tx.send(encoded).await.map_err(|e| anyhow::anyhow!("send failed: {}", e))?;
                     }
                     NetworkMessage::Input { data } => {
                     // Raw input bytes - pure passthrough to PTY
@@ -311,7 +327,7 @@ impl QuicServer {
                             pending_resize,
                             &mut pty_task,
                             &mut session_id,
-                            &send_shared,
+                            &send_tx,
                             &data,
                         ).await;
                     }
@@ -341,16 +357,73 @@ impl QuicServer {
                             pending_resize,
                             &mut pty_task,
                             &mut session_id,
-                            &send_shared,
+                            &send_tx,
                             cmd.text.as_bytes(),
                         ).await;
                     }
                     }
+                    NetworkMessage::KeyBatch { keys, sequence_num, timestamp_ms } => {
+                    // SSH Terminal Mode - Phase 1: Batched keystrokes
+                    tracing::info!("🟣 [BACKEND HANDLER] KeyBatch received: seq={}, {} bytes, keys={:?}, active_session={:?}, session_id={:?}",
+                        sequence_num, keys.len(), keys, active_session_id, session_id);
+
+                    if !authenticated {
+                        tracing::warn!("KeyBatch received before authentication from {}", peer_addr);
+                        break;
+                    }
+
+                    // Calculate and log latency for monitoring
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    let client_to_server_latency = now_ms.saturating_sub(timestamp_ms);
+                    tracing::info!(
+                        "KeyBatch: seq={}, latency={}ms, {} bytes",
+                        sequence_num,
+                        client_to_server_latency,
+                        keys.len()
+                    );
+
+                    // Write to active session (UUID or legacy)
+                    if let Some(ref uuid) = active_session_id {
+                        tracing::info!("Writing to UUID session: {}", uuid);
+                        if let Err(e) = session_mgr.write_to_uuid_session(uuid, &keys).await {
+                            tracing::error!("KeyBatch write failed for UUID session {}: {}", uuid, e);
+                        } else {
+                            tracing::info!("KeyBatch written to UUID session {} successfully", uuid);
+                        }
+                    } else if let Some(id) = session_id {
+                        tracing::info!("Writing to legacy session: {}", id);
+                        if let Err(e) = session_mgr.write_to_session(id, &keys).await {
+                            tracing::error!("KeyBatch write failed for PTY: {}", e);
+                        } else {
+                            tracing::info!("KeyBatch written to legacy session {} successfully", id);
+                        }
+                    } else {
+                        // No active session - spawn new one with first keystroke
+                        tracing::warn!("No active session - spawning with KeyBatch data");
+                        let _ = Self::spawn_session_with_config(
+                            &session_mgr,
+                            pending_resize,
+                            &mut pty_task,
+                            &mut session_id,
+                            &send_tx,
+                            &keys,
+                        ).await;
+                    }
+
+                    // Send ACK for prediction confirmation (Phase 2)
+                    if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::KeyBatchAck { sequence_num }) {
+                        let _ = send_tx.send(encoded).await;
+                        tracing::info!("KeyBatchAck sent for seq={}", sequence_num);
+                    }
+                    }
                     NetworkMessage::Ping { timestamp } => {
                     // Respond with Pong
-                    let response = NetworkMessage::pong(timestamp);
-                    let mut send_lock = send_shared.lock().await;
-                    Self::send_message(&mut *send_lock, &response).await?;
+                    if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::pong(timestamp)) {
+                        let _ = send_tx.send(encoded).await;
+                    }
                     }
                     NetworkMessage::Resize { rows, cols } => {
                     // Phase 04: Check for active UUID session first, then legacy session
@@ -387,12 +460,11 @@ impl QuicServer {
                         if !path_buf.exists() {
                             let error_msg = format!("Path not found: {}", path);
                             tracing::warn!("{}", error_msg);
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
-                                comacode_core::types::TerminalEvent::Error {
-                                    message: error_msg,
-                                }
-                            )).await;
+                            if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
+                                comacode_core::types::TerminalEvent::Error { message: error_msg }
+                            )) {
+                                let _ = send_tx.send(encoded).await;
+                            }
                             break;
                         }
 
@@ -413,14 +485,12 @@ impl QuicServer {
                                 let mut chunks = vfs::chunk_entries(entries, 150);
 
                                 // Phase VFS-Fix: ALWAYS send at least one chunk, even if empty
-                                // This prevents client timeout on empty directories
                                 if chunks.is_empty() {
                                     tracing::info!("Directory empty, sending empty chunk");
                                     chunks = vec![vec![]];
                                 }
 
                                 let total = chunks.len() as u32;
-
                                 tracing::info!("Sending {} chunks ({} entries)", total, entry_count);
 
                                 for (i, chunk) in chunks.iter().enumerate() {
@@ -430,10 +500,11 @@ impl QuicServer {
                                         entries: chunk.clone(),
                                         has_more: i < chunks.len() - 1,
                                     };
-                                    let mut send_lock = send_shared.lock().await;
-                                    if let Err(e) = Self::send_message(&mut *send_lock, &msg).await {
-                                        tracing::error!("Failed to send DirChunk: {}", e);
-                                        break;
+                                    if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                        if send_tx.send(encoded).await.is_err() {
+                                            tracing::error!("Failed to send DirChunk: channel closed");
+                                            break;
+                                        }
                                     }
                                 }
 
@@ -442,12 +513,11 @@ impl QuicServer {
                             Err(e) => {
                                 let error_msg = format!("Failed to read directory: {}", e);
                                 tracing::error!("{}", error_msg);
-                                let mut send_lock = send_shared.lock().await;
-                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
-                                    comacode_core::types::TerminalEvent::Error {
-                                        message: error_msg,
-                                    }
-                                )).await;
+                                if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
+                                    comacode_core::types::TerminalEvent::Error { message: error_msg }
+                                )) {
+                                    let _ = send_tx.send(encoded).await;
+                                }
                             }
                         }
                     }
@@ -466,29 +536,31 @@ impl QuicServer {
                         if !path_buf.exists() {
                             let error_msg = format!("Path not found: {}", path);
                             tracing::warn!("{}", error_msg);
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                            if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::WatchError {
                                 watcher_id: format!("watch_{}", session_id.unwrap_or(0)),
                                 error: error_msg,
-                            }).await;
+                            }) {
+                                let _ = send_tx.send(encoded).await;
+                            }
                             break;
                         }
 
                         if !path_buf.is_dir() {
                             let error_msg = format!("Path is not a directory: {}", path);
                             tracing::warn!("{}", error_msg);
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                            if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::WatchError {
                                 watcher_id: format!("watch_{}", session_id.unwrap_or(0)),
                                 error: error_msg,
-                            }).await;
+                            }) {
+                                let _ = send_tx.send(encoded).await;
+                            }
                             break;
                         }
 
                         // Start watching
                         let watcher_id = format!("watch_{}", session_id.unwrap_or(0));
                         let watcher_mgr_clone: Arc<WatcherManager> = Arc::clone(&watcher_mgr);
-                        let send_clone = send_shared.clone();
+                        let send_clone = send_tx.clone();
 
                         // Spawn watch task
                         if let Err(e) = watcher_mgr_clone.watch_directory(
@@ -502,28 +574,30 @@ impl QuicServer {
                                     timestamp: event.timestamp,
                                 };
 
-                                // Send event to client
-                                let send = send_clone.clone();
+                                let tx = send_clone.clone();
                                 tokio::spawn(async move {
-                                    let mut send_lock = send.lock().await;
-                                    let _ = Self::send_message(&mut *send_lock, &msg).await;
+                                    if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                        let _ = tx.send(encoded).await;
+                                    }
                                 });
                             },
                         ).await {
                             tracing::error!("Failed to start watcher: {}", e);
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchError {
+                            if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::WatchError {
                                 watcher_id: watcher_id.clone(),
                                 error: format!("Failed to start watcher: {}", e),
-                            }).await;
+                            }) {
+                                let _ = send_tx.send(encoded).await;
+                            }
                             break;
                         }
 
                         // Send WatchStarted confirmation
-                        let mut send_lock = send_shared.lock().await;
-                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::WatchStarted {
+                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::WatchStarted {
                             watcher_id,
-                        }).await;
+                        }) {
+                            let _ = send_tx.send(encoded).await;
+                        }
                     }
                     NetworkMessage::UnwatchDir { watcher_id } => {
                         if !authenticated {
@@ -556,15 +630,15 @@ impl QuicServer {
 
                         if let Err(e) = crate::vfs::validate_path(&path_buf, &current_dir) {
                             tracing::warn!("ReadFile path validation failed: {}", e);
-                            // Return error response
                             let response = NetworkMessage::FileContent {
                                 path: path.clone(),
                                 content: String::new(),
                                 size: 0,
                                 truncated: false,
                             };
-                            let mut send_lock = send_shared.lock().await;
-                            let _ = Self::send_message(&mut *send_lock, &response).await;
+                            if let Ok(encoded) = MessageCodec::encode(&response) {
+                                let _ = send_tx.send(encoded).await;
+                            }
                             continue;
                         }
 
@@ -590,8 +664,9 @@ impl QuicServer {
                             }
                         };
 
-                        let mut send_lock = send_shared.lock().await;
-                        let _ = Self::send_message(&mut *send_lock, &response).await;
+                        if let Ok(encoded) = MessageCodec::encode(&response) {
+                            let _ = send_tx.send(encoded).await;
+                        }
                     }
                     // ===== Multi-Session Support - Phase 04 =====
                     NetworkMessage::Session(session_msg) => {
@@ -606,19 +681,18 @@ impl QuicServer {
                             SessionMessage::CreateSession { project_path, session_id } => {
                                 tracing::info!("CreateSession: project={}, session={}", project_path, session_id);
 
-                                // Validate project path exists
                                 let path_buf = PathBuf::from(&project_path);
                                 if !path_buf.exists() {
                                     let error_msg = format!("Project path not found: {}", project_path);
                                     tracing::warn!("{}", error_msg);
-                                    let mut send_lock = send_shared.lock().await;
-                                    let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                    if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                         TerminalEvent::Error { message: error_msg },
-                                    )).await;
+                                    )) {
+                                        let _ = send_tx.send(encoded).await;
+                                    }
                                     break;
                                 }
 
-                                // Build terminal config
                                 let mut config = comacode_core::terminal::TerminalConfig::default();
                                 if let Some((rows, cols)) = pending_resize {
                                     config.rows = rows;
@@ -627,27 +701,43 @@ impl QuicServer {
                                     config.env.push(("LINES".to_string(), rows.to_string()));
                                 }
 
-                                // Create UUID session
                                 match session_mgr.create_session_with_uuid(
                                     session_id.clone(),
                                     config,
                                     &project_path,
                                 ).await {
                                     Ok(()) => {
-                                        // Send SessionCreated event
-                                        let mut send_lock = send_shared.lock().await;
-                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
-                                            TerminalEvent::session_created(session_id.clone()),
-                                        )).await;
+                                        active_session_id = Some(session_id.clone());
 
-                                        tracing::info!("Session {} created for project {}", session_id, project_path);
+                                        // Start TaggedOutput pump via channel (no lock held)
+                                        if let Some(output_rx) = session_mgr.take_output_rx_for_session(&session_id).await {
+                                            let history_tx = session_mgr.get_history_sender(&session_id).await;
+                                            let session_key = session_id.clone();
+                                            let pump_tx = send_tx.clone();
+
+                                            let pump_handle = tokio::spawn(async move {
+                                                Self::pump_tagged_via_channel(output_rx, pump_tx, session_key.clone(), history_tx).await;
+                                            });
+
+                                            session_mgr.set_pump_handle_for_session(&session_id, pump_handle).await;
+                                            tracing::info!("TaggedOutput pump started for newly created session {}", session_id);
+                                        }
+
+                                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
+                                            TerminalEvent::session_created(session_id.clone()),
+                                        )) {
+                                            let _ = send_tx.send(encoded).await;
+                                        }
+
+                                        tracing::info!("Session {} created and activated for project {}", session_id, project_path);
                                     }
                                     Err(e) => {
                                         tracing::error!("Failed to create session {}: {}", session_id, e);
-                                        let mut send_lock = send_shared.lock().await;
-                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                             TerminalEvent::Error { message: format!("Failed to create session: {}", e) },
-                                        )).await;
+                                        )) {
+                                            let _ = send_tx.send(encoded).await;
+                                        }
                                     }
                                 }
                             }
@@ -661,78 +751,59 @@ impl QuicServer {
                                     TerminalEvent::session_not_found(session_id.clone())
                                 };
 
-                                let mut send_lock = send_shared.lock().await;
-                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(event)).await;
+                                if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(event)) {
+                                    let _ = send_tx.send(encoded).await;
+                                }
                             }
                             SessionMessage::SwitchSession { session_id } => {
                                 tracing::info!("SwitchSession: {}", session_id);
 
-                                // Check if session exists
                                 if !session_mgr.session_exists(&session_id).await {
-                                    let mut send_lock = send_shared.lock().await;
-                                    let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                    if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                         TerminalEvent::session_not_found(session_id.clone()),
-                                    )).await;
+                                    )) {
+                                        let _ = send_tx.send(encoded).await;
+                                    }
                                     break;
                                 }
 
-                                // Phase 05: Stop pump task for previous session
                                 if let Some(ref old_session_id) = active_session_id {
                                     tracing::info!("Stopping pump for previous session: {}", old_session_id);
                                     session_mgr.stop_pump_for_session(old_session_id).await;
                                 }
 
-                                // Get history buffer
                                 let history = session_mgr.get_history(&session_id).await;
-
-                                // Send history if available
                                 if !history.is_empty() {
-                                    let mut send_lock = send_shared.lock().await;
-                                    let _ = Self::send_message(&mut *send_lock, &NetworkMessage::SessionHistory {
+                                    if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::SessionHistory {
                                         session_id: session_id.clone(),
                                         lines: history,
-                                    }).await;
+                                    }) {
+                                        let _ = send_tx.send(encoded).await;
+                                    }
                                 }
 
-                                // Update active session
                                 active_session_id = Some(session_id.clone());
 
-                                // Phase 05: Start TaggedOutput pump for new active session
                                 if let Some(output_rx) = session_mgr.take_output_rx_for_session(&session_id).await {
                                     let history_tx = session_mgr.get_history_sender(&session_id).await;
                                     let session_key = session_id.clone();
-                                    let send_clone = send_shared.clone();
+                                    let pump_tx = send_tx.clone();
 
                                     let pump_handle = tokio::spawn(async move {
-                                        let mut send_lock = send_clone.lock().await;
-                                        if let Err(e) = pump_pty_to_quic_tagged(
-                                            // Convert Receiver to AsyncRead
-                                            {
-                                                let stream = tokio_stream::wrappers::ReceiverStream::new(output_rx)
-                                                    .map(Ok::<_, std::io::Error>);
-                                                tokio_util::io::StreamReader::new(stream)
-                                            },
-                                            &mut *send_lock,
-                                            session_key.clone(),
-                                            history_tx,
-                                        ).await {
-                                            tracing::error!("TaggedOutput pump error for session {}: {}", session_key, e);
-                                        }
-                                        tracing::debug!("TaggedOutput pump completed for session {}", session_key);
+                                        Self::pump_tagged_via_channel(output_rx, pump_tx, session_key.clone(), history_tx).await;
                                     });
 
-                                    // Store pump handle
                                     session_mgr.set_pump_handle_for_session(&session_id, pump_handle).await;
                                     tracing::info!("TaggedOutput pump started for session {}", session_id);
                                 } else {
                                     tracing::warn!("No PTY output receiver available for session {} (pump already started?)", session_id);
                                 }
 
-                                // Send SessionSwitched event
-                                let mut send_lock = send_shared.lock().await;
-                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                     TerminalEvent::session_switched(session_id.clone()),
-                                )).await;
+                                )) {
+                                    let _ = send_tx.send(encoded).await;
+                                }
 
                                 tracing::info!("Switched to active session: {}", session_id);
                             }
@@ -741,25 +812,24 @@ impl QuicServer {
 
                                 match session_mgr.close_session(&session_id).await {
                                     Ok(()) => {
-                                        // Send SessionClosed event
-                                        let mut send_lock = send_shared.lock().await;
-                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                             TerminalEvent::session_closed(session_id.clone()),
-                                        )).await;
+                                        )) {
+                                            let _ = send_tx.send(encoded).await;
+                                        }
 
-                                        // Clear active session if it was the closed one
                                         if active_session_id.as_ref() == Some(&session_id) {
                                             active_session_id = None;
                                         }
-
                                         tracing::info!("Session {} closed", session_id);
                                     }
                                     Err(e) => {
                                         tracing::error!("Failed to close session {}: {}", session_id, e);
-                                        let mut send_lock = send_shared.lock().await;
-                                        let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                        if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                             TerminalEvent::Error { message: format!("Failed to close session: {}", e) },
-                                        )).await;
+                                        )) {
+                                            let _ = send_tx.send(encoded).await;
+                                        }
                                     }
                                 }
                             }
@@ -769,10 +839,11 @@ impl QuicServer {
                                 let sessions = session_mgr.list_uuid_sessions().await;
                                 let response_text = format!("Active sessions:\n{}", sessions.join("\n"));
 
-                                let mut send_lock = send_shared.lock().await;
-                                let _ = Self::send_message(&mut *send_lock, &NetworkMessage::Event(
+                                if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
                                     TerminalEvent::Output { data: response_text.into_bytes() },
-                                )).await;
+                                )) {
+                                    let _ = send_tx.send(encoded).await;
+                                }
                             }
                         }
                     }
@@ -805,7 +876,7 @@ impl QuicServer {
         pending_resize: Option<(u16, u16)>,
         pty_task: &mut Option<tokio::task::JoinHandle<()>>,
         session_id: &mut Option<u64>,
-        send_shared: &Arc<Mutex<quinn::SendStream>>,
+        send_tx: &mpsc::Sender<Vec<u8>>,
         initial_data: &[u8],
     ) -> Result<()> {
         let mut config = comacode_core::terminal::TerminalConfig::default();
@@ -833,13 +904,28 @@ impl QuicServer {
                     let _ = session_mgr.resize_session(id, rows, cols).await;
                 }
 
-                // Spawn PTY->QUIC pump task
+                // Spawn PTY->QUIC pump task via channel
                 if let Some(pty_reader) = session_mgr.get_pty_reader(id).await {
-                    let send_clone = send_shared.clone();
+                    let pump_tx = send_tx.clone();
                     *pty_task = Some(tokio::spawn(async move {
-                        let mut send_lock = send_clone.lock().await;
-                        if let Err(e) = pump_pty_to_quic(pty_reader, &mut *send_lock).await {
-                            tracing::error!("PTY->QUIC pump error: {}", e);
+                        let mut buf = vec![0u8; 8192];
+                        let mut pty = pty_reader;
+                        loop {
+                            match tokio::io::AsyncReadExt::read(&mut pty, &mut buf).await {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    let msg = NetworkMessage::Event(comacode_core::types::TerminalEvent::Output {
+                                        data: buf[..n].to_vec()
+                                    });
+                                    if let Ok(encoded) = MessageCodec::encode(&msg) {
+                                        if pump_tx.send(encoded).await.is_err() { break; }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("PTY->QUIC pump error: {}", e);
+                                    break;
+                                }
+                            }
                         }
                         tracing::debug!("PTY->QUIC pump completed");
                     }));
@@ -860,6 +946,59 @@ impl QuicServer {
                 Err(e)
             }
         }
+    }
+
+    /// Pump PTY output via channel (no SendStream lock held)
+    ///
+    /// Reads from PTY output receiver, encodes as TaggedOutput, sends via channel.
+    /// Also captures history lines for inactive session replay.
+    async fn pump_tagged_via_channel(
+        output_rx: tokio::sync::mpsc::Receiver<bytes::Bytes>,
+        send_tx: mpsc::Sender<Vec<u8>>,
+        session_id: String,
+        history_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    ) {
+        let mut output_rx = output_rx;
+        let mut line_accumulator = Vec::new();
+
+        while let Some(chunk) = output_rx.recv().await {
+            let data: &[u8] = &chunk;
+            tracing::info!("[PTY->QUIC] Read {} bytes for session {}", data.len(), session_id);
+
+            let msg = NetworkMessage::TaggedOutput(comacode_core::types::TaggedOutput {
+                session_id: session_id.clone(),
+                data: data.to_vec(),
+            });
+            if let Ok(encoded) = MessageCodec::encode(&msg) {
+                if send_tx.send(encoded).await.is_err() {
+                    tracing::error!("TaggedOutput pump: channel closed for session {}", session_id);
+                    break;
+                }
+            }
+
+            // History capture (best effort)
+            if let Some(ref tx) = history_tx {
+                line_accumulator.extend_from_slice(data);
+                if let Ok(text) = String::from_utf8(line_accumulator.clone()) {
+                    let mut split_lines = text.split('\n').peekable();
+                    let mut has_incomplete = false;
+                    while let Some(line) = split_lines.next() {
+                        if split_lines.peek().is_some() {
+                            let _ = tx.try_send(line.to_string());
+                        } else if !text.ends_with('\n') && !line.is_empty() {
+                            line_accumulator = line.as_bytes().to_vec();
+                            has_incomplete = true;
+                        }
+                    }
+                    if !has_incomplete {
+                        line_accumulator.clear();
+                    }
+                } else if line_accumulator.len() > 10000 {
+                    line_accumulator.clear();
+                }
+            }
+        }
+        tracing::debug!("TaggedOutput pump completed for session {}", session_id);
     }
 
     /// Send message to stream

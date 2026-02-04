@@ -242,12 +242,9 @@ impl SessionManager {
         // Spawn PTY with temporary u64 ID (internally)
         let temp_id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
-        // Build shell command with working directory
-        let shell_cmd = format!("cd {} && claude", working_dir);
-        let mut config_with_dir = config.clone();
-        config_with_dir.shell = shell_cmd;
-
-        let (session, output_rx) = PtySession::spawn(temp_id, config_with_dir.clone())
+        // Phase Fix-01: Use spawn_with_cwd() instead of shell command hack
+        // This properly sets working directory using CommandBuilder.cwd()
+        let (session, output_rx) = PtySession::spawn_with_cwd(temp_id, config.clone(), Some(working_dir))
             .with_context(|| format!("Failed to create PTY session {}", session_id))?;
 
         // Create history channel (buffer 100 lines, non-blocking)
@@ -257,7 +254,7 @@ impl SessionManager {
         let mut sessions = self.sessions_uuid.lock().await;
         let session_data = SessionData::new(
             session,
-            config_with_dir,
+            config,
             working_dir.to_string(),
             history_rx,
             output_rx,  // Phase 05: Pass output_rx for pump task

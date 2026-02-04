@@ -149,6 +149,26 @@ pub enum NetworkMessage {
         session_id: String,
         lines: Vec<String>,
     },
+
+    // ===== SSH Terminal Mode - Phase 1 =====
+
+    /// Batched keystrokes from client (SSH Terminal Mode)
+    /// Replaces single-character Input messages with batching for efficiency
+    KeyBatch {
+        /// Raw keystroke bytes (escape sequences already converted)
+        keys: Vec<u8>,
+        /// Sequence number for prediction ACK (Phase 2)
+        sequence_num: u64,
+        /// Client timestamp for latency measurement (ms since UNIX_EPOCH)
+        timestamp_ms: u64,
+    },
+
+    /// Acknowledge KeyBatch processing (Phase 2+)
+    /// Confirms predictions and provides latency feedback
+    KeyBatchAck {
+        /// Sequence number being acknowledged
+        sequence_num: u64,
+    },
 }
 
 /// Tagged output for multi-session routing
@@ -432,5 +452,66 @@ mod tests {
         let serialized = postcard::to_allocvec(&msg).unwrap();
         let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
         assert_eq!(msg, deserialized);
+    }
+
+    // ===== SSH Terminal Mode Tests - Phase 1 =====
+
+    #[test]
+    fn test_key_batch_message() {
+        let msg = NetworkMessage::KeyBatch {
+            keys: vec![0x68, 0x65, 0x6C, 0x6C, 0x6F], // "hello"
+            sequence_num: 1,
+            timestamp_ms: 1234567890,
+        };
+        assert!(matches!(msg, NetworkMessage::KeyBatch { .. }));
+
+        let serialized = postcard::to_allocvec(&msg).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_key_batch_empty_keys() {
+        let msg = NetworkMessage::KeyBatch {
+            keys: vec![],
+            sequence_num: 0,
+            timestamp_ms: 0,
+        };
+        let serialized = postcard::to_allocvec(&msg).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_key_batch_ack_message() {
+        let msg = NetworkMessage::KeyBatchAck {
+            sequence_num: 42,
+        };
+        assert!(matches!(msg, NetworkMessage::KeyBatchAck { .. }));
+
+        let serialized = postcard::to_allocvec(&msg).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_key_batch_roundtrip() {
+        let original = NetworkMessage::KeyBatch {
+            keys: vec![0x03, 0x1B, 0x5B, 0x41], // Ctrl+C + ESC[A (up arrow)
+            sequence_num: 100,
+            timestamp_ms: 9876543210,
+        };
+
+        let serialized = postcard::to_allocvec(&original).unwrap();
+        let deserialized: NetworkMessage = postcard::from_bytes(&serialized).unwrap();
+
+        match deserialized {
+            NetworkMessage::KeyBatch { keys, sequence_num, timestamp_ms } => {
+                assert_eq!(keys, vec![0x03, 0x1B, 0x5B, 0x41]);
+                assert_eq!(sequence_num, 100);
+                assert_eq!(timestamp_ms, 9876543210);
+            }
+            _ => panic!("Expected KeyBatch message"),
+        }
     }
 }

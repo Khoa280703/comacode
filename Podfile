@@ -1,5 +1,5 @@
 # Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+platform :ios, '18.6'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -28,7 +28,8 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 flutter_ios_podfile_setup
 
 target 'Runner' do
-  use_frameworks!
+  use_frameworks! :linkage => :static
+  # mobile_bridge static library linked manually
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
@@ -41,10 +42,15 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
 
     target.build_configurations.each do |config|
-      # XÓA BỎ LỆNH CẤM (QUAN TRỌNG NHẤT)
+      # 1. GỠ BỎ LỆNH CẤM ARM64 (Quan trọng nhất)
+      # Dòng này ép CocoaPods cho phép chạy arm64 trên Simulator (cho chip M1/M2/M3)
       config.build_settings.delete 'EXCLUDED_ARCHS'
-      # Chỉ cấm i386 (máy cũ), CHO PHÉP arm64
-      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = "i386"
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = ""
+
+      # 2. Fix lỗi version thấp (Giữ nguyên logic cũ của bạn)
+      if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 13.0
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      end
     end
   end
 end

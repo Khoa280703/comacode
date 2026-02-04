@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
@@ -10,13 +9,14 @@ import '../../bridge/bridge_wrapper.dart';
 import '../connection/connection_providers.dart';
 import '../project/models/project.dart';
 import '../project/models/session_metadata.dart';
-import 'models/special_key.dart';
 import 'models/vibe_session_state.dart';
 import 'vibe_session_providers.dart';
-import 'widgets/input_bar.dart';
+import 'widgets/quick_keys_toolbar.dart';
 import 'widgets/output_view.dart';
 import 'widgets/search_overlay.dart';
 import 'widgets/session_tab_bar.dart';
+import '../terminal/ssh_input_handler.dart'; // SSH Terminal Mode - Phase 1
+import '../terminal/prediction_engine.dart'; // SSH Terminal Mode - Phase 2
 
 /// Vibe Session Page - Chat-style interface for Claude Code CLI
 ///
@@ -64,82 +64,88 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   int? _lastSentRows;
   bool _resizeCallbackSetup = false;
 
+  // SSH Terminal Mode - Phase 1: Terminal input handler
+  // Captures ALL keystrokes via HardwareKeyboard and sends via KeyBatch
+  SshInputHandler? _terminalInputHandler;
+
+  // SSH Terminal Mode - Phase 2: Prediction engine for speculative local echo
+  PredictionEngine? _predictionEngine;
+  Timer? _ackPollTimer;
+
   @override
   void initState() {
     super.initState();
     // Phase 05: Initialize session with re-attach/re-spawn logic
     if (widget.project != null && widget.session != null) {
-      _initializeSessionWithRetry();
+      _initializeSessionWithRetry().then((_) {
+        // SSH Terminal Mode - Initialize input handler AFTER session is ready
+        if (mounted) {
+          _initTerminalInputHandler();
+        }
+      });
+    } else {
+      // Direct connection mode - initialize immediately
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _keyboardFocusNode.requestFocus();
+          _initTerminalInputHandler();
+        }
+      });
     }
-    // Auto-focus for physical keyboard support
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _keyboardFocusNode.requestFocus();
+  }
+
+  /// Initialize SSH terminal input handler
+  void _initTerminalInputHandler() {
+    final vibeState = ref.read(vibeSessionProvider);
+    final bridge = ref.read(bridgeWrapperProvider);
+
+    // Create prediction engine (Phase 2)
+    _predictionEngine = PredictionEngine(
+      terminal: vibeState.terminal,
+      onLatencyUpdate: (rtt) {
+        debugPrint('[SSH Terminal Mode] RTT: ${rtt.inMilliseconds}ms');
+      },
+    );
+
+    // Create input handler with prediction
+    // No textFieldFocusNode - all input goes directly to terminal
+    _terminalInputHandler = SshInputHandler(
+      terminal: vibeState.terminal,
+      onKeyBatch: (bytes, seq) {
+        bridge.sendKeyBatch(keys: bytes, sequenceNum: seq).catchError((e) {
+          debugPrint('[SSH Terminal Mode] sendKeyBatch error: $e');
+        });
+      },
+      // textFieldFocusNode: null - Pure SSH mode, direct terminal input
+    );
+    _terminalInputHandler!.attachWithPrediction(_predictionEngine!);
+
+    // Start polling for KeyBatchAck (Phase 2)
+    _startAckPolling(bridge);
+  }
+
+  /// Start polling for KeyBatchAck messages
+  void _startAckPolling(BridgeWrapper bridge) {
+    _ackPollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) async {
+      if (!mounted) return;
+      final seq = await bridge.pollKeyBatchAck();
+      if (seq > 0) {
+        _predictionEngine?.handleAck(seq);
       }
     });
   }
 
   @override
   void dispose() {
+    _ackPollTimer?.cancel();
+    _ackPollTimer = null;
+    _predictionEngine?.dispose();
+    _predictionEngine = null;
+    _terminalInputHandler?.detach();
+    _terminalInputHandler = null;
     _keyboardFocusNode.dispose();
     _resizeTimer?.cancel(); // Cancel pending resize timer
     super.dispose();
-  }
-
-  /// Handle physical keyboard events (Bluetooth/USB keyboards)
-  KeyEventResult _handleKeyEvent(KeyEvent event, WidgetRef ref) {
-    // Only handle key down events
-    if (event is! KeyDownEvent) {
-      return KeyEventResult.ignored;
-    }
-
-    final key = event.logicalKey;
-    final modifiers = HardwareKeyboard.instance.logicalKeysPressed;
-
-    // Check modifier state
-    final isCtrl = modifiers.contains(LogicalKeyboardKey.controlLeft) ||
-                   modifiers.contains(LogicalKeyboardKey.controlRight);
-    final isAlt = modifiers.contains(LogicalKeyboardKey.altLeft) ||
-                  modifiers.contains(LogicalKeyboardKey.altRight);
-
-    // Handle Ctrl combinations
-    if (isCtrl) {
-      switch (key) {
-        case LogicalKeyboardKey.keyC:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.ctrlC);
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.keyD:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.ctrlD);
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.keyL:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.ctrlL);
-          return KeyEventResult.handled;
-      }
-    }
-
-    // Handle special keys without Alt (Alt is often used for system shortcuts)
-    if (!isAlt) {
-      switch (key) {
-        case LogicalKeyboardKey.tab:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.tab);
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowUp:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowUp);
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowDown:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowDown);
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowLeft:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowUp);
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowRight:
-          ref.read(vibeSessionProvider.notifier).sendSpecialKey(SpecialKey.arrowDown);
-          return KeyEventResult.handled;
-      }
-    }
-
-    // Let TextField handle regular character input
-    return KeyEventResult.ignored;
   }
 
   /// Initialize session with re-attach/re-spawn logic
@@ -157,39 +163,18 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
       final projectPath = widget.project!.path;
       final vibeNotifier = ref.read(vibeSessionProvider.notifier);
 
-      setState(() => _restoreMessage = 'Attaching to session...');
+      setState(() => _restoreMessage = 'Creating session...');
 
-      // Step 1: Check if session exists on server
+      // Phase Fix-05: Use createSession() API instead of sendCommand()
+      // This properly initializes session with UUID and working directory
       final bridge = ref.read(bridgeWrapperProvider);
-      final exists = await bridge.checkSession(sessionId);
+      await bridge.createSession(
+        projectPath: projectPath,
+        sessionId: sessionId,
+      );
 
-      if (exists) {
-        // Re-attach: Server PTY still alive, just connect
-        setState(() => _restoreMessage = 'Restoring session...');
-        await _attachToExistingSession(sessionId);
-      } else {
-        // Re-spawn: Create new PTY with same config
-        setState(() => _restoreMessage = 'Starting new session...');
-        await bridge.createSession(
-          projectPath: projectPath,
-          sessionId: sessionId,
-        );
-      }
-
-      // Step 2: Switch to this session on server
-      // This tells the server to pump output for this session
-      setState(() => _restoreMessage = 'Connecting...');
-      await bridge.switchSession(sessionId);
-
-      // Step 3: CRITICAL - Attach session to ensure event loop is running
-      // This is now called every time we enter the session page
-      // The attachSession() method is smart enough to handle re-entry properly
+      // Step 2: Attach session to start event loop
       await vibeNotifier.attachSession(sessionId);
-
-      // Step 4: Send a test command to verify PTY is alive
-      // This ensures we're connected to a working PTY
-      // Empty command just pings the PTY without executing anything
-      await bridge.sendCommand('\r'); // Send Enter to refresh prompt
 
       // Step 5: Clear restore message after delay
       if (mounted) {
@@ -212,7 +197,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   Future<void> _attachToExistingSession(String sessionId) async {
     // Session exists on server, just attach to receive output
     // Event loop will be restarted via attachSession() after switchSession()
-    debugPrint('📌 [VibeSession] Attaching to existing session: $sessionId');
+    debugPrint('[VibeSession] Attaching to existing session: $sessionId');
   }
 
   /// Phase 02: Setup terminal resize callback
@@ -248,12 +233,12 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
         await bridge.resizePty(rows: rows, cols: cols);
         _lastSentCols = cols;
         _lastSentRows = rows;
-        debugPrint('✅ Terminal resized: ${cols}x$rows');
-        
+        debugPrint('[VibeSession] Terminal resized: ${cols}x$rows');
+
         // OPTIMIZATION: Let shell handle prompt naturally
         // No need to force clear screen - causes flickering
       } catch (e) {
-        debugPrint('❌ Resize failed: $e');
+        debugPrint('[VibeSession] Resize failed: $e');
       }
     });
   }
@@ -272,11 +257,11 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
           await bridge.resizePty(rows: _cachedRows!, cols: _cachedCols!);
           _lastSentCols = _cachedCols;
           _lastSentRows = _cachedRows;
-          debugPrint('✅ Initial terminal size: ${_cachedCols}x$_cachedRows');
-          
+          debugPrint('[VibeSession] Initial terminal size: ${_cachedCols}x$_cachedRows');
+
           // Backend will trigger prompt automatically - no need to force it
         } catch (e) {
-          debugPrint('❌ Initial resize failed: $e');
+          debugPrint('[VibeSession] Initial resize failed: $e');
         }
       });
     }
@@ -415,9 +400,12 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
 
   Widget _buildConnected(BuildContext context, WidgetRef ref,
       VibeSessionState vibeState) {
+    // SSH Terminal Mode - Phase Fix-04: Remove old keyboard handler
+    // SshInputHandler now captures ALL keyboard events via HardwareKeyboard
+    // No need for Focus.onKeyEvent (it was blocking Enter key)
     return Focus(
       focusNode: _keyboardFocusNode,
-      onKeyEvent: (node, event) => _handleKeyEvent(event, ref),
+      // onKeyEvent removed - SshInputHandler handles all keys directly
       child: Stack(
         children: [
         Column(
@@ -433,8 +421,11 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
                     )
                   : _buildParsedOutput(context, ref, vibeState),
             ),
-            // Input bar + Quick keys
-            InputBar(),
+            // Quick keys toolbar only (SSH Terminal Mode - direct input)
+            QuickKeysToolbar(
+              onKeyPressed: (key) =>
+                  ref.read(vibeSessionProvider.notifier).sendSpecialKey(key),
+            ),
             // Error banner
             if (vibeState.error != null)
               Container(

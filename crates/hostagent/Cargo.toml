@@ -18,8 +18,9 @@ tokio = { workspace = true, features = ["sync", "full"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-# Terminal (not available on iOS)
-portable-pty = { workspace = true, optional = true }
+# Terminal (not available on iOS - only for desktop builds)
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+portable-pty = { workspace = true }
 # Bytes for zero-copy
 bytes = "1.8"
 # QUIC networking
@@ -53,5 +54,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 notify = "7.0"
 
 [features]
-default = ["pty"]
-pty = ["portable-pty"]
+default = []
+# PTY feature is auto-enabled on desktop via cfg, not needed as explicit feature
+# This keeps mobile builds clean without PTY dependencies

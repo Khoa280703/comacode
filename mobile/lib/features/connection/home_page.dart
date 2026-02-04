@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../qr_scanner/qr_scanner_page.dart';
 import '../project/project_picker_page.dart';
+import 'manual_connect_page.dart';
 import 'connection_providers.dart';
 import '../../core/storage.dart';
 import '../../core/theme.dart';
@@ -446,9 +447,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _navigateToManual(BuildContext context) {
-    // TODO: Implement manual connect page
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Manual connect coming soon')),
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ManualConnectPage()),
     );
   }
 

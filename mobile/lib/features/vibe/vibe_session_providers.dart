@@ -72,16 +72,16 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
       _isDisposed = false;
       _eventLoopCount = 0;
 
-      debugPrint('✅ [VibeSession] Starting new event loop for $sessionId');
+      debugPrint('[VibeSession] Starting new event loop for $sessionId');
       _startEventLoop();
     } else if (isEventLoopDead) {
       // Same session but event loop is dead - restart it
-      debugPrint('🔄 [VibeSession] Event loop was dead, restarting for $sessionId');
+      debugPrint('[VibeSession] Event loop was dead, restarting for $sessionId');
       _isDisposed = false;
       _startEventLoop();
     } else {
       // Event loop already running for this session
-      debugPrint('✅ [VibeSession] Event loop already running for $sessionId');
+      debugPrint('[VibeSession] Event loop already running for $sessionId');
     }
   }
 
@@ -137,15 +137,23 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
     // Cancel old health check timer if exists
     _healthCheckTimer?.cancel();
 
+    debugPrint('🔄 [EventLoop] STARTING event loop for session: $_currentSessionId');
+
     _eventLoopTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (timer) async {
         if (_isDisposed) {
           timer.cancel();
+          debugPrint('🛑 [EventLoop] STOPPED - disposed');
           return;
         }
 
         try {
+          // DEBUG: Log before receiveEvent() call
+          if (_eventLoopCount < 5) {
+            debugPrint('📥 [EventLoop] Calling receiveEvent() #${_eventLoopCount + 1}');
+          }
+
           final event = await _bridge.receiveEvent();
 
           if (_isDisposed) return;
@@ -153,23 +161,36 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
           // Mark event loop as healthy when we receive events
           _isEventLoopHealthy = true;
 
-          // Debug: log event type (throttled)
+          // Debug: log event type (heavily throttled - only every 1000 events)
           _eventLoopCount++;
-          if (_eventLoopCount % 50 == 1) {
-            debugPrint('📥 [EventLoop] Event #$_eventLoopCount: ${event.runtimeType}');
+          if (_eventLoopCount % 1000 == 1) {
+            debugPrint('[EventLoop] Processed $_eventLoopCount events');
           }
 
-          // Debug: check event type
-          if (_eventLoopCount % 50 == 1) {
+          // DEBUG: Log event type for first 10 events
+          if (_eventLoopCount <= 10) {
             final isOutput = isEventOutput(event);
             final isError = isEventError(event);
             final isExit = isEventExit(event);
-            debugPrint('  → isOutput=$isOutput, isError=$isError, isExit=$isExit');
+            debugPrint('📦 [EventLoop] Event #$_eventLoopCount: Output=$isOutput, Error=$isError, Exit=$isExit');
           }
 
           if (isEventOutput(event)) {
             final data = getEventData(event);
-            debugPrint('  → Output data size: ${data.length} bytes');
+
+            // DEBUG: ALWAYS log output events for first 20 events
+            if (_eventLoopCount <= 20) {
+              debugPrint('📤 [EventLoop] Output event #$_eventLoopCount: ${data.length} bytes');
+              if (data.isNotEmpty) {
+                final preview = data.take(50).toList();
+                debugPrint('   Raw bytes: $preview');
+              }
+            }
+
+            // Only log non-zero output to reduce spam
+            if (data.isNotEmpty && data.length % 1000 == 0 && kDebugMode) {
+              debugPrint('  → Output data size: ${data.length} bytes');
+            }
             if (data.isNotEmpty) {
               try {
                 // FIX: Use proper UTF-8 decoder for Vietnamese/emoji support
@@ -177,12 +198,23 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
                 // allowMalformed: true prevents crashes on invalid UTF-8
                 final text = utf8.decode(data, allowMalformed: true);
 
+                // DEBUG: Log decoded text for first 10 non-empty outputs
+                if (_eventLoopCount <= 10 && text.isNotEmpty) {
+                  final preview = text.length > 100 ? text.substring(0, 100) : text;
+                  debugPrint('📝 [EventLoop] Decoded text: "$preview"');
+                  debugPrint('✍️  [EventLoop] Writing to terminal...');
+                }
+
                 // Add to output buffer (limits memory growth)
                 _outputBuffer.add(text);
 
                 // Write to terminal for display
                 state.terminal.write(text);
-                debugPrint('  → Written to terminal: ${text.length} chars');
+
+                // DEBUG: Confirm write for first 10 events
+                if (_eventLoopCount <= 10 && text.isNotEmpty) {
+                  debugPrint('✅ [EventLoop] Terminal write complete');
+                }
 
                 // Log buffer stats periodically for monitoring
                 if (_outputBuffer.length % 1000 == 0) {
@@ -194,26 +226,36 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
                 }
               } catch (e) {
                 // Fallback: Try Latin-1 if UTF-8 fails completely
-                debugPrint('⚠️ UTF-8 decode failed: $e');
+                debugPrint('[EventLoop] UTF-8 decode failed: $e');
                 final text = String.fromCharCodes(data);
                 _outputBuffer.add(text);
                 state.terminal.write(text);
               }
+            } else {
+              // DEBUG: Log empty output events
+              if (_eventLoopCount <= 20) {
+                debugPrint('⚠️  [EventLoop] Empty output event #$_eventLoopCount');
+              }
             }
           } else if (isEventError(event)) {
             final message = getEventErrorMessage(event);
+            debugPrint('❌ [EventLoop] Error event: $message');
             final errorText = '\x1b[31mError: $message\x1b[0m\r\n';
             _outputBuffer.add(errorText);
             state.terminal.write(errorText);
           } else if (isEventExit(event)) {
             final code = getEventExitCode(event);
+            debugPrint('🚪 [EventLoop] Exit event: code=$code');
             final exitText = '\r\n\x1b[33mProcess exited with code $code\x1b[0m\r\n';
             _outputBuffer.add(exitText);
             state.terminal.write(exitText);
           }
-        } catch (e) {
+        } catch (e, stackTrace) {
           // Log for debugging - event loop errors
-          debugPrint('❌ [EventLoop] Error: $e');
+          debugPrint('💥 [EventLoop] ERROR: $e');
+          if (_eventLoopCount < 5) {
+            debugPrint('   Stack trace: $stackTrace');
+          }
         }
       },
     );
@@ -223,7 +265,7 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
       const Duration(seconds: 5),
       (_) {
         if (!_isEventLoopHealthy && !_isDisposed && _eventLoopTimer != null) {
-          debugPrint('⚠️ [EventLoop] No events for 5 seconds - PTY may be dead or disconnected');
+          debugPrint('[EventLoop] No events for 5 seconds - PTY may be dead or disconnected');
           // TODO: Could trigger reconnection or show user-facing error here
         }
         _isEventLoopHealthy = false; // Reset flag for next check

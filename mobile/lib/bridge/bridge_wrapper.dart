@@ -44,11 +44,11 @@ class BridgeWrapper {
   /// Send command to remote terminal
   Future<void> sendCommand(String command) async {
     try {
-      debugPrint('🔵 [BridgeWrapper] sendCommand called: "$command"');
+      debugPrint('[BridgeWrapper] sendCommand called: "$command"');
       await frb_api.sendTerminalCommand(command: command);
-      debugPrint('✅ [BridgeWrapper] sendCommand completed');
+      debugPrint('[BridgeWrapper] sendCommand completed');
     } catch (e) {
-      debugPrint('❌ [BridgeWrapper] sendCommand error: $e');
+      debugPrint('[BridgeWrapper] sendCommand error: $e');
       throw Exception('Send command failed: $e');
     }
   }
@@ -70,11 +70,31 @@ class BridgeWrapper {
   /// Call này trong loop để stream terminal output
   Future<TerminalEvent> receiveEvent() async {
     try {
-      return await frb_api.receiveTerminalEvent();
+      // DEBUG: Log call to receiveEvent (throttled to first 5 calls)
+      if (_receiveEventCallCount < 5) {
+        debugPrint(
+          '🔌 [BridgeWrapper] Calling frb_api.receiveTerminalEvent() #${_receiveEventCallCount + 1}',
+        );
+      }
+      _receiveEventCallCount++;
+
+      final event = await frb_api.receiveTerminalEvent();
+
+      // DEBUG: Log result (throttled to first 5 calls)
+      if (_receiveEventCallCount <= 5) {
+        debugPrint(
+          '📬 [BridgeWrapper] receiveTerminalEvent() returned event type: ${event.runtimeType}',
+        );
+      }
+
+      return event;
     } catch (e) {
+      debugPrint('💥 [BridgeWrapper] receiveEvent EXCEPTION: $e');
       throw Exception('Receive event failed: $e');
     }
   }
+
+  int _receiveEventCallCount = 0;
 
   /// Disconnect from host
   Future<void> disconnect() async {
@@ -94,6 +114,38 @@ class BridgeWrapper {
     }
   }
 
+  /// Send batched keystrokes (SSH Terminal Mode - Phase 1)
+  ///
+  /// Sends keystrokes with sequence tracking for latency measurement.
+  /// More efficient than individual sendCommand() calls.
+  Future<void> sendKeyBatch({
+    required List<int> keys,
+    required int sequenceNum,
+  }) async {
+    try {
+      debugPrint(
+        '[BridgeWrapper] sendKeyBatch: seq=$sequenceNum, ${keys.length} bytes',
+      );
+      await frb_api.sendKeyBatch(keys: keys, sequenceNum: sequenceNum);
+    } catch (e) {
+      debugPrint('[BridgeWrapper] sendKeyBatch error: $e');
+      throw Exception('Send key batch failed: $e');
+    }
+  }
+
+  /// Poll for KeyBatchAck (SSH Terminal Mode - Phase 2)
+  ///
+  /// Returns the highest sequence number acknowledged by server.
+  /// Returns 0 if no pending acknowledgments.
+  Future<int> pollKeyBatchAck() async {
+    try {
+      return await frb_api.pollKeyBatchAck();
+    } catch (e) {
+      debugPrint('[BridgeWrapper] pollKeyBatchAck error: $e');
+      return 0;
+    }
+  }
+
   // ===== VFS (Virtual File System) Methods =====
 
   /// List directory entries from remote server using Stream API
@@ -104,7 +156,7 @@ class BridgeWrapper {
   ///
   /// Returns a Stream that emits List of DirEntry (raw FRB type).
   Stream<List<DirEntry>> listDirectory(String path) {
-    debugPrint('📁 [BridgeWrapper] listDirectory: $path');
+    debugPrint('[BridgeWrapper] listDirectory: $path');
     // Return raw stream - transform happens in vfs_notifier
     return frb_api.streamListDir(path: path);
   }

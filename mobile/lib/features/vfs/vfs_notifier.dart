@@ -125,7 +125,7 @@ class VfsNotifier extends StateNotifier<VfsState> {
           );
 
           state = newState;
-          debugPrint('✅ [VfsNotifier] Updated state: path=$path, entries=${sortedEntries.length}, isLoading=false');
+          debugPrint('[VfsNotifier] Updated state: path=$path, entries=${sortedEntries.length}, isLoading=false');
         },
         // onError
         onError: (error) {
@@ -133,14 +133,14 @@ class VfsNotifier extends StateNotifier<VfsState> {
             isLoading: false,
             error: error.toString(),
           );
-          debugPrint('❌ [VfsNotifier] Stream error: $error');
+          debugPrint('[VfsNotifier] Stream error: $error');
         },
         // onDone
         onDone: () {
           // Phase VFS-Fix: Do NOT modify state here!
           // onData already set isLoading=false and entries
           // onDone fires after, so we should not overwrite anything
-          debugPrint('✅ [VfsNotifier] Stream done (state has ${state.entries.length} entries)');
+          debugPrint('[VfsNotifier] Stream done (state has ${state.entries.length} entries)');
         },
       );
     } catch (e) {

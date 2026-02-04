@@ -1,0 +1,14 @@
+🚀 XCODE BUILD SCRIPT - 8 BƯỚC NHANH
+
+1. Mở: open ios/Runner.xcodeproj
+2. Click: Runner (TARGETS, không phải PROJECT)
+3. Click tab: Build Phases
+4. Click nút: + → New Run Script Phase
+5. Double-click: "Run Script" → đổi "Build Rust Libraries"
+6. Paste: "${SRCROOT}/build_rust_libs.sh"
+7. Kéo: "Build Rust Libraries" lên TRƯỚC "Compile Sources"
+8. Test: Product → Clean → Build
+
+✅ Xem log phải thấy: 🦀 Building Rust libraries...
+
+❓ Stuck? Đọc: plans/reports/brainstormer-260203-1530-manual-xcode-guide.md

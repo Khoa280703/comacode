@@ -41,6 +41,15 @@ impl PtySession {
     /// Returns `(Arc<Mutex<PtySession>>, Receiver<Bytes>)` where the receiver
     /// can be converted to AsyncRead for QUIC forwarding.
     pub fn spawn(id: u64, config: TerminalConfig) -> Result<(Arc<Mutex<Self>>, tokio::sync::mpsc::Receiver<Bytes>)> {
+        Self::spawn_with_cwd(id, config, None)
+    }
+
+    /// Spawn PTY session with optional working directory
+    ///
+    /// Phase Fix-01: Fix working directory bug
+    /// Uses CommandBuilder.cwd() to set working directory properly
+    /// instead of shell command hack ("cd path && shell")
+    pub fn spawn_with_cwd(id: u64, config: TerminalConfig, working_dir: Option<&str>) -> Result<(Arc<Mutex<Self>>, tokio::sync::mpsc::Receiver<Bytes>)> {
         let pty_system = native_pty_system();
 
         let pty_size = PtySize {
@@ -56,6 +65,12 @@ impl PtySession {
 
         // Build command with shell and env
         let mut cmd = CommandBuilder::new(config.shell.clone());
+
+        // Set working directory if provided (KEY FIX)
+        if let Some(cwd) = working_dir {
+            cmd.cwd(cwd);
+        }
+
         for (key, value) in &config.env {
             cmd.env(key, value);
         }
@@ -67,12 +82,12 @@ impl PtySession {
 
         // Get writer from master
         let mut writer = pty_pair.master.take_writer()?;
-        
-        // OPTIMIZATION: Trigger initial prompt immediately after shell spawn
-        // This eliminates need for client-side delays and forced clear screens
-        // Small delay to let shell initialize, then send newline
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        let _ = writer.write(b"\n");  // Trigger prompt display
+
+        // Phase Fix-04: REMOVED automatic prompt trigger
+        // Modern shells display prompt automatically after spawn
+        // Automatic trigger caused duplicate prompts when combined with client commands
+        // std::thread::sleep(std::time::Duration::from_millis(100));
+        // let _ = writer.write(b"\n");  // Trigger prompt display
 
         // Create bounded output stream (channel capacity = 1024 messages)
         let (output_stream, output_rx) = OutputStream::new(1024);

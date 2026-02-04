@@ -1,2 +1,11 @@
-#include "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include "Generated.xcconfig"
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+
+// Force arm64 only (Apple Silicon)
+ARCHS = arm64
+ONLY_ACTIVE_ARCH = YES
+
+// Rust library linking - platform specific
+LIBRARY_SEARCH_PATHS = $(inherited) $(SRCROOT)/RustLibs
+OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) -force_load "${SRCROOT}/RustLibs/libmobile_bridge.a"
+OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) -force_load "${SRCROOT}/RustLibs/libmobile_bridge_sim.a"

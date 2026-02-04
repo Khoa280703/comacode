@@ -230,6 +230,7 @@ where
         }
 
         let data = &buf[..n];
+        tracing::info!("[PTY->QUIC] Read {} bytes for session {}", n, session_id);
 
         // FAST PATH: Send to network immediately (no waiting for history)
         let msg = NetworkMessage::TaggedOutput(TaggedOutput {

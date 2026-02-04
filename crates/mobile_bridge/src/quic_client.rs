@@ -19,7 +19,7 @@ use comacode_core::protocol::MessageCodec;
 use comacode_core::types::{NetworkMessage, TerminalCommand, FileEventType, SessionMessage, TaggedOutput};
 use quinn::{Endpoint, Connection, SendStream};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 use tracing::{info, error, debug, warn};
 use bytes::{BytesMut, BufMut, Buf};
@@ -175,6 +175,9 @@ pub struct QuicClient {
     /// Event buffer for background receive task
     /// Events from server are pushed here by background task
     event_buffer: Arc<Mutex<Vec<TerminalEvent>>>,
+    /// Notification for new events (Fix: blank terminal output bug)
+    /// Wakes receive_event() when new events are pushed to buffer
+    event_notify: Arc<Notify>,
     /// DirChunk buffer for VFS directory listing
     dir_chunk_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
     /// File event buffer for VFS file watcher (Phase VFS-3)
@@ -186,6 +189,8 @@ pub struct QuicClient {
     session_history_buffer: Arc<Mutex<Vec<NetworkMessage>>>,
     /// Active session ID (Phase 04)
     active_session_id: Arc<Mutex<Option<String>>>,
+    /// KeyBatchAck buffer for SSH Terminal Mode (Phase 2)
+    key_batch_ack_buffer: Arc<Mutex<Vec<u64>>>,
 }
 
 impl QuicClient {
@@ -202,11 +207,13 @@ impl QuicClient {
             send_stream: None,
             recv_task: None,
             event_buffer: Arc::new(Mutex::new(Vec::new())),
+            event_notify: Arc::new(Notify::new()),
             dir_chunk_buffer: Arc::new(Mutex::new(Vec::new())),
             file_event_buffer: Arc::new(Mutex::new(Vec::new())),
             file_content_buffer: Arc::new(Mutex::new(Vec::new())),
             session_history_buffer: Arc::new(Mutex::new(Vec::new())),
             active_session_id: Arc::new(Mutex::new(None)),
+            key_batch_ack_buffer: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -308,11 +315,13 @@ impl QuicClient {
         // This reads from QUIC stream continuously in background
         // and pushes events to event_buffer. receive_event() polls from buffer.
         let event_buffer = self.event_buffer.clone();
+        let event_notify = self.event_notify.clone();
         let dir_chunk_buffer = self.dir_chunk_buffer.clone();
         let file_event_buffer = self.file_event_buffer.clone();
         let file_content_buffer = self.file_content_buffer.clone();
         let session_history_buffer = self.session_history_buffer.clone();
         let active_session_id = self.active_session_id.clone();
+        let key_batch_ack_buffer = self.key_batch_ack_buffer.clone();
         let recv_task = tokio::spawn(async move {
             info!("🔄 [RECV_TASK] Background receive task started");
             let mut recv = recv_shared.lock().await;
@@ -433,8 +442,21 @@ impl QuicClient {
                                     let current_active = active_session_id.lock().await;
                                     if current_active.as_ref() == Some(&session_id) {
                                         drop(current_active);
-                                        let mut buffer = event_buffer.lock().await;
-                                        buffer.push(TerminalEvent::Output { data });
+                                        {
+                                            let mut buffer = event_buffer.lock().await;
+                                            buffer.push(TerminalEvent::Output { data });
+                                        }
+                                        // Fix: Notify waiting receive_event() calls
+                                        event_notify.notify_one();
+                                    }
+                                }
+                                NetworkMessage::KeyBatchAck { sequence_num } => {
+                                    info!("⌨️ [RECV_TASK] KeyBatchAck received: seq={}", sequence_num);
+                                    let mut buffer = key_batch_ack_buffer.lock().await;
+                                    if buffer.len() < 1000 {
+                                        buffer.push(sequence_num);
+                                    } else {
+                                        warn!("⌨️ [RECV_TASK] KeyBatchAck buffer full, dropping");
                                     }
                                 }
                                 _ => {
@@ -463,20 +485,35 @@ impl QuicClient {
         Ok(())
     }
 
-    /// Receive next terminal event from server (NON-BLOCKING)
+    /// Receive next terminal event from server (BLOCKING)
+    ///
+    /// Fix: Terminal blank screen bug - now blocks until event available
+    /// Uses tokio::sync::Notify for efficient async wait (no busy-loop)
     ///
     /// Phase 09: Polls from event buffer populated by background task.
-    /// Returns immediately if no events available (empty event).
     pub async fn receive_event(&self) -> Result<TerminalEvent, String> {
-        let mut buffer = self.event_buffer.lock().await;
+        loop {
+            {
+                let mut buffer = self.event_buffer.lock().await;
+                if !buffer.is_empty() {
+                    // Event available - return it
+                    return Ok(buffer.remove(0));
+                }
+            } // Release lock before waiting
 
-        if buffer.is_empty() {
-            // No events available - return empty immediately (non-blocking)
-            Ok(TerminalEvent::output_str(""))
-        } else {
-            // Pop first event from buffer
-            Ok(buffer.remove(0))
+            // Wait for notification from recv_task (efficient, no CPU waste)
+            self.event_notify.notified().await;
         }
+    }
+
+    /// Get cloned Arc to event buffer (for lock-free polling from api.rs)
+    pub fn event_buffer_arc(&self) -> Arc<Mutex<Vec<TerminalEvent>>> {
+        self.event_buffer.clone()
+    }
+
+    /// Get cloned Arc to event notify (for lock-free waiting from api.rs)
+    pub fn event_notify_arc(&self) -> Arc<Notify> {
+        self.event_notify.clone()
     }
 
     /// Send command to remote terminal
@@ -529,6 +566,78 @@ impl QuicClient {
 
         debug!("Sent raw input via QUIC");
         Ok(())
+    }
+
+    /// Send batched keystrokes (SSH Terminal Mode - Phase 1)
+    ///
+    /// Sends keystrokes with sequence tracking for latency measurement and
+    /// future prediction support (Phase 2).
+    ///
+    /// # Arguments
+    /// * `keys` - Raw keystroke bytes (escape sequences already converted)
+    /// * `sequence_num` - Monotonically increasing sequence number for ACK tracking
+    pub async fn send_key_batch(&self, keys: Vec<u8>, sequence_num: u64) -> Result<(), String> {
+        eprintln!("🟢 [QUIC CLIENT] send_key_batch ENTER: seq={}, {} key bytes", sequence_num, keys.len());
+
+        let send_stream = self.send_stream.as_ref()
+            .ok_or_else(|| {
+                eprintln!("🔴 [QUIC CLIENT] send_stream is None!");
+                "Not connected".to_string()
+            })?;
+
+        // Get timestamp for latency measurement
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        eprintln!("🟢 [QUIC CLIENT] BEFORE encode: seq={}, timestamp_ms={}", sequence_num, timestamp_ms);
+
+        let batch_msg = NetworkMessage::KeyBatch {
+            keys: keys.clone(),
+            sequence_num,
+            timestamp_ms,
+        };
+        let encoded = MessageCodec::encode(&batch_msg)
+            .map_err(|e| {
+                eprintln!("🔴 [QUIC CLIENT] encode FAILED: seq={}, err={}", sequence_num, e);
+                format!("Failed to encode KeyBatch: {}", e)
+            })?;
+
+        eprintln!("🟢 [QUIC CLIENT] AFTER encode: seq={}, encoded_bytes={}", sequence_num, encoded.len());
+
+        let mut send = send_stream.lock().await;
+        eprintln!("🟢 [QUIC CLIENT] BEFORE write_all: seq={}", sequence_num);
+
+        send.write_all(&encoded).await
+            .map_err(|e| {
+                eprintln!("🔴 [QUIC CLIENT] write_all FAILED: seq={}, err={}", sequence_num, e);
+                format!("Failed to send KeyBatch: {}", e)
+            })?;
+
+        eprintln!("🟢 [QUIC CLIENT] AFTER write_all SUCCESS: seq={}, sent {} encoded bytes", sequence_num, encoded.len());
+
+        // Check stream health
+        let stream_id = send.id();
+        eprintln!("🟢 [QUIC CLIENT] stream health check: stream_id={:?}", stream_id);
+
+        debug!("Sent KeyBatch seq={}, {} bytes via QUIC", sequence_num, encoded.len());
+        Ok(())
+    }
+
+    /// Poll for KeyBatchAck messages (SSH Terminal Mode - Phase 2)
+    ///
+    /// Returns the highest sequence number that has been acknowledged by the server.
+    /// Returns 0 if no pending acknowledgments.
+    pub async fn poll_key_batch_ack(&self) -> Result<u64, String> {
+        let mut buffer = self.key_batch_ack_buffer.lock().await;
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        // Return highest sequence number
+        let max_seq = *buffer.iter().max().unwrap_or(&0);
+        buffer.clear();
+        Ok(max_seq)
     }
 
     /// Resize PTY (for screen rotation support)
@@ -798,6 +907,9 @@ impl QuicClient {
     pub async fn create_session(&self, project_path: String, session_id: String) -> Result<(), String> {
         info!("📝 [QUIC_CLIENT] create_session: {} at {}", session_id, project_path);
 
+        // Clone session_id for later use (before move)
+        let session_id_for_active = session_id.clone();
+
         let send_stream = self.send_stream.as_ref()
             .ok_or_else(|| "Not connected".to_string())?;
 
@@ -810,7 +922,13 @@ impl QuicClient {
         send.write_all(&encoded).await
             .map_err(|e| format!("Failed to send CreateSession: {}", e))?;
 
-        info!("✅ [QUIC_CLIENT] CreateSession request sent");
+        // Fix: Set active_session_id after creating session
+        // Without this, recv_task filters out all TaggedOutput events
+        let mut active_id = self.active_session_id.lock().await;
+        *active_id = Some(session_id_for_active.clone());
+        drop(active_id);
+
+        info!("✅ [QUIC_CLIENT] CreateSession request sent, active_session_id set to {}", session_id_for_active);
         Ok(())
     }
 

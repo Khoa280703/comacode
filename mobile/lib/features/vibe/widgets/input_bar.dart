@@ -14,6 +14,9 @@ import 'quick_keys_toolbar.dart';
 class InputBar extends ConsumerStatefulWidget {
   const InputBar({super.key});
 
+  /// Expose focus node for parent widgets
+  static FocusNode? get currentFocus => _InputBarState._currentFocus;
+
   @override
   ConsumerState<InputBar> createState() => _InputBarState();
 }
@@ -21,6 +24,10 @@ class InputBar extends ConsumerStatefulWidget {
 class _InputBarState extends ConsumerState<InputBar> {
   late final TextEditingController _controller;
   final FocusNode _focusNode = FocusNode();
+
+  /// Static reference to current focus node for parent widgets
+  static FocusNode? _currentFocus;
+
   final List<String> _attachedFiles = [];
   AttachmentFormat _attachmentFormat = AttachmentFormat.path;
 
@@ -28,6 +35,7 @@ class _InputBarState extends ConsumerState<InputBar> {
   void initState() {
     super.initState();
     _controller = TextEditingController();
+    _currentFocus = _focusNode; // Set static reference for parent widgets
     // Listen to text changes to update send button state
     _controller.addListener(() {
       if (mounted) {
@@ -46,6 +54,9 @@ class _InputBarState extends ConsumerState<InputBar> {
   void dispose() {
     _controller.dispose();
     _focusNode.dispose();
+    if (_currentFocus == _focusNode) {
+      _currentFocus = null; // Clear static reference
+    }
     super.dispose();
   }
 

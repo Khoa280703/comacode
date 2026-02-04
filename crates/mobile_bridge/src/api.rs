@@ -109,13 +109,31 @@ pub async fn connect_to_host(
 /// Call this in a loop to stream terminal output.
 /// Returns when a new event is available.
 ///
+/// Fix: Async Mutex deadlock — old code held Mutex<QuicClient> across
+/// .await boundary inside receive_event(), blocking send_key_batch().
+/// Now extracts Arc<Mutex<Vec>> + Arc<Notify> (both cheaply cloneable),
+/// drops QuicClient lock immediately, then polls buffer outside lock.
+///
 /// # Errors
 /// Returns "Not connected" if client not initialized.
 #[frb]
 pub async fn receive_terminal_event() -> Result<TerminalEvent, String> {
     let client_arc = get_client().await?;
-    let client = client_arc.lock().await;
-    client.receive_event().await
+    // Extract Arc refs and drop QuicClient lock immediately
+    let (event_buffer, event_notify) = {
+        let client = client_arc.lock().await;
+        (client.event_buffer_arc(), client.event_notify_arc())
+    };
+    // Poll outside Mutex<QuicClient> — no deadlock
+    loop {
+        {
+            let mut buffer = event_buffer.lock().await;
+            if !buffer.is_empty() {
+                return Ok(buffer.remove(0));
+            }
+        }
+        event_notify.notified().await;
+    }
 }
 
 /// Send command to remote terminal
@@ -150,6 +168,46 @@ pub async fn send_raw_input(data: Vec<u8>) -> Result<(), String> {
     let client_arc = get_client().await?;
     let client = client_arc.lock().await;
     client.send_raw_input(data).await
+}
+
+/// Send batched keystrokes (SSH Terminal Mode - Phase 1)
+///
+/// Sends keystrokes with sequence tracking for latency measurement and
+/// future prediction support (Phase 2). More efficient than individual
+/// send_raw_input() calls due to batching.
+///
+/// # Arguments
+/// * `keys` - Raw keystroke bytes (escape sequences already converted)
+/// * `sequence_num` - Monotonically increasing sequence number for ACK tracking
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn send_key_batch(keys: Vec<u8>, sequence_num: i64) -> Result<(), String> {
+    eprintln!("🔵 [FRB ENTRY] send_key_batch: seq={}, {} bytes, raw={:?}",
+        sequence_num, keys.len(), keys);
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    let result = client.send_key_batch(keys, sequence_num as u64).await;
+    match &result {
+        Ok(_) => eprintln!("🔵 [FRB EXIT OK] send_key_batch: seq={}", sequence_num),
+        Err(e) => eprintln!("🔵 [FRB EXIT ERR] send_key_batch: seq={}, err={}", sequence_num, e),
+    }
+    result
+}
+
+/// Poll for KeyBatchAck messages (SSH Terminal Mode - Phase 2)
+///
+/// Returns the highest sequence number that has been acknowledged by the server.
+/// Returns 0 if no pending acknowledgments.
+///
+/// # Errors
+/// Returns "Not connected" if client not initialized.
+#[frb]
+pub async fn poll_key_batch_ack() -> Result<i64, String> {
+    let client_arc = get_client().await?;
+    let client = client_arc.lock().await;
+    client.poll_key_batch_ack().await.map(|seq| seq as i64)
 }
 
 /// Resize PTY (for screen rotation support)
