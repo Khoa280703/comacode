@@ -10,6 +10,7 @@ import '../../bridge/api.dart' as frb_api;
 import 'models/output_buffer.dart';
 import 'models/special_key.dart';
 import 'models/vibe_session_state.dart';
+import 'models/view_mode.dart';
 
 /// Vibe session state provider
 ///
@@ -158,6 +159,19 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
   /// Clear error state
   void clearError() {
     state = state.copyWith(error: null);
+  }
+
+  /// Set view mode (Terminal or Files)
+  void setViewMode(ViewMode mode) {
+    state = state.copyWith(viewMode: mode);
+  }
+
+  /// Toggle between terminal and files mode
+  void toggleViewMode() {
+    final newMode = state.viewMode == ViewMode.terminal
+        ? ViewMode.files
+        : ViewMode.terminal;
+    setViewMode(newMode);
   }
 
   /// Start event loop to receive PTY output

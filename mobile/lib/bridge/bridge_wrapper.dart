@@ -224,4 +224,43 @@ class BridgeWrapper {
     // For now, return empty list
     return [];
   }
+
+  // ===== File Viewer (Phase: File Viewer Feature) =====
+
+  /// Read file content from remote server
+  ///
+  /// Uses request/poll pattern (same as VFS listing).
+  /// Returns FileContentData with path, content, size, truncated.
+  /// Returns null if timeout (3 seconds) or file not found.
+  Future<frb_api.FileContentData?> readFile(
+    String path, {
+    int maxSize = 1024 * 1024, // 1MB default
+  }) async {
+    try {
+      debugPrint('[BridgeWrapper] readFile: $path (maxSize: $maxSize)');
+
+      // Send request
+      await frb_api.requestReadFile(path: path, maxSize: BigInt.from(maxSize));
+
+      // Poll for response (with timeout)
+      const maxAttempts = 150; // 3 seconds at 20ms intervals
+      const pollInterval = Duration(milliseconds: 20);
+
+      for (var i = 0; i < maxAttempts; i++) {
+        await Future.delayed(pollInterval);
+
+        final result = await frb_api.receiveFileContent();
+        if (result != null) {
+          debugPrint('[BridgeWrapper] readFile success: ${result.size} bytes');
+          return result;
+        }
+      }
+
+      debugPrint('[BridgeWrapper] readFile timeout after 3s');
+      return null;
+    } catch (e) {
+      debugPrint('[BridgeWrapper] readFile error: $e');
+      throw Exception('Read file failed: $e');
+    }
+  }
 }

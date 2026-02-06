@@ -10,11 +10,14 @@ import '../connection/connection_providers.dart';
 import '../project/models/project.dart';
 import '../project/models/session_metadata.dart';
 import 'models/vibe_session_state.dart';
+import 'models/view_mode.dart';
 import 'vibe_session_providers.dart';
 import 'widgets/quick_keys_toolbar.dart';
 import 'widgets/output_view.dart';
 import 'widgets/search_overlay.dart';
 import 'widgets/session_tab_bar.dart';
+import 'widgets/file_explorer_view.dart';
+import 'widgets/file_viewer_page.dart';
 import '../terminal/ssh_input_handler.dart'; // SSH Terminal Mode - Phase 1
 import '../terminal/prediction_engine.dart'; // SSH Terminal Mode - Phase 2
 import 'services/light_session_storage.dart'; // Terminal history persistence
@@ -358,11 +361,39 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
         backgroundColor: CatppuccinMocha.mantle,
         elevation: 0,
         actions: [
+          // View mode toggle (File Viewer Feature)
+          if (connectionState.isConnected)
+            SegmentedButton<ViewMode>(
+              segments: const [
+                ButtonSegment(
+                  value: ViewMode.terminal,
+                  icon: Icon(Icons.terminal, size: 16),
+                ),
+                ButtonSegment(
+                  value: ViewMode.files,
+                  icon: Icon(Icons.folder_outlined, size: 16),
+                ),
+              ],
+              selected: {vibeState.viewMode},
+              onSelectionChanged: (selected) {
+                final newMode = selected.first;
+                ref.read(vibeSessionProvider.notifier).setViewMode(newMode);
+                // Hide keyboard when switching to Files mode
+                if (newMode == ViewMode.files) {
+                  FocusScope.of(context).unfocus();
+                }
+              },
+              style: ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          const SizedBox(width: 8),
           // Connection status indicator
           _ConnectionStatusBadge(state: connectionState),
           const SizedBox(width: 8),
-          // Search button (Phase 02)
-          if (connectionState.isConnected)
+          // Search button (Phase 02) - only in terminal mode
+          if (connectionState.isConnected && vibeState.viewMode == ViewMode.terminal)
             IconButton(
               icon: Icon(Icons.search, color: CatppuccinMocha.text),
               onPressed: () {
@@ -372,49 +403,6 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
               },
               tooltip: 'Search in output',
             ),
-          const SizedBox(width: 4),
-          // Menu
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert, color: CatppuccinMocha.text),
-            color: CatppuccinMocha.surface,
-            onSelected: (value) {
-              if (value == 'disconnect') {
-                ref.read(connectionStateProvider.notifier).disconnect();
-                if (context.mounted) {
-                  // Phase 07: Navigate back to SessionPickerPage, not HomePage
-                  // pop() once returns to SessionPickerPage (which is now kept in stack)
-                  Navigator.of(context).pop();
-                }
-              } else if (value == 'clear') {
-                vibeState.terminal.eraseDisplay();
-                _storage.clear(); // Clear persisted history too
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'clear',
-                child: ListTile(
-                  leading: Icon(Icons.clear, color: CatppuccinMocha.text),
-                  title: Text(
-                    'Clear Terminal',
-                    style: TextStyle(color: CatppuccinMocha.text),
-                  ),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'disconnect',
-                child: ListTile(
-                  leading: Icon(Icons.close, color: CatppuccinMocha.red),
-                  title: Text(
-                    'Disconnect',
-                    style: TextStyle(color: CatppuccinMocha.red),
-                  ),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          ),
           const SizedBox(width: 8),
         ],
       ),
@@ -438,18 +426,39 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
           children: [
             // Tab bar for multi-session (Phase 02)
             const SessionTabBar(),
-            // Output display
+            // Main content - AnimatedCrossFade for smooth transition while keeping both mounted
             Expanded(
-              child: OutputView(
-                terminal: vibeState.terminal,
-                isParsedMode: false,
+              child: AnimatedCrossFade(
+                duration: const Duration(milliseconds: 200),
+                crossFadeState: vibeState.viewMode == ViewMode.terminal
+                    ? CrossFadeState.showFirst
+                    : CrossFadeState.showSecond,
+                firstChild: OutputView(
+                  terminal: vibeState.terminal,
+                  isParsedMode: false,
+                ),
+                secondChild: FileExplorerView(
+                  initialPath: widget.project?.path ?? '.',
+                  onFileTap: (path, name) {
+                    // Open FileViewerPage with syntax highlighting
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => FileViewerPage(
+                          filePath: path,
+                          fileName: name,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
-            // Quick keys toolbar only (SSH Terminal Mode - direct input)
-            QuickKeysToolbar(
-              onKeyPressed: (key) =>
-                  ref.read(vibeSessionProvider.notifier).sendSpecialKey(key),
-            ),
+            // Quick keys toolbar only in terminal mode
+            if (vibeState.viewMode == ViewMode.terminal)
+              QuickKeysToolbar(
+                onKeyPressed: (key) =>
+                    ref.read(vibeSessionProvider.notifier).sendSpecialKey(key),
+              ),
             // Error banner
             if (vibeState.error != null)
               Container(
