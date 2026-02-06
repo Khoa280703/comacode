@@ -38,7 +38,18 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
   bool _isEventLoopHealthy = false;
 
   /// Callback for terminal output (used by storage to persist history)
-  void Function(String)? onOutput;
+  /// Map from sessionId to callback - allows per-session storage
+  final Map<String, void Function(String)> _outputCallbacks = {};
+
+  /// Register output callback for a session
+  void registerOutputCallback(String sessionId, void Function(String) callback) {
+    _outputCallbacks[sessionId] = callback;
+  }
+
+  /// Unregister output callback for a session
+  void unregisterOutputCallback(String sessionId) {
+    _outputCallbacks.remove(sessionId);
+  }
 
   /// Per-session terminal cache — keeps Terminal alive across session switches
   final Map<String, Terminal> _terminalCache = {};
@@ -58,6 +69,11 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
   /// Get or create Terminal for a session
   Terminal _getOrCreateTerminal(String sessionId) {
     return _terminalCache.putIfAbsent(sessionId, () => Terminal(maxLines: 10000));
+  }
+
+  /// Public accessor to get terminal for a specific session (used by storage to load history)
+  Terminal getTerminalForSession(String sessionId) {
+    return _getOrCreateTerminal(sessionId);
   }
 
   /// Get or create OutputBuffer for a session
@@ -223,8 +239,10 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
                 // Write to terminal for display
                 state.terminal.write(text);
 
-                // Notify storage to persist output
-                onOutput?.call(text);
+                // Notify storage to persist output (per-session callback)
+                if (_currentSessionId != null) {
+                  _outputCallbacks[_currentSessionId]?.call(text);
+                }
 
                 // DEBUG: Confirm write for first 10 events
                 if (_eventLoopCount <= 10 && text.isNotEmpty) {

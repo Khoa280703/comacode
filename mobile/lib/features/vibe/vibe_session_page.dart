@@ -77,6 +77,8 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
 
   // Cached notifier reference for safe dispose (ref unavailable after dispose)
   VibeSessionNotifier? _vibeNotifier;
+  // Cached sessionId for unregistering output callback in dispose
+  String? _registeredSessionId;
 
   @override
   void initState() {
@@ -91,9 +93,6 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
       // Cache for safe dispose (ref unavailable after widget disposed)
       _vibeNotifier = vibeNotifier;
 
-      // Initialize storage (wires onOutput callback)
-      _initStorage(sessionId);
-
       // Check if event loop already running for this session
       // (navigate back → tap lại → initState chạy lại nhưng PTY vẫn alive)
       if (vibeNotifier.isAttachedTo(sessionId)) {
@@ -106,6 +105,8 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
           _lastSentCols = size[0];
           _lastSentRows = size[1];
         }
+        // Initialize storage (just wire callback, history already in terminal cache)
+        _initStorage(sessionId);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             _keyboardFocusNode.requestFocus();
@@ -114,12 +115,9 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
         });
       } else {
         // Not attached → need to create/attach session
-        // This handles: first entry, flutter restart, session switch
-        _initializeSessionWithRetry().then((_) {
-          if (mounted) {
-            _initTerminalInputHandler();
-          }
-        });
+        // CRITICAL: Load history BEFORE starting event loop to prevent race condition
+        // History must be in terminal BEFORE new PTY output arrives
+        _initStorageThenSession(sessionId);
       }
     } else {
       // Direct connection mode
@@ -136,25 +134,43 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
   Future<void> _initStorage(String sessionId) async {
     await _storage.init(sessionId);
 
-    // Wire output callback to persist new terminal output
-    ref.read(vibeSessionProvider.notifier).onOutput = (data) {
+    // Wire output callback to persist new terminal output (per-session)
+    // CRITICAL: Use per-session callback to prevent history cross-contamination
+    _registeredSessionId = sessionId;
+    ref.read(vibeSessionProvider.notifier).registerOutputCallback(sessionId, (data) {
       _storage.append(data);
-    };
+    });
 
-    // Only load history if terminal is empty (first entry or after clear)
-    // Skip if terminal already has data from cache (re-entry case)
-    final vibeState = ref.read(vibeSessionProvider);
     final vibeNotifier = ref.read(vibeSessionProvider.notifier);
 
     // Check if this is a fresh session (no cached terminal data)
     if (!vibeNotifier.hasSession(sessionId)) {
-      // Load history into terminal (instant first paint via streaming)
+      // CRITICAL: Get the CORRECT terminal for this session BEFORE loading history
+      // This ensures history goes into the right terminal, not the current one
+      final sessionTerminal = vibeNotifier.getTerminalForSession(sessionId);
+
+      // Load history into session's terminal (instant first paint via streaming)
       await for (final chunk in _storage.load()) {
-        vibeState.terminal.write(chunk);
+        sessionTerminal.write(chunk);
       }
       debugPrint('[VibeSession] Storage loaded history for new session $sessionId');
     } else {
       debugPrint('[VibeSession] Storage skipped load - terminal already has data for $sessionId');
+    }
+  }
+
+  /// Initialize storage THEN session - ensures history loads before event loop starts
+  /// This prevents race condition where new PTY output overwrites history
+  Future<void> _initStorageThenSession(String sessionId) async {
+    // Step 1: Load history into terminal FIRST
+    await _initStorage(sessionId);
+
+    // Step 2: THEN start session (which starts event loop)
+    // New output will append AFTER history
+    await _initializeSessionWithRetry();
+
+    if (mounted) {
+      _initTerminalInputHandler();
     }
   }
 
@@ -227,8 +243,11 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
     // Dispose storage (flushes pending data)
     _storage.dispose();
 
-    // Clear output callback using cached ref (ref unavailable after dispose)
-    _vibeNotifier?.onOutput = null;
+    // Unregister output callback using cached ref (ref unavailable after dispose)
+    if (_registeredSessionId != null) {
+      _vibeNotifier?.unregisterOutputCallback(_registeredSessionId!);
+    }
+    _registeredSessionId = null;
     _vibeNotifier = null;
 
     _ackPollTimer?.cancel();
