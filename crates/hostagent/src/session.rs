@@ -37,6 +37,8 @@ pub struct SessionData {
     pump_handle: Option<tokio::task::JoinHandle<()>>,
     /// Abort handle for force-stopping pump task
     abort_handle: Option<tokio::task::AbortHandle>,
+    /// Connection ID that owns the current pump (for detecting stale pumps)
+    pump_connection_id: Option<u64>,
 }
 
 impl SessionData {
@@ -57,6 +59,7 @@ impl SessionData {
             output_rx: Some(output_rx),
             pump_handle: None,
             abort_handle: None,
+            pump_connection_id: None,
         }
     }
 
@@ -65,10 +68,11 @@ impl SessionData {
         self.output_rx.take()
     }
 
-    /// Set pump task handle
-    pub fn set_pump_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
+    /// Set pump task handle with connection ID
+    pub fn set_pump_handle(&mut self, handle: tokio::task::JoinHandle<()>, connection_id: u64) {
         self.abort_handle = Some(handle.abort_handle());
         self.pump_handle = Some(handle);
+        self.pump_connection_id = Some(connection_id);
     }
 
     /// Stop pump task if running
@@ -84,6 +88,7 @@ impl SessionData {
             }
         }
         self.abort_handle = None;
+        self.pump_connection_id = None;
     }
 
     /// Check if pump task is running
@@ -93,6 +98,11 @@ impl SessionData {
         } else {
             false
         }
+    }
+
+    /// Check if pump is running for specific connection
+    pub fn is_pump_for_connection(&self, connection_id: u64) -> bool {
+        self.is_pump_running() && self.pump_connection_id == Some(connection_id)
     }
 
     /// Add line to history (max 100 lines)
@@ -404,11 +414,67 @@ impl SessionManager {
         sessions.get_mut(session_id)?.take_output_rx()
     }
 
-    /// Set pump task handle for session
-    pub async fn set_pump_handle_for_session(&self, session_id: &str, handle: tokio::task::JoinHandle<()>) {
+    /// Respawn PTY for an existing session (when connection reconnects)
+    ///
+    /// This handles the case where:
+    /// 1. Session exists (UUID preserved)
+    /// 2. But PTY reader died because pump was dropped when connection closed
+    ///
+    /// Kills old PTY process, spawns new one with same config/working_dir.
+    /// Returns new output_rx for pump task.
+    pub async fn respawn_pty_for_session(&self, session_id: &str) -> Result<tokio::sync::mpsc::Receiver<Bytes>> {
+        let mut sessions = self.sessions_uuid.lock().await;
+        let session_data = sessions.get_mut(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session {} not found", session_id))?;
+
+        // Stop any existing pump task
+        session_data.stop_pump().await;
+
+        // Kill old PTY process
+        {
+            let mut pty = session_data.pty_session.lock().await;
+            if let Err(e) = pty.kill() {
+                tracing::warn!("Failed to kill old PTY for session {}: {}", session_id, e);
+            }
+        }
+
+        // Spawn new PTY with same config
+        let temp_id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let working_dir = session_data.working_dir.clone();
+        let config = session_data.config.clone();
+
+        let (new_pty, output_rx) = crate::pty::PtySession::spawn_with_cwd(
+            temp_id,
+            config,
+            Some(&working_dir),
+        ).context("Failed to respawn PTY")?;
+
+        // Update session data with new PTY
+        session_data.pty_session = new_pty;
+        session_data.output_rx = Some(output_rx);
+
+        tracing::info!("Respawned PTY for session {} (reconnect recovery)", session_id);
+
+        // Take and return the new output_rx
+        Ok(session_data.take_output_rx().expect("Just set output_rx above"))
+    }
+
+    /// Check if session needs PTY respawn (output_rx taken + pump not running)
+    pub async fn needs_pty_respawn(&self, session_id: &str) -> bool {
+        let sessions = self.sessions_uuid.lock().await;
+        if let Some(session_data) = sessions.get(session_id) {
+            // Needs respawn if: output_rx already taken AND pump is not running
+            session_data.output_rx.is_none() && !session_data.is_pump_running()
+        } else {
+            false
+        }
+    }
+
+    /// Set pump task handle for session with connection ID
+    pub async fn set_pump_handle_for_session(&self, session_id: &str, handle: tokio::task::JoinHandle<()>, connection_id: u64) {
         let mut sessions = self.sessions_uuid.lock().await;
         if let Some(session_data) = sessions.get_mut(session_id) {
-            session_data.set_pump_handle(handle);
+            session_data.set_pump_handle(handle, connection_id);
         }
     }
 
@@ -425,6 +491,14 @@ impl SessionManager {
         let sessions = self.sessions_uuid.lock().await;
         sessions.get(session_id)
             .map(|sd| sd.is_pump_running())
+            .unwrap_or(false)
+    }
+
+    /// Check if pump is running for specific connection
+    pub async fn is_pump_for_connection(&self, session_id: &str, connection_id: u64) -> bool {
+        let sessions = self.sessions_uuid.lock().await;
+        sessions.get(session_id)
+            .map(|sd| sd.is_pump_for_connection(connection_id))
             .unwrap_or(false)
     }
 

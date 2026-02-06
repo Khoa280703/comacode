@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:xterm/xterm.dart';
 
 import '../../bridge/bridge_wrapper.dart';
 import '../../bridge/api.dart' as frb_api;
@@ -26,7 +27,6 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
 
   VibeSessionNotifier(this._bridge)
       : super(VibeSessionState()) {
-    // Initialize terminal
     _startEventLoop();
   }
 
@@ -37,17 +37,40 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
   String? _currentSessionId;
   bool _isEventLoopHealthy = false;
 
+  /// Callback for terminal output (used by storage to persist history)
+  void Function(String)? onOutput;
+
+  /// Per-session terminal cache — keeps Terminal alive across session switches
+  final Map<String, Terminal> _terminalCache = {};
+  /// Per-session output buffer cache
+  final Map<String, OutputBuffer> _bufferCache = {};
+  /// Per-session last-sent terminal size [cols, rows] — persists across widget rebuilds
+  final Map<String, List<int>> _sizeCache = {};
+
+  /// Persist last sent terminal size for session (called by widget after resizePty)
+  void updateLastSentSize(String sessionId, int cols, int rows) {
+    _sizeCache[sessionId] = [cols, rows];
+  }
+
+  /// Read last sent terminal size for session (used on widget re-mount to skip redundant resize)
+  List<int>? getLastSentSize(String sessionId) => _sizeCache[sessionId];
+
+  /// Get or create Terminal for a session
+  Terminal _getOrCreateTerminal(String sessionId) {
+    return _terminalCache.putIfAbsent(sessionId, () => Terminal(maxLines: 10000));
+  }
+
+  /// Get or create OutputBuffer for a session
+  OutputBuffer _getOrCreateBuffer(String sessionId) {
+    return _bufferCache.putIfAbsent(sessionId, () => OutputBuffer());
+  }
+
+  /// Active output buffer (points to current session's buffer)
+  OutputBuffer get _outputBuffer => _getOrCreateBuffer(_currentSessionId ?? '');
+
   /// Attach/switch to a session (restart event loop if needed)
-  ///
-  /// Called when entering VibeSessionPage to ensure fresh event loop
-  /// for the current session. Prevents race condition where old event loop
-  /// listens to wrong PTY after session switch.
   Future<void> attachSession(String sessionId) async {
     debugPrint('🔄 [VibeSession] Attaching to session: $sessionId (current: $_currentSessionId)');
-
-    // CRITICAL: Don't early return based on session ID match
-    // The event loop might be dead even if session ID matches
-    // Instead, check if event loop is actually running
 
     final isDifferentSession = _currentSessionId != sessionId;
     final isEventLoopDead = _eventLoopTimer == null;
@@ -60,36 +83,30 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
       _eventLoopTimer?.cancel();
       _eventLoopTimer = null;
 
-      // CRITICAL FIX: Don't clear terminal on re-entry to same session
-      // Only clear when switching to a different session
-      if (_currentSessionId != null) {
-        _outputBuffer.clear();
-        state.terminal.eraseDisplay();
-      }
-
-      // Update session ID and restart
+      // Switch to cached terminal for new session (no clear!)
       _currentSessionId = sessionId;
+      final terminal = _getOrCreateTerminal(sessionId);
+      state = state.copyWith(terminal: terminal);
+
       _isDisposed = false;
       _eventLoopCount = 0;
 
       debugPrint('[VibeSession] Starting new event loop for $sessionId');
       _startEventLoop();
     } else if (isEventLoopDead) {
-      // Same session but event loop is dead - restart it
       debugPrint('[VibeSession] Event loop was dead, restarting for $sessionId');
       _isDisposed = false;
       _startEventLoop();
     } else {
-      // Event loop already running for this session
       debugPrint('[VibeSession] Event loop already running for $sessionId');
     }
   }
 
-  /// Check if currently attached to a specific session
+  /// Check if currently attached to a specific session (event loop running for it)
   bool isAttachedTo(String sessionId) => _currentSessionId == sessionId;
 
-  /// Output buffer to prevent memory issues with large output
-  final OutputBuffer _outputBuffer = OutputBuffer();
+  /// Check if session was previously created (terminal cached) — survives session switches
+  bool hasSession(String sessionId) => _terminalCache.containsKey(sessionId);
 
   /// Send prompt text to backend
   Future<void> sendPrompt(String prompt) async {
@@ -206,6 +223,9 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
                 // Write to terminal for display
                 state.terminal.write(text);
 
+                // Notify storage to persist output
+                onOutput?.call(text);
+
                 // DEBUG: Confirm write for first 10 events
                 if (_eventLoopCount <= 10 && text.isNotEmpty) {
                   debugPrint('✅ [EventLoop] Terminal write complete');
@@ -289,6 +309,9 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
     _isDisposed = true;
     _eventLoopTimer?.cancel();
     _healthCheckTimer?.cancel();
+    _terminalCache.clear();
+    _bufferCache.clear();
+    _sizeCache.clear();
     super.dispose();
   }
 }

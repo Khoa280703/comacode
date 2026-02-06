@@ -13,6 +13,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -23,6 +24,9 @@ use crate::ratelimit::RateLimiterStore;
 use crate::session::SessionManager;
 use crate::vfs;
 use crate::vfs_watcher::WatcherManager;
+
+/// Global connection ID counter
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// QUIC server for terminal connections
 pub struct QuicServer {
@@ -205,6 +209,11 @@ impl QuicServer {
         let mut authenticated = false;
         let mut pty_task: Option<tokio::task::JoinHandle<()>> = None;
         let mut pending_resize: Option<(u16, u16)> = None; // Store (rows, cols) before session created
+        let mut last_resize: Option<(u16, u16)> = None; // Track last applied resize to skip redundant SIGWINCH
+
+        // Generate unique connection ID for this connection
+        let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::SeqCst);
+        tracing::info!("New connection {} from {}", connection_id, peer_addr);
 
         // Channel-based writer: avoids deadlock where pump holds send lock forever.
         // All writers (pump + main loop) encode → send bytes into channel.
@@ -426,18 +435,24 @@ impl QuicServer {
                     }
                     }
                     NetworkMessage::Resize { rows, cols } => {
-                    // Phase 04: Check for active UUID session first, then legacy session
-                    if let Some(ref uuid) = active_session_id {
+                    // Skip redundant resize — PTY already has this size
+                    // Prevents unnecessary SIGWINCH → shell re-rendering prompt
+                    if last_resize == Some((rows, cols)) {
+                        tracing::debug!("Skipping redundant resize {}x{}", rows, cols);
+                    } else if let Some(ref uuid) = active_session_id {
                         if let Err(e) = session_mgr.resize_uuid_session(uuid, rows, cols).await {
                             tracing::error!("Failed to resize UUID session {}: {}", uuid, e);
                         }
+                        last_resize = Some((rows, cols));
                     } else if let Some(id) = session_id {
                         if let Err(e) = session_mgr.resize_session(id, rows, cols).await {
                             tracing::error!("Failed to resize PTY: {}", e);
                         }
+                        last_resize = Some((rows, cols));
                     } else {
                         // Store pending resize for when session is created
                         pending_resize = Some((rows, cols));
+                        last_resize = Some((rows, cols));
                         tracing::debug!("Stored pending resize: {}x{}", rows, cols);
                     }
                     }
@@ -681,6 +696,66 @@ impl QuicServer {
                             SessionMessage::CreateSession { project_path, session_id } => {
                                 tracing::info!("CreateSession: project={}, session={}", project_path, session_id);
 
+                                // Idempotent: if session already exists, just activate it
+                                // Prevents PTY re-spawn → no duplicate prompt on session switch
+                                if session_mgr.session_exists(&session_id).await {
+                                    tracing::info!("CreateSession: session {} already exists, activating (idempotent)", session_id);
+
+                                    active_session_id = Some(session_id.clone());
+                                    pending_resize = None;
+
+                                    // Check if pump is still running FOR THIS CONNECTION
+                                    // - Pump running for THIS connection → session switch, skip respawn
+                                    // - Pump running for DIFFERENT connection → stale, need respawn
+                                    // - Pump not running → connection died, need respawn
+                                    let pump_for_this_connection = session_mgr.is_pump_for_connection(&session_id, connection_id).await;
+
+                                    if pump_for_this_connection {
+                                        // Same connection, session switch - NO respawn needed
+                                        // Pump is still sending to current send_tx
+                                        tracing::info!("Session {} pump running for connection {}, reactivating without respawn", session_id, connection_id);
+                                    } else {
+                                        // Either: pump dead, or pump running for different connection
+                                        // In both cases, need to stop old pump and respawn PTY
+                                        tracing::info!("Session {} needs respawn (pump not for connection {})", session_id, connection_id);
+
+                                        // Stop any stale/zombie pump handle
+                                        session_mgr.stop_pump_for_session(&session_id).await;
+
+                                        // Respawn PTY to get fresh output channel
+                                        let output_rx = match session_mgr.respawn_pty_for_session(&session_id).await {
+                                            Ok(rx) => Some(rx),
+                                            Err(e) => {
+                                                tracing::error!("Failed to respawn PTY for session {}: {}", session_id, e);
+                                                None
+                                            }
+                                        };
+
+                                        // Start new pump with THIS connection's send_tx
+                                        if let Some(output_rx) = output_rx {
+                                            let history_tx = session_mgr.get_history_sender(&session_id).await;
+                                            let session_key = session_id.clone();
+                                            let pump_tx = send_tx.clone();
+
+                                            let pump_handle = tokio::spawn(async move {
+                                                Self::pump_tagged_via_channel(output_rx, pump_tx, session_key.clone(), history_tx).await;
+                                            });
+
+                                            session_mgr.set_pump_handle_for_session(&session_id, pump_handle, connection_id).await;
+                                            tracing::info!("TaggedOutput pump restarted for session {} with connection {}", session_id, connection_id);
+                                        } else {
+                                            tracing::error!("No output_rx available for session {} after respawn - terminal will be dead", session_id);
+                                        }
+                                    }
+
+                                    if let Ok(encoded) = MessageCodec::encode(&NetworkMessage::Event(
+                                        TerminalEvent::session_created(session_id.clone()),
+                                    )) {
+                                        let _ = send_tx.send(encoded).await;
+                                    }
+                                } else {
+                                // --- Normal path: session does not exist, create new PTY ---
+
                                 let path_buf = PathBuf::from(&project_path);
                                 if !path_buf.exists() {
                                     let error_msg = format!("Project path not found: {}", project_path);
@@ -708,6 +783,8 @@ impl QuicServer {
                                 ).await {
                                     Ok(()) => {
                                         active_session_id = Some(session_id.clone());
+                                        // PTY already spawned with pending_resize size — record as last applied
+                                        last_resize = pending_resize;
 
                                         // Start TaggedOutput pump via channel (no lock held)
                                         if let Some(output_rx) = session_mgr.take_output_rx_for_session(&session_id).await {
@@ -719,7 +796,7 @@ impl QuicServer {
                                                 Self::pump_tagged_via_channel(output_rx, pump_tx, session_key.clone(), history_tx).await;
                                             });
 
-                                            session_mgr.set_pump_handle_for_session(&session_id, pump_handle).await;
+                                            session_mgr.set_pump_handle_for_session(&session_id, pump_handle, connection_id).await;
                                             tracing::info!("TaggedOutput pump started for newly created session {}", session_id);
                                         }
 
@@ -740,6 +817,7 @@ impl QuicServer {
                                         }
                                     }
                                 }
+                                } // end else: normal CreateSession path
                             }
                             SessionMessage::CheckSession { session_id } => {
                                 tracing::info!("CheckSession: {}", session_id);
@@ -793,7 +871,7 @@ impl QuicServer {
                                         Self::pump_tagged_via_channel(output_rx, pump_tx, session_key.clone(), history_tx).await;
                                     });
 
-                                    session_mgr.set_pump_handle_for_session(&session_id, pump_handle).await;
+                                    session_mgr.set_pump_handle_for_session(&session_id, pump_handle, connection_id).await;
                                     tracing::info!("TaggedOutput pump started for session {}", session_id);
                                 } else {
                                     tracing::warn!("No PTY output receiver available for session {} (pump already started?)", session_id);

@@ -17,6 +17,7 @@ import 'widgets/search_overlay.dart';
 import 'widgets/session_tab_bar.dart';
 import '../terminal/ssh_input_handler.dart'; // SSH Terminal Mode - Phase 1
 import '../terminal/prediction_engine.dart'; // SSH Terminal Mode - Phase 2
+import 'services/light_session_storage.dart'; // Terminal history persistence
 
 /// Vibe Session Page - Chat-style interface for Claude Code CLI
 ///
@@ -50,10 +51,9 @@ class VibeSessionPage extends ConsumerStatefulWidget {
   ConsumerState<VibeSessionPage> createState() => _VibeSessionPageState();
 }
 
-class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
+class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
+    with WidgetsBindingObserver {
   bool _showSearch = false;
-  bool _isRestoring = false;
-  String? _restoreMessage;
   final FocusNode _keyboardFocusNode = FocusNode();
 
   // Phase 02: Terminal resize tracking
@@ -62,7 +62,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   int? _cachedRows;
   int? _lastSentCols;
   int? _lastSentRows;
-  bool _resizeCallbackSetup = false;
+  Terminal? _resizeCallbackTerminal; // tracks which Terminal instance has onResize set
 
   // SSH Terminal Mode - Phase 1: Terminal input handler
   // Captures ALL keystrokes via HardwareKeyboard and sends via KeyBatch
@@ -72,18 +72,40 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   PredictionEngine? _predictionEngine;
   Timer? _ackPollTimer;
 
+  // Terminal history persistence
+  final LightSessionStorage _storage = LightSessionStorage();
+
+  // Cached notifier reference for safe dispose (ref unavailable after dispose)
+  VibeSessionNotifier? _vibeNotifier;
+
   @override
   void initState() {
     super.initState();
-    // Phase 05: Initialize session with re-attach/re-spawn logic
+    // Add lifecycle observer for flush on pause
+    WidgetsBinding.instance.addObserver(this);
+
     if (widget.project != null && widget.session != null) {
       final sessionId = widget.session!.id;
       final vibeNotifier = ref.read(vibeSessionProvider.notifier);
 
-      // Skip createSession if provider đã attached tới session này
+      // Cache for safe dispose (ref unavailable after widget disposed)
+      _vibeNotifier = vibeNotifier;
+
+      // Initialize storage (wires onOutput callback)
+      _initStorage(sessionId);
+
+      // Check if event loop already running for this session
       // (navigate back → tap lại → initState chạy lại nhưng PTY vẫn alive)
       if (vibeNotifier.isAttachedTo(sessionId)) {
         debugPrint('[VibeSession] Already attached to $sessionId, skipping create');
+        // Restore persisted size
+        final size = vibeNotifier.getLastSentSize(sessionId);
+        if (size != null) {
+          _cachedCols = size[0];
+          _cachedRows = size[1];
+          _lastSentCols = size[0];
+          _lastSentRows = size[1];
+        }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             _keyboardFocusNode.requestFocus();
@@ -91,15 +113,16 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
           }
         });
       } else {
+        // Not attached → need to create/attach session
+        // This handles: first entry, flutter restart, session switch
         _initializeSessionWithRetry().then((_) {
-          // SSH Terminal Mode - Initialize input handler AFTER session is ready
           if (mounted) {
             _initTerminalInputHandler();
           }
         });
       }
     } else {
-      // Direct connection mode - initialize immediately
+      // Direct connection mode
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _keyboardFocusNode.requestFocus();
@@ -109,8 +132,49 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
     }
   }
 
+  /// Initialize storage and restore history from file
+  Future<void> _initStorage(String sessionId) async {
+    await _storage.init(sessionId);
+
+    // Wire output callback to persist new terminal output
+    ref.read(vibeSessionProvider.notifier).onOutput = (data) {
+      _storage.append(data);
+    };
+
+    // Only load history if terminal is empty (first entry or after clear)
+    // Skip if terminal already has data from cache (re-entry case)
+    final vibeState = ref.read(vibeSessionProvider);
+    final vibeNotifier = ref.read(vibeSessionProvider.notifier);
+
+    // Check if this is a fresh session (no cached terminal data)
+    if (!vibeNotifier.hasSession(sessionId)) {
+      // Load history into terminal (instant first paint via streaming)
+      await for (final chunk in _storage.load()) {
+        vibeState.terminal.write(chunk);
+      }
+      debugPrint('[VibeSession] Storage loaded history for new session $sessionId');
+    } else {
+      debugPrint('[VibeSession] Storage skipped load - terminal already has data for $sessionId');
+    }
+  }
+
+  /// Handle app lifecycle changes - flush storage on pause
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _storage.flushOnPause();
+    }
+  }
+
   /// Initialize SSH terminal input handler
   void _initTerminalInputHandler() {
+    // CRITICAL FIX: Don't create multiple handlers on re-entry
+    // Multiple handlers = duplicate keystrokes (aaa instead of a)
+    if (_terminalInputHandler != null) {
+      debugPrint('[VibeSession] Input handler already exists, skipping init');
+      return;
+    }
+
     final vibeState = ref.read(vibeSessionProvider);
     final bridge = ref.read(bridgeWrapperProvider);
 
@@ -152,60 +216,56 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
 
   @override
   void dispose() {
+    // CRITICAL: Detach input handler FIRST to prevent duplicate handlers
+    // HardwareKeyboard.instance is global - handlers accumulate if not removed
+    _terminalInputHandler?.detach();
+    _terminalInputHandler = null;
+
+    // Remove lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+
+    // Dispose storage (flushes pending data)
+    _storage.dispose();
+
+    // Clear output callback using cached ref (ref unavailable after dispose)
+    _vibeNotifier?.onOutput = null;
+    _vibeNotifier = null;
+
     _ackPollTimer?.cancel();
     _ackPollTimer = null;
     _predictionEngine?.dispose();
     _predictionEngine = null;
-    _terminalInputHandler?.detach();
-    _terminalInputHandler = null;
     _keyboardFocusNode.dispose();
-    _resizeTimer?.cancel(); // Cancel pending resize timer
+    _resizeTimer?.cancel();
     super.dispose();
   }
 
-  /// Initialize session with re-attach/re-spawn logic
-  ///
-  /// Phase 05: When app restarts, mobile has session metadata but server PTYs may be dead.
-  /// Strategy:
-  /// 1. Check if session exists on server
-  /// 2. If exists → Re-attach (reuse existing PTY)
-  /// 3. If not exists → Re-spawn (create new PTY with same config)
+  /// Called after onResize fires (size guaranteed valid).
+  /// Sends resize → createSession → attachSession in order.
   Future<void> _initializeSessionWithRetry() async {
-    setState(() => _isRestoring = true);
-
     try {
       final sessionId = widget.session!.id;
       final projectPath = widget.project!.path;
       final vibeNotifier = ref.read(vibeSessionProvider.notifier);
-
-      setState(() => _restoreMessage = 'Creating session...');
-
-      // Phase Fix-05: Use createSession() API instead of sendCommand()
-      // This properly initializes session with UUID and working directory
       final bridge = ref.read(bridgeWrapperProvider);
+
+      // Resize BEFORE createSession → server stores as pending_resize
+      // → PTY spawns with this exact size → 0 extra SIGWINCH on first prompt
+      if (_cachedCols != null && _cachedRows != null) {
+        await bridge.resizePty(rows: _cachedRows!, cols: _cachedCols!);
+        _lastSentCols = _cachedCols;
+        _lastSentRows = _cachedRows;
+        vibeNotifier.updateLastSentSize(sessionId, _cachedCols!, _cachedRows!);
+      }
+
       await bridge.createSession(
         projectPath: projectPath,
         sessionId: sessionId,
       );
 
-      // Step 2: Attach session to start event loop
       await vibeNotifier.attachSession(sessionId);
-
-      // Step 5: Clear restore message after delay
-      if (mounted) {
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) setState(() => _restoreMessage = null);
-        });
-      }
-
     } catch (e) {
-      if (mounted) {
-        setState(() => _restoreMessage = 'Failed: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isRestoring = false);
-      }
+      debugPrint('[VibeSession] Session init failed: $e');
     }
   }
 
@@ -215,11 +275,9 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
   /// - Time A: onResize from xterm (first mount + screen rotation)
   /// - Time B: on connection established (sync cached size)
   void _setupResizeCallback(Terminal terminal, WidgetRef ref) {
-    if (_resizeCallbackSetup) return;
-    _resizeCallbackSetup = true;
+    _resizeCallbackTerminal = terminal;
 
     terminal.onResize = (width, height, pixelWidth, pixelHeight) {
-      // width = cols, height = rows from xterm.dart
       _cachedCols = width;
       _cachedRows = height;
 
@@ -242,82 +300,28 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
         await bridge.resizePty(rows: rows, cols: cols);
         _lastSentCols = cols;
         _lastSentRows = rows;
+        // Persist to provider so re-entry can restore without sending resize
+        ref.read(vibeSessionProvider.notifier).updateLastSentSize(widget.session?.id ?? '', cols, rows);
         debugPrint('[VibeSession] Terminal resized: ${cols}x$rows');
-
-        // OPTIMIZATION: Let shell handle prompt naturally
-        // No need to force clear screen - causes flickering
       } catch (e) {
         debugPrint('[VibeSession] Resize failed: $e');
       }
     });
   }
 
-  /// Send cached size when connection is established
-  ///
-  /// OPTIMIZATION: Simplified init - no artificial delays or forced clears
-  /// Backend now handles prompt trigger automatically after PTY spawn
-  void _onConnectionEstablished(WidgetRef ref) {
-    if (_cachedCols != null && _cachedRows != null) {
-      // Send immediately without debounce for connection-time sync
-      _resizeTimer?.cancel();
-      Future.microtask(() async {
-        try {
-          final bridge = ref.read(bridgeWrapperProvider);
-          await bridge.resizePty(rows: _cachedRows!, cols: _cachedCols!);
-          _lastSentCols = _cachedCols;
-          _lastSentRows = _cachedRows;
-          debugPrint('[VibeSession] Initial terminal size: ${_cachedCols}x$_cachedRows');
-
-          // Backend will trigger prompt automatically - no need to force it
-        } catch (e) {
-          debugPrint('[VibeSession] Initial resize failed: $e');
-        }
-      });
-    }
-  }
+  // _onConnectionEstablished removed: resize is now handled exclusively by
+  // _initializeSessionWithRetry (first load) and _debouncedResize (subsequent)
 
   @override
   Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
     final vibeState = ref.watch(vibeSessionProvider);
 
-    // Setup resize callback on first build
-    if (!_resizeCallbackSetup && mounted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _setupResizeCallback(vibeState.terminal, ref);
-      });
-    }
-
-    // Handle connection-established resize (Time B)
-    // Check if we just became connected and have cached size
-    final wasConnected = _lastSentCols != null;
-    if (connectionState.isConnected && !wasConnected && _cachedCols != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _onConnectionEstablished(ref);
-      });
-    }
-
-    // Phase 05: Show restoring state
-    if (_isRestoring) {
-      return Scaffold(
-        backgroundColor: CatppuccinMocha.base,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(color: CatppuccinMocha.blue),
-              const SizedBox(height: 16),
-              Text(
-                _restoreMessage ?? 'Restoring session...',
-                style: TextStyle(
-                  color: CatppuccinMocha.text,
-                  fontSize: 16,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+    // Setup resize callback synchronously — MUST be before layout phase
+    // so that onResize fires with callback already set (triggers deferred createSession).
+    // Re-set when terminal changes (e.g., after attachSession switches to different session's Terminal)
+    if (_resizeCallbackTerminal != vibeState.terminal) {
+      _setupResizeCallback(vibeState.terminal, ref);
     }
 
     return Scaffold(
@@ -364,6 +368,7 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage> {
                 }
               } else if (value == 'clear') {
                 vibeState.terminal.eraseDisplay();
+                _storage.clear(); // Clear persisted history too
               }
             },
             itemBuilder: (context) => [
