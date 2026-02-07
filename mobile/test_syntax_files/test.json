@@ -1,0 +1,1059 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "comacode-mobile",
+  "version": "2.0.0",
+  "description": "Mobile terminal and remote development platform",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comacode/mobile"
+  },
+  "author": {
+    "name": "Comacode Team",
+    "email": "team@comacode.dev",
+    "url": "https://comacode.dev"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1",
+    "typescript": "^5.3.3",
+    "lodash": "^4.17.21",
+    "axios": "^1.6.2",
+    "uuid": "^9.0.0",
+    "zod": "^3.22.4",
+    "date-fns": "^3.0.6",
+    "@prisma/client": "^5.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/express": "^4.17.21",
+    "@types/lodash": "^4.14.202",
+    "vitest": "^1.1.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "tsx": "^4.7.0",
+    "nodemon": "^3.0.2"
+  },
+  "scripts": {
+    "dev": "nodemon --exec tsx src/index.ts",
+    "build": "tsc --build",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "format": "prettier --write 'src/**/*.{ts,tsx,json}'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,json}'",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist node_modules/.cache",
+    "prepare": "husky install",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "config": {
+    "port": 3000,
+    "host": "0.0.0.0",
+    "debug": true,
+    "logLevel": "info",
+    "cors": {
+      "enabled": true,
+      "origins": [
+        "http://localhost:3000",
+        "https://comacode.dev",
+        "https://app.comacode.dev",
+        "https://staging.comacode.dev"
+      ],
+      "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+      "credentials": true,
+      "maxAge": 86400
+    },
+    "rateLimit": {
+      "windowMs": 900000,
+      "max": 100,
+      "message": "Too many requests from this IP, please try again later",
+      "standardHeaders": true,
+      "legacyHeaders": false
+    },
+    "session": {
+      "secret": "${SESSION_SECRET}",
+      "maxAge": 86400000,
+      "secure": true,
+      "httpOnly": true,
+      "sameSite": "strict"
+    },
+    "database": {
+      "url": "${DATABASE_URL}",
+      "poolSize": 10,
+      "connectionTimeout": 5000,
+      "idleTimeout": 30000,
+      "maxRetries": 3
+    },
+    "redis": {
+      "url": "${REDIS_URL}",
+      "maxRetries": 3,
+      "retryDelay": 1000,
+      "keyPrefix": "comacode:"
+    }
+  },
+  "featureFlags": {
+    "terminal": {
+      "enabled": true,
+      "maxSessions": 5,
+      "idleTimeout": 600000,
+      "historySize": 1000,
+      "webSocketCompression": true,
+      "allowCustomShell": false,
+      "supportedShells": ["bash", "zsh", "fish", "sh"]
+    },
+    "fileViewer": {
+      "enabled": true,
+      "maxFileSize": 5242880,
+      "supportedFormats": [
+        "text/*",
+        "image/*",
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/typescript"
+      ],
+      "syntaxHighlighting": true,
+      "lineNumbers": true
+    },
+    "collaboration": {
+      "enabled": false,
+      "maxParticipants": 10,
+      "voiceChat": false,
+      "screenShare": true
+    },
+    "aiAssistant": {
+      "enabled": true,
+      "provider": "anthropic",
+      "model": "claude-3-opus",
+      "maxTokens": 4096,
+      "temperature": 0.7,
+      "features": {
+        "codeCompletion": true,
+        "codeExplanation": true,
+        "bugDetection": true,
+        "refactoring": true,
+        "documentation": true
+      }
+    },
+    "authentication": {
+      "passwordless": true,
+      "mfa": true,
+      "sso": {
+        "enabled": true,
+        "providers": ["google", "github", "gitlab", "microsoft"]
+      },
+      "sessionDuration": 604800000
+    },
+    "billing": {
+      "enabled": true,
+      "stripeEnabled": true,
+      "freeTier": {
+        "maxProjects": 3,
+        "maxStorage": 1073741824,
+        "maxBuildMinutes": 300
+      }
+    },
+    "analytics": {
+      "enabled": true,
+      "anonymizeIp": true,
+      "sessionRecording": false
+    },
+    "notifications": {
+      "email": true,
+      "push": true,
+      "inApp": true,
+      "slack": true,
+      "discord": false,
+      "webhook": true
+    },
+    "experiments": {
+      "newDashboard": {
+        "enabled": false,
+        "rolloutPercentage": 10,
+        "targetGroups": ["beta_testers", "internal"]
+      },
+      "darkModeV2": {
+        "enabled": true,
+        "rolloutPercentage": 100
+      },
+      "performanceOptimizations": {
+        "enabled": true,
+        "lazyLoading": true,
+        "virtualScrolling": true,
+        "webWorkers": true
+      }
+    }
+  },
+  "users": [
+    {
+      "id": 1,
+      "uuid": "550e8400-e29b-41d4-a716-446655440001",
+      "name": "Alice Admin",
+      "email": "alice@example.com",
+      "avatar": "https://avatars.comacode.dev/alice.png",
+      "role": "admin",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": true,
+      "permissions": ["read", "write", "delete", "admin", "billing", "audit"],
+      "metadata": {
+        "department": "Engineering",
+        "team": "Platform",
+        "location": "San Francisco",
+        "title": "Principal Engineer",
+        "manager": null,
+        "hireDate": "2020-01-15",
+        "employeeId": "EMP001",
+        "costCenter": "CC-ENG-001"
+      },
+      "preferences": {
+        "theme": "dark",
+        "language": "en",
+        "timezone": "America/Los_Angeles",
+        "dateFormat": "MM/DD/YYYY",
+        "timeFormat": "12h",
+        "notifications": {
+          "email": true,
+          "push": true,
+          "inApp": true,
+          "digest": "daily",
+          "quietHours": {
+            "enabled": true,
+            "start": "22:00",
+            "end": "08:00"
+          }
+        },
+        "editor": {
+          "fontSize": 14,
+          "fontFamily": "JetBrains Mono",
+          "tabSize": 2,
+          "wordWrap": true,
+          "minimap": true,
+          "lineNumbers": true,
+          "bracketMatching": true,
+          "autoSave": true
+        },
+        "terminal": {
+          "fontSize": 13,
+          "fontFamily": "SF Mono",
+          "cursorStyle": "block",
+          "cursorBlink": true,
+          "scrollback": 10000
+        }
+      },
+      "sessions": [
+        {
+          "id": "sess_001",
+          "deviceType": "desktop",
+          "browser": "Chrome",
+          "os": "macOS",
+          "ip": "192.168.1.100",
+          "lastActive": "2024-06-15T12:30:00.000Z",
+          "location": "San Francisco, CA"
+        }
+      ],
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-06-15T12:30:00.000Z",
+      "lastLoginAt": "2024-06-15T12:00:00.000Z"
+    },
+    {
+      "id": 2,
+      "uuid": "550e8400-e29b-41d4-a716-446655440002",
+      "name": "Bob Developer",
+      "email": "bob@example.com",
+      "avatar": "https://avatars.comacode.dev/bob.png",
+      "role": "developer",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": false,
+      "permissions": ["read", "write", "deploy"],
+      "metadata": {
+        "department": "Engineering",
+        "team": "Mobile",
+        "location": "New York",
+        "title": "Senior Developer",
+        "manager": 1,
+        "hireDate": "2021-03-01",
+        "employeeId": "EMP002",
+        "costCenter": "CC-ENG-002"
+      },
+      "preferences": {
+        "theme": "light",
+        "language": "en",
+        "timezone": "America/New_York",
+        "dateFormat": "DD/MM/YYYY",
+        "timeFormat": "24h",
+        "notifications": {
+          "email": true,
+          "push": false,
+          "inApp": true,
+          "digest": "weekly"
+        },
+        "editor": {
+          "fontSize": 16,
+          "fontFamily": "Fira Code",
+          "tabSize": 4,
+          "wordWrap": false,
+          "minimap": false,
+          "lineNumbers": true
+        }
+      },
+      "createdAt": "2024-02-15T10:30:00.000Z",
+      "updatedAt": "2024-06-10T08:45:00.000Z",
+      "lastLoginAt": "2024-06-14T09:00:00.000Z"
+    },
+    {
+      "id": 3,
+      "uuid": "550e8400-e29b-41d4-a716-446655440003",
+      "name": "Charlie Guest",
+      "email": "charlie@example.com",
+      "avatar": null,
+      "role": "guest",
+      "isActive": true,
+      "emailVerified": false,
+      "mfaEnabled": false,
+      "permissions": ["read"],
+      "metadata": {
+        "source": "invite",
+        "invitedBy": 1,
+        "inviteCode": "INV-2024-001",
+        "expiresAt": "2024-07-01T00:00:00.000Z"
+      },
+      "preferences": {
+        "theme": "system",
+        "language": "en",
+        "timezone": "UTC"
+      },
+      "createdAt": "2024-06-01T14:00:00.000Z",
+      "updatedAt": null,
+      "lastLoginAt": null
+    },
+    {
+      "id": 4,
+      "uuid": "550e8400-e29b-41d4-a716-446655440004",
+      "name": "Diana Designer",
+      "email": "diana@example.com",
+      "avatar": "https://avatars.comacode.dev/diana.png",
+      "role": "designer",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": true,
+      "permissions": ["read", "write", "design"],
+      "metadata": {
+        "department": "Design",
+        "team": "Product Design",
+        "location": "London",
+        "title": "Lead Designer",
+        "manager": 1,
+        "hireDate": "2022-06-15",
+        "employeeId": "EMP004",
+        "costCenter": "CC-DES-001"
+      },
+      "preferences": {
+        "theme": "dark",
+        "language": "en-GB",
+        "timezone": "Europe/London",
+        "notifications": {
+          "email": true,
+          "push": true,
+          "inApp": true
+        }
+      },
+      "createdAt": "2024-03-01T09:00:00.000Z",
+      "updatedAt": "2024-06-12T15:20:00.000Z"
+    },
+    {
+      "id": 5,
+      "uuid": "550e8400-e29b-41d4-a716-446655440005",
+      "name": "Ethan Engineer",
+      "email": "ethan@example.com",
+      "avatar": "https://avatars.comacode.dev/ethan.png",
+      "role": "developer",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": true,
+      "permissions": ["read", "write", "deploy", "infrastructure"],
+      "metadata": {
+        "department": "Engineering",
+        "team": "Infrastructure",
+        "location": "Seattle",
+        "title": "DevOps Engineer",
+        "manager": 1,
+        "hireDate": "2021-09-01",
+        "employeeId": "EMP005",
+        "costCenter": "CC-ENG-003"
+      },
+      "preferences": {
+        "theme": "dark",
+        "language": "en",
+        "timezone": "America/Los_Angeles"
+      },
+      "createdAt": "2024-01-20T11:00:00.000Z",
+      "updatedAt": "2024-06-14T18:00:00.000Z"
+    },
+    {
+      "id": 6,
+      "uuid": "550e8400-e29b-41d4-a716-446655440006",
+      "name": "Fiona Finance",
+      "email": "fiona@example.com",
+      "avatar": "https://avatars.comacode.dev/fiona.png",
+      "role": "finance",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": true,
+      "permissions": ["read", "billing", "reports"],
+      "metadata": {
+        "department": "Finance",
+        "team": "Accounting",
+        "location": "Chicago",
+        "title": "Finance Manager",
+        "manager": null,
+        "hireDate": "2020-05-01",
+        "employeeId": "EMP006",
+        "costCenter": "CC-FIN-001"
+      },
+      "preferences": {
+        "theme": "light",
+        "language": "en",
+        "timezone": "America/Chicago"
+      },
+      "createdAt": "2024-02-01T08:00:00.000Z",
+      "updatedAt": "2024-06-13T10:30:00.000Z"
+    },
+    {
+      "id": 7,
+      "uuid": "550e8400-e29b-41d4-a716-446655440007",
+      "name": "George QA",
+      "email": "george@example.com",
+      "avatar": "https://avatars.comacode.dev/george.png",
+      "role": "qa",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": false,
+      "permissions": ["read", "write", "testing"],
+      "metadata": {
+        "department": "Engineering",
+        "team": "Quality Assurance",
+        "location": "Austin",
+        "title": "QA Lead",
+        "manager": 1,
+        "hireDate": "2022-01-15",
+        "employeeId": "EMP007",
+        "costCenter": "CC-ENG-004"
+      },
+      "preferences": {
+        "theme": "dark",
+        "language": "en",
+        "timezone": "America/Chicago"
+      },
+      "createdAt": "2024-02-20T14:00:00.000Z",
+      "updatedAt": "2024-06-11T16:45:00.000Z"
+    },
+    {
+      "id": 8,
+      "uuid": "550e8400-e29b-41d4-a716-446655440008",
+      "name": "Hannah HR",
+      "email": "hannah@example.com",
+      "avatar": "https://avatars.comacode.dev/hannah.png",
+      "role": "hr",
+      "isActive": true,
+      "emailVerified": true,
+      "mfaEnabled": true,
+      "permissions": ["read", "hr", "reports"],
+      "metadata": {
+        "department": "Human Resources",
+        "team": "People Operations",
+        "location": "Denver",
+        "title": "HR Director",
+        "manager": null,
+        "hireDate": "2019-08-01",
+        "employeeId": "EMP008",
+        "costCenter": "CC-HR-001"
+      },
+      "preferences": {
+        "theme": "light",
+        "language": "en",
+        "timezone": "America/Denver"
+      },
+      "createdAt": "2024-01-05T10:00:00.000Z",
+      "updatedAt": "2024-06-14T11:00:00.000Z"
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj_001",
+      "name": "comacode-backend",
+      "description": "Backend services for Comacode platform including API gateway, authentication, and core business logic",
+      "language": "rust",
+      "framework": "actix-web",
+      "status": "active",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "tags": ["backend", "api", "rust", "quic", "microservices"],
+      "stats": {
+        "commits": 1250,
+        "branches": 12,
+        "contributors": 5,
+        "openIssues": 23,
+        "closedIssues": 156,
+        "pullRequests": 45,
+        "stars": 234,
+        "forks": 18,
+        "linesOfCode": 125000,
+        "testCoverage": 87.5
+      },
+      "settings": {
+        "autoMerge": true,
+        "requireReviews": 2,
+        "protectedBranches": ["main", "release/*", "hotfix/*"],
+        "branchNamingConvention": "^(feature|bugfix|hotfix|release)/[a-z0-9-]+$",
+        "cicd": {
+          "provider": "github-actions",
+          "autoTest": true,
+          "autoDeploy": false,
+          "deploymentEnvironments": ["staging", "production"],
+          "requiredChecks": ["lint", "test", "security-scan", "build"]
+        },
+        "security": {
+          "dependabotEnabled": true,
+          "codeScanning": true,
+          "secretScanning": true,
+          "vulnerabilityAlerts": true
+        }
+      },
+      "environments": {
+        "development": {
+          "url": "http://localhost:8080",
+          "database": "postgresql://localhost:5432/comacode_dev",
+          "replicas": 1
+        },
+        "staging": {
+          "url": "https://staging-api.comacode.dev",
+          "database": "postgresql://staging-db.comacode.dev:5432/comacode",
+          "replicas": 2
+        },
+        "production": {
+          "url": "https://api.comacode.dev",
+          "database": "postgresql://prod-db.comacode.dev:5432/comacode",
+          "replicas": 5
+        }
+      },
+      "createdAt": "2023-06-01T00:00:00.000Z",
+      "updatedAt": "2024-06-15T08:00:00.000Z"
+    },
+    {
+      "id": "proj_002",
+      "name": "comacode-mobile",
+      "description": "Flutter mobile application for iOS and Android providing terminal access and remote development capabilities",
+      "language": "dart",
+      "framework": "flutter",
+      "status": "active",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "tags": ["mobile", "flutter", "dart", "ios", "android", "terminal"],
+      "stats": {
+        "commits": 850,
+        "branches": 8,
+        "contributors": 4,
+        "openIssues": 15,
+        "closedIssues": 98,
+        "linesOfCode": 45000,
+        "testCoverage": 72.3
+      },
+      "settings": {
+        "autoMerge": false,
+        "requireReviews": 1,
+        "protectedBranches": ["main"],
+        "cicd": {
+          "provider": "github-actions",
+          "autoTest": true,
+          "platforms": ["ios", "android"],
+          "requiredChecks": ["analyze", "test", "build-ios", "build-android"]
+        }
+      },
+      "releases": [
+        {
+          "version": "2.0.0",
+          "releaseDate": "2024-06-01",
+          "platform": ["ios", "android"],
+          "changelog": "Major redesign with new terminal experience"
+        },
+        {
+          "version": "1.9.5",
+          "releaseDate": "2024-05-15",
+          "platform": ["ios", "android"],
+          "changelog": "Bug fixes and performance improvements"
+        }
+      ],
+      "createdAt": "2023-08-15T00:00:00.000Z",
+      "updatedAt": "2024-06-14T16:00:00.000Z"
+    },
+    {
+      "id": "proj_003",
+      "name": "comacode-web",
+      "description": "Web dashboard and administration panel built with Next.js",
+      "language": "typescript",
+      "framework": "nextjs",
+      "status": "active",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "tags": ["web", "frontend", "nextjs", "react", "typescript"],
+      "stats": {
+        "commits": 620,
+        "branches": 6,
+        "contributors": 3,
+        "openIssues": 8,
+        "closedIssues": 45,
+        "linesOfCode": 32000,
+        "testCoverage": 65.8
+      },
+      "settings": {
+        "autoMerge": true,
+        "requireReviews": 1,
+        "protectedBranches": ["main"]
+      },
+      "createdAt": "2023-10-01T00:00:00.000Z",
+      "updatedAt": "2024-06-13T12:00:00.000Z"
+    },
+    {
+      "id": "proj_004",
+      "name": "comacode-docs",
+      "description": "Documentation website built with Docusaurus",
+      "language": "typescript",
+      "framework": "docusaurus",
+      "status": "active",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "tags": ["documentation", "docusaurus", "markdown"],
+      "stats": {
+        "commits": 180,
+        "branches": 3,
+        "contributors": 6,
+        "openIssues": 2,
+        "closedIssues": 12
+      },
+      "createdAt": "2024-01-15T00:00:00.000Z",
+      "updatedAt": "2024-06-10T09:00:00.000Z"
+    },
+    {
+      "id": "proj_005",
+      "name": "comacode-cli",
+      "description": "Command-line interface tool for Comacode platform",
+      "language": "rust",
+      "framework": "clap",
+      "status": "active",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "tags": ["cli", "rust", "terminal", "developer-tools"],
+      "stats": {
+        "commits": 320,
+        "branches": 5,
+        "contributors": 2,
+        "openIssues": 5,
+        "closedIssues": 28,
+        "downloads": 15000
+      },
+      "createdAt": "2023-12-01T00:00:00.000Z",
+      "updatedAt": "2024-06-12T14:00:00.000Z"
+    }
+  ],
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1/users",
+      "description": "List all users with pagination and filtering",
+      "authentication": "required",
+      "roles": ["admin", "hr"],
+      "rateLimit": 100,
+      "parameters": {
+        "query": {
+          "page": { "type": "integer", "default": 1 },
+          "limit": { "type": "integer", "default": 20, "max": 100 },
+          "search": { "type": "string" },
+          "role": { "type": "string", "enum": ["admin", "developer", "designer", "guest"] },
+          "isActive": { "type": "boolean" }
+        }
+      },
+      "responses": {
+        "200": { "description": "Successful response with user list" },
+        "401": { "description": "Unauthorized" },
+        "403": { "description": "Forbidden - insufficient permissions" }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users",
+      "description": "Create a new user",
+      "authentication": "required",
+      "roles": ["admin"],
+      "rateLimit": 10,
+      "requestBody": {
+        "required": true,
+        "contentType": "application/json",
+        "schema": {
+          "name": { "type": "string", "required": true },
+          "email": { "type": "string", "format": "email", "required": true },
+          "role": { "type": "string", "required": true },
+          "password": { "type": "string", "minLength": 8 }
+        }
+      },
+      "responses": {
+        "201": { "description": "User created successfully" },
+        "400": { "description": "Invalid request body" },
+        "409": { "description": "Email already exists" }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/:id",
+      "description": "Get user details by ID",
+      "authentication": "required",
+      "rateLimit": 100,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "required": true }
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/:id",
+      "description": "Update user details",
+      "authentication": "required",
+      "roles": ["admin", "self"],
+      "rateLimit": 50
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/:id",
+      "description": "Delete a user",
+      "authentication": "required",
+      "roles": ["admin"],
+      "rateLimit": 10
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "description": "List all projects",
+      "authentication": "required",
+      "rateLimit": 100,
+      "parameters": {
+        "query": {
+          "status": { "type": "string", "enum": ["active", "archived", "deleted"] },
+          "visibility": { "type": "string", "enum": ["public", "private"] }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/projects",
+      "description": "Create a new project",
+      "authentication": "required",
+      "rateLimit": 20,
+      "requestBody": {
+        "required": true,
+        "schema": {
+          "name": { "type": "string", "required": true },
+          "description": { "type": "string" },
+          "visibility": { "type": "string", "default": "private" }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/projects/:id",
+      "description": "Get project details",
+      "authentication": "required",
+      "rateLimit": 100
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/terminal/sessions",
+      "description": "Create a new terminal session",
+      "authentication": "required",
+      "rateLimit": 30,
+      "requestBody": {
+        "schema": {
+          "projectId": { "type": "string", "required": true },
+          "shell": { "type": "string", "default": "bash" },
+          "environment": { "type": "object" }
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/terminal/sessions/:id",
+      "description": "Terminate a terminal session",
+      "authentication": "required",
+      "rateLimit": 50
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "description": "Authenticate user and get tokens",
+      "authentication": "none",
+      "rateLimit": 5,
+      "requestBody": {
+        "schema": {
+          "email": { "type": "string", "format": "email", "required": true },
+          "password": { "type": "string", "required": true }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/refresh",
+      "description": "Refresh access token",
+      "authentication": "refresh_token",
+      "rateLimit": 20
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "description": "Logout and invalidate tokens",
+      "authentication": "required",
+      "rateLimit": 10
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/billing/subscription",
+      "description": "Get current subscription details",
+      "authentication": "required",
+      "roles": ["admin", "finance"],
+      "rateLimit": 50
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/billing/checkout",
+      "description": "Create a checkout session",
+      "authentication": "required",
+      "rateLimit": 10
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/dashboard",
+      "description": "Get dashboard analytics data",
+      "authentication": "required",
+      "roles": ["admin"],
+      "rateLimit": 30,
+      "parameters": {
+        "query": {
+          "startDate": { "type": "string", "format": "date" },
+          "endDate": { "type": "string", "format": "date" },
+          "granularity": { "type": "string", "enum": ["hour", "day", "week", "month"] }
+        }
+      }
+    }
+  ],
+  "i18n": {
+    "defaultLocale": "en",
+    "supportedLocales": ["en", "en-GB", "vi", "ja", "ko", "zh-CN", "zh-TW", "es", "fr", "de", "pt-BR"],
+    "fallbackLocale": "en",
+    "translations": {
+      "en": {
+        "common": {
+          "welcome": "Welcome to Comacode",
+          "login": "Sign In",
+          "logout": "Sign Out",
+          "signup": "Create Account",
+          "dashboard": "Dashboard",
+          "settings": "Settings",
+          "profile": "Profile",
+          "projects": "Projects",
+          "terminal": "Terminal",
+          "save": "Save",
+          "cancel": "Cancel",
+          "delete": "Delete",
+          "edit": "Edit",
+          "create": "Create",
+          "search": "Search",
+          "loading": "Loading...",
+          "error": "An error occurred",
+          "success": "Success",
+          "confirm": "Confirm",
+          "back": "Back",
+          "next": "Next",
+          "previous": "Previous",
+          "submit": "Submit",
+          "close": "Close"
+        },
+        "auth": {
+          "loginTitle": "Sign in to your account",
+          "signupTitle": "Create a new account",
+          "forgotPassword": "Forgot your password?",
+          "resetPassword": "Reset Password",
+          "emailLabel": "Email address",
+          "passwordLabel": "Password",
+          "rememberMe": "Remember me",
+          "invalidCredentials": "Invalid email or password",
+          "accountCreated": "Your account has been created successfully"
+        },
+        "terminal": {
+          "newSession": "New Session",
+          "closeSession": "Close Session",
+          "clearScreen": "Clear Screen",
+          "copyOutput": "Copy Output",
+          "sessionExpired": "Session has expired",
+          "connectionLost": "Connection lost. Reconnecting...",
+          "connected": "Connected"
+        },
+        "projects": {
+          "newProject": "New Project",
+          "projectName": "Project Name",
+          "projectDescription": "Description",
+          "visibility": "Visibility",
+          "private": "Private",
+          "public": "Public",
+          "noProjects": "No projects found",
+          "createFirst": "Create your first project"
+        },
+        "errors": {
+          "notFound": "Page not found",
+          "unauthorized": "You are not authorized to view this page",
+          "serverError": "Server error. Please try again later",
+          "networkError": "Network error. Check your connection"
+        }
+      },
+      "vi": {
+        "common": {
+          "welcome": "Chao mung den voi Comacode",
+          "login": "Dang nhap",
+          "logout": "Dang xuat",
+          "signup": "Tao tai khoan",
+          "dashboard": "Bang dieu khien",
+          "settings": "Cai dat",
+          "profile": "Ho so",
+          "projects": "Du an",
+          "terminal": "Terminal",
+          "save": "Luu",
+          "cancel": "Huy",
+          "delete": "Xoa",
+          "edit": "Sua",
+          "create": "Tao moi",
+          "search": "Tim kiem",
+          "loading": "Dang tai...",
+          "error": "Da xay ra loi",
+          "success": "Thanh cong"
+        }
+      },
+      "ja": {
+        "common": {
+          "welcome": "Comacodeへようこそ",
+          "login": "ログイン",
+          "logout": "ログアウト",
+          "signup": "アカウント作成",
+          "dashboard": "ダッシュボード",
+          "settings": "設定",
+          "profile": "プロフィール",
+          "projects": "プロジェクト",
+          "terminal": "ターミナル",
+          "save": "保存",
+          "cancel": "キャンセル",
+          "delete": "削除",
+          "edit": "編集",
+          "create": "作成",
+          "search": "検索"
+        }
+      },
+      "ko": {
+        "common": {
+          "welcome": "Comacode에 오신 것을 환영합니다",
+          "login": "로그인",
+          "logout": "로그아웃",
+          "signup": "계정 만들기",
+          "dashboard": "대시보드",
+          "settings": "설정",
+          "profile": "프로필",
+          "projects": "프로젝트",
+          "terminal": "터미널"
+        }
+      },
+      "zh-CN": {
+        "common": {
+          "welcome": "欢迎使用Comacode",
+          "login": "登录",
+          "logout": "退出",
+          "signup": "创建账户",
+          "dashboard": "仪表板",
+          "settings": "设置",
+          "profile": "个人资料",
+          "projects": "项目",
+          "terminal": "终端"
+        }
+      }
+    }
+  },
+  "schemas": {
+    "User": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer", "description": "Unique user identifier" },
+        "uuid": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "email": { "type": "string", "format": "email" },
+        "avatar": { "type": "string", "format": "uri", "nullable": true },
+        "role": { "type": "string", "enum": ["admin", "developer", "designer", "guest", "finance", "hr", "qa"] },
+        "isActive": { "type": "boolean", "default": true },
+        "emailVerified": { "type": "boolean", "default": false },
+        "mfaEnabled": { "type": "boolean", "default": false },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "metadata": { "type": "object", "additionalProperties": true },
+        "preferences": { "$ref": "#/schemas/UserPreferences" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time", "nullable": true }
+      },
+      "required": ["id", "uuid", "name", "email", "role"]
+    },
+    "UserPreferences": {
+      "type": "object",
+      "properties": {
+        "theme": { "type": "string", "enum": ["light", "dark", "system"] },
+        "language": { "type": "string" },
+        "timezone": { "type": "string" },
+        "dateFormat": { "type": "string" },
+        "timeFormat": { "type": "string", "enum": ["12h", "24h"] },
+        "notifications": { "$ref": "#/schemas/NotificationSettings" },
+        "editor": { "$ref": "#/schemas/EditorSettings" },
+        "terminal": { "$ref": "#/schemas/TerminalSettings" }
+      }
+    },
+    "NotificationSettings": {
+      "type": "object",
+      "properties": {
+        "email": { "type": "boolean", "default": true },
+        "push": { "type": "boolean", "default": true },
+        "inApp": { "type": "boolean", "default": true },
+        "digest": { "type": "string", "enum": ["none", "daily", "weekly"] },
+        "quietHours": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "start": { "type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$" },
+            "end": { "type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$" }
+          }
+        }
+      }
+    },
+    "EditorSettings": {
+      "type": "object",
+      "properties": {
+        "fontSize": { "type": "integer", "minimum": 8, "maximum": 32, "default": 14 },
+        "fontFamily": { "type": "string", "default": "JetBrains Mono" },
+        "tabSize": { "type": "integer", "enum": [2, 4, 8], "default": 2 },
+        "wordWrap": { "type": "boolean", "default": true },
+        "minimap": { "type": "boolean", "default": true },
+        "lineNumbers": { "type": "boolean", "default": true },
+        "bracketMatching": { "type": "boolean", "default": true },
+        "autoSave": { "type": "boolean", "default": true }
+      }

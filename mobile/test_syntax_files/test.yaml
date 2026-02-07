@@ -1,0 +1,1143 @@
+# YAML sample file - Kubernetes & Docker Compose configuration
+
+# ===== Application Metadata =====
+name: comacode-platform
+version: "2.0.0"
+description: >
+  Comacode is a mobile terminal and remote development platform
+  that enables developers to code from anywhere.
+
+maintainers:
+  - name: Comacode Team
+    email: team@comacode.dev
+    role: maintainer
+
+# ===== Docker Compose Configuration =====
+services:
+  # Backend API Service
+  api:
+    image: comacode/api:${VERSION:-latest}
+    container_name: comacode-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - RUST_VERSION=1.75
+        - BUILD_MODE=release
+      target: runtime
+      cache_from:
+        - comacode/api:cache
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "4433:4433/udp"  # QUIC
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - QUIC_CERT_PATH=/certs/server.crt
+      - QUIC_KEY_PATH=/certs/server.key
+    env_file:
+      - .env
+      - .env.local
+    volumes:
+      - ./certs:/certs:ro
+      - api-data:/app/data
+      - type: bind
+        source: ./config
+        target: /app/config
+        read_only: true
+    networks:
+      - comacode-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`api.comacode.dev`)"
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+
+  # Web Frontend
+  web:
+    image: comacode/web:${VERSION:-latest}
+    container_name: comacode-web
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        - NODE_VERSION=20
+        - NEXT_PUBLIC_API_URL=https://api.comacode.dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${API_URL:-https://api.comacode.dev}
+    networks:
+      - comacode-network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: comacode-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: comacode
+      POSTGRES_USER: ${POSTGRES_USER:-comacode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Database password required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    networks:
+      - comacode-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-comacode} -d comacode"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: comacode-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - comacode-network
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: comacode-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"  # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik:/etc/traefik:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - comacode-network
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=ssl@comacode.dev"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+
+# ===== Volumes =====
+volumes:
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /data/postgres
+  redis-data:
+    driver: local
+  api-data:
+    driver: local
+  traefik-certs:
+    driver: local
+
+# ===== Networks =====
+networks:
+  comacode-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+# ===== Kubernetes Deployment =====
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comacode-api
+  namespace: comacode
+  labels:
+    app: comacode
+    component: api
+    version: v2.0.0
+  annotations:
+    kubernetes.io/change-cause: "Update to v2.0.0"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: comacode
+      component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: comacode
+        component: api
+        version: v2.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: comacode-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: comacode
+                    component: api
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: api
+          image: comacode/api:v2.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: quic
+              containerPort: 4433
+              protocol: UDP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: comacode-secrets
+                  key: database-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: comacode-secrets
+                  key: jwt-secret
+          envFrom:
+            - configMapRef:
+                name: comacode-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: comacode-config
+        - name: certs
+          secret:
+            secretName: comacode-tls
+        - name: data
+          persistentVolumeClaim:
+            claimName: comacode-data
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        - name: registry-credentials
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: comacode-api
+  namespace: comacode
+  labels:
+    app: comacode
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: quic
+      port: 4433
+      targetPort: quic
+      protocol: UDP
+  selector:
+    app: comacode
+    component: api
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: comacode-api
+  namespace: comacode
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: comacode-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 120
+
+# ===== ConfigMap =====
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: comacode-config
+  namespace: comacode
+  labels:
+    app: comacode
+data:
+  APP_NAME: "Comacode Platform"
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  CORS_ORIGINS: "https://comacode.dev,https://app.comacode.dev"
+  MAX_CONNECTIONS: "1000"
+  RATE_LIMIT_PER_SECOND: "100"
+
+  # Multi-line config file
+  nginx.conf: |
+    worker_processes auto;
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    http {
+        include mime.types;
+        default_type application/octet-stream;
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        gzip on;
+        gzip_types text/plain application/json application/javascript text/css;
+
+        upstream backend {
+            least_conn;
+            server api-1:8080 weight=5;
+            server api-2:8080 weight=3;
+            server api-3:8080 backup;
+        }
+
+        server {
+            listen 80;
+            server_name comacode.dev;
+
+            location / {
+                proxy_pass http://backend;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+            }
+        }
+    }
+
+  redis.conf: |
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    save 900 1
+    save 300 10
+    save 60 10000
+    appendonly yes
+    appendfsync everysec
+
+# ===== Secret =====
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: comacode-secrets
+  namespace: comacode
+type: Opaque
+stringData:
+  database-url: "postgresql://user:password@postgres:5432/comacode"
+  jwt-secret: "super-secret-jwt-key-replace-in-production"
+  redis-password: "redis-password-here"
+  api-key: "sk-api-key-12345"
+
+# ===== PersistentVolumeClaim =====
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comacode-data
+  namespace: comacode
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 50Gi
+
+# ===== StatefulSet for Database =====
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: comacode
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: comacode
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: comacode-secrets
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: comacode-secrets
+                  key: postgres-password
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 100Gi
+
+# ===== DaemonSet for Logging =====
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+      containers:
+        - name: fluentd
+          image: fluentd:v1.16-1
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: containers
+          hostPath:
+            path: /var/lib/docker/containers
+
+# ===== CronJob =====
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+  namespace: comacode
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  pg_dump -h postgres -U $POSTGRES_USER $POSTGRES_DB | \
+                  gzip > /backup/backup-$(date +%Y%m%d-%H%M%S).sql.gz
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: comacode-secrets
+                      key: postgres-user
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: comacode-secrets
+                      key: postgres-password
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: backup-pvc
+
+# ===== Ingress with TLS =====
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: comacode-ingress
+  namespace: comacode
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "comacode-api"
+spec:
+  tls:
+    - hosts:
+        - api.comacode.dev
+        - app.comacode.dev
+      secretName: comacode-tls
+  rules:
+    - host: api.comacode.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: comacode-api
+                port:
+                  number: 80
+    - host: app.comacode.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: comacode-web
+                port:
+                  number: 3000
+
+# ===== NetworkPolicy =====
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-network-policy
+  namespace: comacode
+spec:
+  podSelector:
+    matchLabels:
+      component: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              component: web
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+# ===== RBAC =====
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: comacode-api
+  namespace: comacode
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: comacode-api-role
+  namespace: comacode
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: comacode-api-binding
+  namespace: comacode
+subjects:
+  - kind: ServiceAccount
+    name: comacode-api
+    namespace: comacode
+roleRef:
+  kind: Role
+  name: comacode-api-role
+  apiGroup: rbac.authorization.k8s.io
+
+# ===== PodDisruptionBudget =====
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: comacode-api-pdb
+  namespace: comacode
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: comacode
+      component: api
+
+# ===== GitHub Actions Workflow =====
+---
+# .github/workflows/ci-cd.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests
+        run: cargo test --all-features
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/comacode-api \
+            api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n comacode
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/comacode-api \
+            -n comacode --timeout=300s
+
+# ===== Helm Chart values.yaml =====
+---
+# values.yaml
+replicaCount: 3
+
+image:
+  repository: comacode/api
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets:
+  - name: regcred
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: api.comacode.dev
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: comacode-tls
+      hosts:
+        - api.comacode.dev
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: comacode-api
+          topologyKey: kubernetes.io/hostname
+
+# ===== Prometheus Alerting Rules =====
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: comacode-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: comacode
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: High error rate detected
+            description: Error rate is above 5% for 5 minutes
+
+        - alert: HighLatency
+          expr: |
+            histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High latency detected
+            description: 99th percentile latency is above 1 second
+
+        - alert: PodCrashLooping
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="comacode"}[15m]) * 60 * 15 > 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Pod crash looping
+            description: Pod {{ $labels.pod }} is crash looping
+
+        - alert: HighMemoryUsage
+          expr: |
+            container_memory_usage_bytes{namespace="comacode"}
+            /
+            container_spec_memory_limit_bytes{namespace="comacode"} > 0.9
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High memory usage
+            description: Memory usage is above 90%
+
+# ===== Anchors and Aliases =====
+---
+# Define reusable anchors
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck: &default-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+x-resources: &default-resources
+  limits:
+    cpus: "1.0"
+    memory: 1G
+  reservations:
+    cpus: "0.25"
+    memory: 256M
+
+# Using anchors
+services:
+  service-a:
+    image: service-a:latest
+    logging: *default-logging
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+    deploy:
+      resources: *default-resources
+
+  service-b:
+    image: service-b:latest
+    logging: *default-logging
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+    deploy:
+      resources:
+        <<: *default-resources
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+# ===== End of Extended YAML Examples =====
+
