@@ -62,6 +62,15 @@ dependencies:
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
 
+  # SVG Rendering (File Viewer - Extended Formats)
+  flutter_svg: ^2.0.10+1
+
+  # Markdown Rendering (File Viewer - Extended Formats)
+  flutter_markdown: ^0.7.3+2
+
+  # HTML Rendering (File Viewer - Extended Formats)
+  flutter_html: ^3.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

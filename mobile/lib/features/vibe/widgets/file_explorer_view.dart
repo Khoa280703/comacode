@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme.dart';
 import '../../../models/dir_entry.dart';
 import '../../vfs/vfs_notifier.dart';
+import '../vibe_session_providers.dart';
 
 /// File explorer view for Vibe session
 ///
@@ -11,13 +12,17 @@ class FileExplorerView extends ConsumerStatefulWidget {
   /// Callback when file is tapped
   final void Function(String path, String name)? onFileTap;
 
-  /// Initial path to load (project root)
+  /// Initial path to load (can be subdirectory for state restoration)
   final String initialPath;
+
+  /// Root path boundary (user cannot navigate above this)
+  final String rootPath;
 
   const FileExplorerView({
     super.key,
     this.onFileTap,
     this.initialPath = '.',
+    this.rootPath = '.',
   });
 
   @override
@@ -58,8 +63,8 @@ class _FileExplorerViewState extends ConsumerState<FileExplorerView> {
   Widget _buildPathBar(VfsState state) {
     // Don't allow navigating outside project root
     final canGoUp = !state.isAtRoot &&
-        state.currentPath.startsWith(widget.initialPath) &&
-        state.currentPath != widget.initialPath;
+        state.currentPath.startsWith(widget.rootPath) &&
+        state.currentPath != widget.rootPath;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -70,7 +75,12 @@ class _FileExplorerViewState extends ConsumerState<FileExplorerView> {
           if (canGoUp)
             IconButton(
               icon: Icon(Icons.arrow_back, color: CatppuccinMocha.text),
-              onPressed: () => ref.read(vfsProvider.notifier).navigateUp(),
+              onPressed: () {
+                final parentPath = state.parentPath;
+                ref.read(vfsProvider.notifier).navigateUp();
+                // Persist browsed path for state restoration
+                ref.read(vibeSessionProvider.notifier).updateLastBrowsedPath(parentPath);
+              },
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
             ),
@@ -151,6 +161,8 @@ class _FileExplorerViewState extends ConsumerState<FileExplorerView> {
       onTap: () {
         if (entry.isDir) {
           ref.read(vfsProvider.notifier).navigateDown(entry.path);
+          // Persist browsed path for state restoration
+          ref.read(vibeSessionProvider.notifier).updateLastBrowsedPath(entry.path);
         } else {
           widget.onFileTap?.call(entry.path, entry.name);
         }

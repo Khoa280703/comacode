@@ -174,6 +174,24 @@ class VibeSessionNotifier extends StateNotifier<VibeSessionState> {
     setViewMode(newMode);
   }
 
+  /// Open a file in the file viewer
+  void openFile(String path, String name) {
+    state = state.copyWith(
+      openedFilePath: path,
+      openedFileName: name,
+    );
+  }
+
+  /// Close the currently opened file
+  void closeFile() {
+    state = state.copyWith(clearOpenedFile: true);
+  }
+
+  /// Update last browsed path for file explorer state persistence
+  void updateLastBrowsedPath(String path) {
+    state = state.copyWith(lastBrowsedPath: path);
+  }
+
   /// Start event loop to receive PTY output
   void _startEventLoop() {
     // Cancel old health check timer if exists

@@ -1,10 +1,12 @@
 /// Detect highlight.js language from file extension
+/// Note: TSX/JSX uses javascript because flutter_highlight doesn't have TSX
 String detectLanguage(String filename) {
   final ext = filename.split('.').last.toLowerCase();
   return switch (ext) {
     'dart' => 'dart',
-    'js' || 'jsx' || 'mjs' => 'javascript',
-    'ts' || 'tsx' => 'typescript',
+    'js' || 'mjs' => 'javascript',
+    'jsx' || 'tsx' => 'javascript', // JSX/TSX fallback to JS for highlight
+    'ts' => 'typescript',
     'py' || 'pyw' => 'python',
     'rs' => 'rust',
     'go' => 'go',
@@ -36,7 +38,7 @@ String detectLanguage(String filename) {
 bool isLikelyBinary(String filename) {
   final ext = filename.split('.').last.toLowerCase();
   const binaryExtensions = {
-    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg',
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico',
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
     'zip', 'tar', 'gz', 'rar', '7z', 'bz2',
     'exe', 'dll', 'so', 'dylib', 'bin',
@@ -45,4 +47,32 @@ bool isLikelyBinary(String filename) {
     'sqlite', 'db',
   };
   return binaryExtensions.contains(ext);
+}
+
+/// Check if file is a supported image format (viewable as image)
+/// Images are binary but can be displayed inline
+bool isImageFile(String filename) {
+  final ext = filename.split('.').last.toLowerCase();
+  const imageExtensions = {
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico',
+  };
+  return imageExtensions.contains(ext);
+}
+
+/// Check if file is an SVG image (vector, text-based XML)
+bool isSvgFile(String filename) {
+  final ext = filename.split('.').last.toLowerCase();
+  return ext == 'svg';
+}
+
+/// Check if file is a Markdown document
+bool isMarkdownFile(String filename) {
+  final ext = filename.split('.').last.toLowerCase();
+  return ext == 'md' || ext == 'markdown';
+}
+
+/// Check if file is an HTML document
+bool isHtmlFile(String filename) {
+  final ext = filename.split('.').last.toLowerCase();
+  return ext == 'html' || ext == 'htm';
 }

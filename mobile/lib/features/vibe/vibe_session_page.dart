@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../core/theme.dart';
@@ -17,7 +22,10 @@ import 'widgets/output_view.dart';
 import 'widgets/search_overlay.dart';
 import 'widgets/session_tab_bar.dart';
 import 'widgets/file_explorer_view.dart';
-import 'widgets/file_viewer_page.dart';
+import 'utils/language_detector.dart'; // for isImageFile, isSvgFile, isMarkdownFile, isHtmlFile
+import 'utils/markdown_theme.dart'; // Catppuccin Markdown theme
+import 'utils/catppuccin_highlight_theme.dart'; // Catppuccin syntax highlight theme
+import 'widgets/html_viewer.dart'; // Safe HTML viewer
 import '../terminal/ssh_input_handler.dart'; // SSH Terminal Mode - Phase 1
 import '../terminal/prediction_engine.dart'; // SSH Terminal Mode - Phase 2
 import 'services/light_session_storage.dart'; // Terminal history persistence
@@ -334,6 +342,79 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
   // _onConnectionEstablished removed: resize is now handled exclusively by
   // _initializeSessionWithRetry (first load) and _debouncedResize (subsequent)
 
+  /// Show file picker bottom sheet with directory tree navigation
+  void _showFilePickerBottomSheet(BuildContext context) {
+    // Use last browsed path if available, otherwise start from project root
+    final vibeState = ref.read(vibeSessionProvider);
+    final projectRoot = widget.project?.path ?? '.';
+    final initialPath = vibeState.lastBrowsedPath ?? projectRoot;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: CatppuccinMocha.surface0,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, scrollController) => Column(
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: CatppuccinMocha.overlay0,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.folder_open, color: CatppuccinMocha.mauve),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Select File',
+                    style: TextStyle(
+                      color: CatppuccinMocha.text,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: Icon(Icons.close, color: CatppuccinMocha.subtext0),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // File tree
+            Expanded(
+              child: FileExplorerView(
+                initialPath: initialPath,
+                rootPath: projectRoot,
+                onFileTap: (path, name) {
+                  // Close bottom sheet and open file in content area
+                  Navigator.pop(ctx);
+                  ref.read(vibeSessionProvider.notifier).openFile(path, name);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionStateProvider);
@@ -403,6 +484,13 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
               },
               tooltip: 'Search in output',
             ),
+          // Browse files button - only in files mode
+          if (connectionState.isConnected && vibeState.viewMode == ViewMode.files)
+            IconButton(
+              icon: Icon(Icons.folder_open, color: CatppuccinMocha.mauve),
+              onPressed: () => _showFilePickerBottomSheet(context),
+              tooltip: 'Browse files',
+            ),
           const SizedBox(width: 8),
         ],
       ),
@@ -426,31 +514,20 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
           children: [
             // Tab bar for multi-session (Phase 02)
             const SessionTabBar(),
-            // Main content - AnimatedCrossFade for smooth transition while keeping both mounted
+            // Main content - IndexedStack keeps both mounted but only shows active one
+            // NOTE: AnimatedCrossFade caused render tree crashes when VFS state updates
+            // during cross-fade animation. IndexedStack is simpler and more stable.
             Expanded(
-              child: AnimatedCrossFade(
-                duration: const Duration(milliseconds: 200),
-                crossFadeState: vibeState.viewMode == ViewMode.terminal
-                    ? CrossFadeState.showFirst
-                    : CrossFadeState.showSecond,
-                firstChild: OutputView(
-                  terminal: vibeState.terminal,
-                  isParsedMode: false,
-                ),
-                secondChild: FileExplorerView(
-                  initialPath: widget.project?.path ?? '.',
-                  onFileTap: (path, name) {
-                    // Open FileViewerPage with syntax highlighting
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => FileViewerPage(
-                          filePath: path,
-                          fileName: name,
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              child: IndexedStack(
+                index: vibeState.viewMode == ViewMode.terminal ? 0 : 1,
+                children: [
+                  OutputView(
+                    terminal: vibeState.terminal,
+                    isParsedMode: false,
+                  ),
+                  // Files mode: Show opened file content or "No file open" placeholder
+                  _buildFilesView(vibeState),
+                ],
               ),
             ),
             // Quick keys toolbar only in terminal mode
@@ -505,6 +582,49 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
     );
   }
 
+  /// Build the files view content area
+  /// Shows "No file open" placeholder or the opened file content
+  Widget _buildFilesView(VibeSessionState vibeState) {
+    if (!vibeState.hasOpenedFile) {
+      // No file open - show placeholder with hint to use browse button
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.insert_drive_file_outlined,
+              size: 64,
+              color: CatppuccinMocha.overlay0,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No file open',
+              style: TextStyle(
+                color: CatppuccinMocha.subtext0,
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap the folder icon to browse files',
+              style: TextStyle(
+                color: CatppuccinMocha.overlay0,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // File is open - show FileViewerPage inline (without AppBar)
+    return _InlineFileViewer(
+      key: ValueKey(vibeState.openedFilePath),
+      filePath: vibeState.openedFilePath!,
+      fileName: vibeState.openedFileName!,
+    );
+  }
 
 
   Widget _buildDisconnected(BuildContext context, ConnectionModel state) {
@@ -551,6 +671,362 @@ class _VibeSessionPageState extends ConsumerState<VibeSessionPage>
         ],
       ),
     );
+  }
+}
+
+/// Inline file viewer widget (used in Files mode content area)
+/// Shows file content with syntax highlighting and minimal file info
+class _InlineFileViewer extends ConsumerStatefulWidget {
+  final String filePath;
+  final String fileName;
+
+  const _InlineFileViewer({
+    super.key,
+    required this.filePath,
+    required this.fileName,
+  });
+
+  @override
+  ConsumerState<_InlineFileViewer> createState() => _InlineFileViewerState();
+}
+
+class _InlineFileViewerState extends ConsumerState<_InlineFileViewer> {
+  bool _isLoading = true;
+  String? _content;
+  Uint8List? _imageBytes; // For image files (base64 decoded)
+  String? _error;
+  bool _truncated = false;
+  int _size = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFile();
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineFileViewer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.filePath != widget.filePath) {
+      _loadFile();
+    }
+  }
+
+  Future<void> _loadFile() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _content = null;
+      _imageBytes = null;
+    });
+
+    try {
+      final bridge = ref.read(bridgeWrapperProvider);
+      final result = await bridge.readFile(widget.filePath);
+
+      if (result == null) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Failed to load file';
+        });
+        return;
+      }
+
+      // Check if this is an image file
+      if (isImageFile(widget.fileName)) {
+        // Backend returns base64 encoded image data
+        try {
+          final bytes = base64Decode(result.content);
+          setState(() {
+            _isLoading = false;
+            _imageBytes = bytes;
+            _truncated = result.truncated;
+            _size = result.size.toInt();
+          });
+        } catch (e) {
+          setState(() {
+            _isLoading = false;
+            _error = 'Failed to decode image';
+          });
+        }
+        return;
+      }
+
+      // Text file
+      setState(() {
+        _isLoading = false;
+        _content = result.content;
+        _truncated = result.truncated;
+        _size = result.size.toInt();
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _error = 'Error: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Minimal file info bar - compact breadcrumb style
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          color: CatppuccinMocha.mantle,
+          child: Row(
+            children: [
+              Icon(
+                isImageFile(widget.fileName) ? Icons.image
+                  : isSvgFile(widget.fileName) ? Icons.image_outlined
+                  : isMarkdownFile(widget.fileName) ? Icons.article_outlined
+                  : isHtmlFile(widget.fileName) ? Icons.language
+                  : Icons.code,
+                color: CatppuccinMocha.mauve,
+                size: 14,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  widget.fileName,
+                  style: TextStyle(
+                    color: CatppuccinMocha.subtext1,
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (_size > 0) ...[
+                Text(
+                  ' · ',
+                  style: TextStyle(color: CatppuccinMocha.overlay0, fontSize: 12),
+                ),
+                Text(
+                  _formatSize(_size),
+                  style: TextStyle(
+                    color: CatppuccinMocha.overlay0,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+              if (_truncated) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.warning_amber_rounded, color: CatppuccinMocha.yellow, size: 14),
+              ],
+            ],
+          ),
+        ),
+        // Content
+        Expanded(
+          child: _buildContent(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, color: CatppuccinMocha.red, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              _error!,
+              style: TextStyle(color: CatppuccinMocha.red),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Image display with zoom/pan
+    if (_imageBytes != null) {
+      return InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 4.0,
+        child: Center(
+          child: Image.memory(
+            _imageBytes!,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.broken_image, color: CatppuccinMocha.red, size: 48),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Failed to display image',
+                    style: TextStyle(color: CatppuccinMocha.red),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+    }
+
+    // SVG display with zoom/pan
+    if (isSvgFile(widget.fileName) && _content != null) {
+      try {
+        return InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: Center(
+            child: SvgPicture.string(
+              _content!,
+              fit: BoxFit.contain,
+              placeholderBuilder: (context) => const CircularProgressIndicator(),
+            ),
+          ),
+        );
+      } catch (e) {
+        // Fallback to raw text if SVG parsing fails
+      }
+    }
+
+    // Markdown rendering with Catppuccin theme
+    if (isMarkdownFile(widget.fileName) && _content != null) {
+      return Markdown(
+        data: _content!,
+        styleSheet: catppuccinMarkdownTheme(context),
+        selectable: true,
+        onTapLink: (text, href, title) {
+          if (href != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Link: $href')),
+            );
+          }
+        },
+      );
+    }
+
+    // HTML rendering with safe viewer
+    if (isHtmlFile(widget.fileName) && _content != null) {
+      return SafeHtmlViewer(htmlContent: _content!);
+    }
+
+    if (_content == null || _content!.isEmpty) {
+      return Center(
+        child: Text(
+          'Empty file',
+          style: TextStyle(color: CatppuccinMocha.subtext0),
+        ),
+      );
+    }
+
+    // Syntax highlighting for code files
+    final language = detectLanguage(widget.fileName);
+
+    // Hybrid Strategy:
+    // - File < 50KB: Full-file highlight with SingleChildScrollView
+    // - File > 50KB: Plain text with ListView.builder (performance)
+    final isLargeFile = _content!.length > 50 * 1024;
+
+    if (isLargeFile) {
+      // Large file: Plain text with virtual scroll (no highlight)
+      final lines = _content!.split('\n');
+      return ListView.builder(
+        itemCount: lines.length,
+        itemBuilder: (context, index) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Line number gutter
+              Container(
+                width: 50,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                color: CatppuccinMocha.mantle,
+                child: Text(
+                  '${index + 1}',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: CatppuccinMocha.overlay0,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              // Plain text (no highlight for large files)
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  child: Text(
+                    lines[index].isEmpty ? ' ' : lines[index],
+                    style: TextStyle(
+                      color: CatppuccinMocha.text,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    // Small file (< 50KB): Full-file highlight + line numbers
+    final lines = _content!.split('\n');
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SingleChildScrollView(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Line number gutter
+            Container(
+              color: CatppuccinMocha.mantle,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(lines.length, (index) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                    child: Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        color: CatppuccinMocha.overlay0,
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            // Full content with syntax highlighting
+            HighlightView(
+              _content!,
+              language: language,
+              theme: catppuccinMochaTheme,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+              textStyle: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 }
 
