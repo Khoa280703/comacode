@@ -5,6 +5,7 @@
 use std::path::Path;
 use tokio::fs;
 use comacode_core::{types::DirEntry, CoreError};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 /// VFS operation result
 pub type VfsResult<T> = Result<T, VfsError>;
@@ -118,7 +119,9 @@ pub fn chunk_entries(entries: Vec<DirEntry>, chunk_size: usize) -> Vec<Vec<DirEn
 /// * `path` - Path to the file to read
 /// * `max_size` - Maximum file size in bytes (default: 100KB)
 ///
-/// Returns file content as String. For binary files, returns UTF-8 lossy decoded content.
+/// Returns file content as String.
+/// - For image files (png, jpg, gif, etc.): returns base64 encoded content
+/// - For text files: returns UTF-8 string (lossy for invalid UTF-8)
 pub async fn read_file(path: &Path, max_size: usize) -> VfsResult<String> {
     // Check if path exists
     if !path.exists() {
@@ -155,8 +158,23 @@ pub async fn read_file(path: &Path, max_size: usize) -> VfsResult<String> {
         .await
         .map_err(|e| VfsError::IoError(e.to_string()))?;
 
-    // Convert to string (lossy for binary files)
+    // Check if this is an image file - return base64 encoded
+    if is_image_file(path) {
+        return Ok(BASE64.encode(&content));
+    }
+
+    // For text files: convert to string (lossy for binary)
     Ok(String::from_utf8_lossy(&content).to_string())
+}
+
+/// Check if file is a supported image format
+fn is_image_file(path: &Path) -> bool {
+    let ext = path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico")
 }
 
 /// Validate path for security

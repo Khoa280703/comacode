@@ -638,12 +638,13 @@ impl QuicServer {
 
                         let path_buf = PathBuf::from(&path);
 
-                        // Security: Validate path is within allowed boundaries
-                        // Use current directory as allowed_base to prevent path traversal attacks
-                        let current_dir = std::env::current_dir()
-                            .unwrap_or_else(|_| PathBuf::from("/"));
+                        // Security: Validate path is within user's home directory
+                        // Use home_dir as allowed_base (user can access their own files)
+                        // Falls back to "/" if home_dir unavailable (allows all paths)
+                        let home_dir = dirs::home_dir()
+                            .unwrap_or_else(|| PathBuf::from("/"));
 
-                        if let Err(e) = crate::vfs::validate_path(&path_buf, &current_dir) {
+                        if let Err(e) = crate::vfs::validate_path(&path_buf, &home_dir) {
                             tracing::warn!("ReadFile path validation failed: {}", e);
                             let response = NetworkMessage::FileContent {
                                 path: path.clone(),
