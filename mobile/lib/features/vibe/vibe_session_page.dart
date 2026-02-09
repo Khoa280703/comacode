@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:highlight/highlight.dart' show highlight, Node;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -926,14 +926,10 @@ class _InlineFileViewerState extends ConsumerState<_InlineFileViewer> {
 
     // Syntax highlighting for code files
     final language = detectLanguage(widget.fileName);
+    final isLargeFile = _content!.length > 100 * 1024;
 
-    // Hybrid Strategy:
-    // - File < 50KB: Full-file highlight with SingleChildScrollView
-    // - File > 50KB: Plain text with ListView.builder (performance)
-    final isLargeFile = _content!.length > 50 * 1024;
-
-    if (isLargeFile) {
-      // Large file: Plain text with virtual scroll (no highlight)
+    if (isLargeFile || language == 'plaintext') {
+      // Large file or plaintext: Plain text with virtual scroll (no highlight)
       final lines = _content!.split('\n');
       return ListView.builder(
         itemCount: lines.length,
@@ -976,51 +972,75 @@ class _InlineFileViewerState extends ConsumerState<_InlineFileViewer> {
       );
     }
 
-    // Small file (< 50KB): Full-file highlight + line numbers
-    final lines = _content!.split('\n');
+    // Normal file: syntax highlighting with try-catch fallback
+    final source = _content!.replaceAll('\t', '        ');
+    final textStyle = TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 12,
+      height: 1.5,
+      color: catppuccinMochaTheme['root']?.color ?? CatppuccinMocha.text,
+    );
+
+    List<TextSpan> spans;
+    try {
+      var result = highlight.parse(source, language: language);
+      // Some grammars return 1 empty node for large files — use fallback grammar
+      if ((result.nodes?.length ?? 0) <= 1) {
+        final fallback = detectLanguageFallback(widget.fileName);
+        if (fallback != null) {
+          result = highlight.parse(source, language: fallback);
+        }
+      }
+      spans = _convertNodes(result.nodes ?? []);
+    } catch (e) {
+      // Grammar parse failed — fallback to plain text
+      spans = [TextSpan(text: source)];
+    }
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Line number gutter
-            Container(
-              color: CatppuccinMocha.mantle,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: List.generate(lines.length, (index) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                    child: Text(
-                      '${index + 1}',
-                      style: TextStyle(
-                        color: CatppuccinMocha.overlay0,
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                        height: 1.5,
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ),
-            // Full content with syntax highlighting
-            HighlightView(
-              _content!,
-              language: language,
-              theme: catppuccinMochaTheme,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-              textStyle: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                height: 1.5,
-              ),
-            ),
-          ],
+        child: Container(
+          color: catppuccinMochaTheme['root']?.backgroundColor,
+          padding: const EdgeInsets.all(12),
+          child: RichText(
+            text: TextSpan(style: textStyle, children: spans),
+          ),
         ),
       ),
     );
+  }
+
+  List<TextSpan> _convertNodes(List<Node> nodes) {
+    final spans = <TextSpan>[];
+    final stack = [spans];
+
+    void traverse(Node node) {
+      if (node.value != null) {
+        stack.last.add(node.className == null
+            ? TextSpan(text: node.value)
+            : TextSpan(
+                text: node.value,
+                style: catppuccinMochaTheme[node.className!],
+              ));
+      } else if (node.children != null) {
+        final tmp = <TextSpan>[];
+        stack.last.add(TextSpan(
+          children: tmp,
+          style: catppuccinMochaTheme[node.className!],
+        ));
+        stack.add(tmp);
+        for (final child in node.children!) {
+          traverse(child);
+        }
+        stack.removeLast();
+      }
+    }
+
+    for (final node in nodes) {
+      traverse(node);
+    }
+    return spans;
   }
 
   String _formatSize(int bytes) {

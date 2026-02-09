@@ -1,12 +1,12 @@
 /// Detect highlight.js language from file extension
-/// Note: TSX/JSX uses javascript because flutter_highlight doesn't have TSX
 String detectLanguage(String filename) {
   final ext = filename.split('.').last.toLowerCase();
   return switch (ext) {
     'dart' => 'dart',
     'js' || 'mjs' => 'javascript',
-    'jsx' || 'tsx' => 'javascript', // JSX/TSX fallback to JS for highlight
+    'jsx' => 'javascript',
     'ts' => 'typescript',
+    'tsx' => 'javascript',
     'py' || 'pyw' => 'python',
     'rs' => 'rust',
     'go' => 'go',
@@ -31,6 +31,18 @@ String detectLanguage(String filename) {
     'dockerfile' => 'dockerfile',
     'makefile' => 'makefile',
     _ => 'plaintext',
+  };
+}
+
+/// Fallback grammar when primary grammar fails (returns <=1 node on large files).
+/// Dart port of highlight.js has broken grammars for some languages at scale.
+String? detectLanguageFallback(String filename) {
+  final ext = filename.split('.').last.toLowerCase();
+  return switch (ext) {
+    'cpp' || 'cc' || 'cxx' || 'hpp' => 'objectivec',
+    'cs' => 'swift',
+    'kt' || 'kts' => 'scala',
+    _ => null,
   };
 }
 
