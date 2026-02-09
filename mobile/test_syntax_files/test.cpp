@@ -152,9 +152,6 @@ namespace meta {
                              std::true_type,
                              Contains<T, TypeList<Tail...>>> {};
 
-    template<typename T, typename List>
-    inline constexpr bool Contains_v = Contains<T, List>::value;
-
     // Transform type list
     template<template<typename> class F, typename List>
     struct Transform;
@@ -167,1444 +164,1082 @@ namespace meta {
     template<template<typename> class F, typename List>
     using Transform_t = typename Transform<F, List>::type;
 
+    // Filter type list
+    template<template<typename> class Pred, typename List>
+    struct Filter;
+
+    template<template<typename> class Pred>
+    struct Filter<Pred, TypeList<>> {
+        using type = TypeList<>;
+    };
+
     // Compile-time string
     template<std::size_t N>
     struct FixedString {
         char data[N]{};
-
         constexpr FixedString(const char (&str)[N]) {
             std::copy_n(str, N, data);
         }
-
-        constexpr operator std::string_view() const {
-            return {data, N - 1};
-        }
-
         constexpr auto operator<=>(const FixedString&) const = default;
     };
-
-    // Compile-time counter
-    template<typename Tag, int N = 0>
-    struct Counter {
-        static constexpr int value = N;
-        using next = Counter<Tag, N + 1>;
-    };
-
-    // SFINAE helpers
-    template<typename T, typename = void>
-    struct HasToString : std::false_type {};
-
-    template<typename T>
-    struct HasToString<T, std::void_t<decltype(std::declval<T>().to_string())>>
-        : std::true_type {};
-
-    template<typename T>
-    inline constexpr bool HasToString_v = HasToString<T>::value;
-
-    // Conditional member
-    template<bool Condition, typename T>
-    struct ConditionalMember {};
-
-    template<typename T>
-    struct ConditionalMember<true, T> {
-        T value;
-    };
 }
 
 // ============================================================================
-// SECTION 3: Result and Option Types
+// SECTION 3: Enums and Strong Types
 // ============================================================================
 
-// Option type (like std::optional but with monadic operations)
-template<typename T>
-class Option {
-private:
-    std::optional<T> value_;
-
-public:
-    Option() = default;
-    Option(T value) : value_(std::move(value)) {}
-    Option(std::nullopt_t) : value_(std::nullopt) {}
-
-    static Option Some(T value) { return Option(std::move(value)); }
-    static Option None() { return Option(); }
-
-    [[nodiscard]] bool is_some() const { return value_.has_value(); }
-    [[nodiscard]] bool is_none() const { return !value_.has_value(); }
-
-    [[nodiscard]] T& unwrap() & {
-        if (!value_) throw std::runtime_error("Called unwrap on None");
-        return *value_;
-    }
-
-    [[nodiscard]] const T& unwrap() const& {
-        if (!value_) throw std::runtime_error("Called unwrap on None");
-        return *value_;
-    }
-
-    [[nodiscard]] T unwrap_or(T default_value) const {
-        return value_.value_or(std::move(default_value));
-    }
-
-    template<typename F>
-    [[nodiscard]] T unwrap_or_else(F&& func) const {
-        return value_ ? *value_ : std::invoke(std::forward<F>(func));
-    }
-
-    template<typename F>
-    [[nodiscard]] auto map(F&& func) const -> Option<std::invoke_result_t<F, T>> {
-        using U = std::invoke_result_t<F, T>;
-        if (value_) {
-            return Option<U>::Some(std::invoke(std::forward<F>(func), *value_));
-        }
-        return Option<U>::None();
-    }
-
-    template<typename F>
-    [[nodiscard]] auto flat_map(F&& func) const -> std::invoke_result_t<F, T> {
-        if (value_) {
-            return std::invoke(std::forward<F>(func), *value_);
-        }
-        return std::invoke_result_t<F, T>::None();
-    }
-
-    template<typename F>
-    Option<T> filter(F&& predicate) const {
-        if (value_ && std::invoke(std::forward<F>(predicate), *value_)) {
-            return *this;
-        }
-        return None();
-    }
-
-    template<typename F>
-    void if_some(F&& func) const {
-        if (value_) {
-            std::invoke(std::forward<F>(func), *value_);
-        }
-    }
-
-    auto operator<=>(const Option&) const = default;
+enum class Color : uint8_t {
+    Red = 0,
+    Green = 1,
+    Blue = 2,
+    Yellow = 3,
+    Magenta = 4,
+    Cyan = 5,
+    White = 7,
+    Black = 8
 };
 
-// Result type for error handling
-template<typename T, typename E = std::string>
-class Result {
-public:
-    using ValueType = T;
-    using ErrorType = E;
-
-private:
-    std::variant<T, E> data_;
-    bool is_ok_;
-
-public:
-    Result() = default;
-
-    static Result Ok(T value) {
-        Result r;
-        r.data_ = std::move(value);
-        r.is_ok_ = true;
-        return r;
-    }
-
-    static Result Err(E error) {
-        Result r;
-        r.data_ = std::move(error);
-        r.is_ok_ = false;
-        return r;
-    }
-
-    [[nodiscard]] bool is_ok() const noexcept { return is_ok_; }
-    [[nodiscard]] bool is_err() const noexcept { return !is_ok_; }
-
-    [[nodiscard]] explicit operator bool() const noexcept { return is_ok_; }
-
-    [[nodiscard]] T& value() & {
-        if (!is_ok_) throw std::runtime_error("Called value on Err");
-        return std::get<T>(data_);
-    }
-
-    [[nodiscard]] const T& value() const& {
-        if (!is_ok_) throw std::runtime_error("Called value on Err");
-        return std::get<T>(data_);
-    }
-
-    [[nodiscard]] T&& value() && {
-        if (!is_ok_) throw std::runtime_error("Called value on Err");
-        return std::get<T>(std::move(data_));
-    }
-
-    [[nodiscard]] E& error() & {
-        if (is_ok_) throw std::runtime_error("Called error on Ok");
-        return std::get<E>(data_);
-    }
-
-    [[nodiscard]] const E& error() const& {
-        if (is_ok_) throw std::runtime_error("Called error on Ok");
-        return std::get<E>(data_);
-    }
-
-    [[nodiscard]] T value_or(T default_value) const {
-        return is_ok_ ? std::get<T>(data_) : std::move(default_value);
-    }
-
-    template<typename F>
-    [[nodiscard]] T value_or_else(F&& func) const {
-        return is_ok_ ? std::get<T>(data_) : std::invoke(std::forward<F>(func));
-    }
-
-    template<typename F>
-    [[nodiscard]] auto map(F&& func) -> Result<std::invoke_result_t<F, T>, E> {
-        using U = std::invoke_result_t<F, T>;
-        if (is_ok_) {
-            return Result<U, E>::Ok(std::invoke(std::forward<F>(func), value()));
-        }
-        return Result<U, E>::Err(error());
-    }
-
-    template<typename F>
-    [[nodiscard]] auto map_err(F&& func) -> Result<T, std::invoke_result_t<F, E>> {
-        using U = std::invoke_result_t<F, E>;
-        if (!is_ok_) {
-            return Result<T, U>::Err(std::invoke(std::forward<F>(func), error()));
-        }
-        return Result<T, U>::Ok(value());
-    }
-
-    template<typename F>
-    [[nodiscard]] auto flat_map(F&& func) -> std::invoke_result_t<F, T> {
-        if (is_ok_) {
-            return std::invoke(std::forward<F>(func), value());
-        }
-        return std::invoke_result_t<F, T>::Err(error());
-    }
-
-    template<typename F>
-    [[nodiscard]] auto and_then(F&& func) -> std::invoke_result_t<F, T> {
-        return flat_map(std::forward<F>(func));
-    }
-
-    template<typename F>
-    Result<T, E> or_else(F&& func) const {
-        if (is_ok_) {
-            return *this;
-        }
-        return std::invoke(std::forward<F>(func), error());
-    }
-
-    template<typename OkFunc, typename ErrFunc>
-    auto match(OkFunc&& ok_func, ErrFunc&& err_func) const {
-        if (is_ok_) {
-            return std::invoke(std::forward<OkFunc>(ok_func), std::get<T>(data_));
-        }
-        return std::invoke(std::forward<ErrFunc>(err_func), std::get<E>(data_));
-    }
-};
-
-// ============================================================================
-// SECTION 4: Smart Pointers and RAII
-// ============================================================================
-
-// Custom deleter
-template<typename T>
-struct ArrayDeleter {
-    void operator()(T* ptr) const {
-        delete[] ptr;
-    }
-};
-
-// Resource handle with RAII
-template<typename Handle, typename Deleter>
-class ResourceHandle {
-private:
-    Handle handle_;
-    Deleter deleter_;
-    bool owns_;
-
-public:
-    explicit ResourceHandle(Handle handle, Deleter deleter = Deleter{})
-        : handle_(handle), deleter_(std::move(deleter)), owns_(true) {}
-
-    ~ResourceHandle() {
-        if (owns_) {
-            deleter_(handle_);
-        }
-    }
-
-    // Move only
-    ResourceHandle(const ResourceHandle&) = delete;
-    ResourceHandle& operator=(const ResourceHandle&) = delete;
-
-    ResourceHandle(ResourceHandle&& other) noexcept
-        : handle_(other.handle_), deleter_(std::move(other.deleter_)), owns_(other.owns_) {
-        other.owns_ = false;
-    }
-
-    ResourceHandle& operator=(ResourceHandle&& other) noexcept {
-        if (this != &other) {
-            if (owns_) {
-                deleter_(handle_);
-            }
-            handle_ = other.handle_;
-            deleter_ = std::move(other.deleter_);
-            owns_ = other.owns_;
-            other.owns_ = false;
-        }
-        return *this;
-    }
-
-    [[nodiscard]] Handle get() const noexcept { return handle_; }
-    [[nodiscard]] Handle release() noexcept {
-        owns_ = false;
-        return handle_;
-    }
-
-    void reset(Handle handle) {
-        if (owns_) {
-            deleter_(handle_);
-        }
-        handle_ = handle;
-        owns_ = true;
-    }
-
-    explicit operator bool() const noexcept { return owns_; }
-};
-
-// Intrusive reference counting
-class RefCounted {
-private:
-    mutable std::atomic<int> ref_count_{0};
-
-public:
-    virtual ~RefCounted() = default;
-
-    void add_ref() const noexcept {
-        ref_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    void release() const noexcept {
-        if (ref_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            delete this;
-        }
-    }
-
-    [[nodiscard]] int use_count() const noexcept {
-        return ref_count_.load(std::memory_order_relaxed);
-    }
-};
-
-template<typename T>
-class IntrusivePtr {
-private:
-    T* ptr_;
-
-public:
-    IntrusivePtr() noexcept : ptr_(nullptr) {}
-
-    explicit IntrusivePtr(T* ptr) noexcept : ptr_(ptr) {
-        if (ptr_) ptr_->add_ref();
-    }
-
-    IntrusivePtr(const IntrusivePtr& other) noexcept : ptr_(other.ptr_) {
-        if (ptr_) ptr_->add_ref();
-    }
-
-    IntrusivePtr(IntrusivePtr&& other) noexcept : ptr_(other.ptr_) {
-        other.ptr_ = nullptr;
-    }
-
-    ~IntrusivePtr() {
-        if (ptr_) ptr_->release();
-    }
-
-    IntrusivePtr& operator=(const IntrusivePtr& other) noexcept {
-        if (this != &other) {
-            if (ptr_) ptr_->release();
-            ptr_ = other.ptr_;
-            if (ptr_) ptr_->add_ref();
-        }
-        return *this;
-    }
-
-    IntrusivePtr& operator=(IntrusivePtr&& other) noexcept {
-        if (this != &other) {
-            if (ptr_) ptr_->release();
-            ptr_ = other.ptr_;
-            other.ptr_ = nullptr;
-        }
-        return *this;
-    }
-
-    T* get() const noexcept { return ptr_; }
-    T* operator->() const noexcept { return ptr_; }
-    T& operator*() const noexcept { return *ptr_; }
-    explicit operator bool() const noexcept { return ptr_ != nullptr; }
-
-    void reset(T* ptr = nullptr) noexcept {
-        if (ptr_) ptr_->release();
-        ptr_ = ptr;
-        if (ptr_) ptr_->add_ref();
-    }
-};
-
-// ============================================================================
-// SECTION 5: Entity System
-// ============================================================================
-
-enum class Role { Admin, User, Guest, Moderator, Developer };
-
-inline std::ostream& operator<<(std::ostream& os, Role role) {
-    switch (role) {
-        case Role::Admin: return os << "Admin";
-        case Role::User: return os << "User";
-        case Role::Guest: return os << "Guest";
-        case Role::Moderator: return os << "Moderator";
-        case Role::Developer: return os << "Developer";
-    }
-    return os;
-}
-
-inline std::string_view role_to_string(Role role) {
-    switch (role) {
-        case Role::Admin: return "Admin";
-        case Role::User: return "User";
-        case Role::Guest: return "Guest";
-        case Role::Moderator: return "Moderator";
-        case Role::Developer: return "Developer";
+constexpr std::string_view color_to_string(Color c) {
+    switch (c) {
+        case Color::Red:     return "Red";
+        case Color::Green:   return "Green";
+        case Color::Blue:    return "Blue";
+        case Color::Yellow:  return "Yellow";
+        case Color::Magenta: return "Magenta";
+        case Color::Cyan:    return "Cyan";
+        case Color::White:   return "White";
+        case Color::Black:   return "Black";
     }
     return "Unknown";
 }
 
-struct Permissions {
-    bool can_read = true;
-    bool can_write = false;
-    bool can_delete = false;
-    bool can_admin = false;
+enum class LogLevel { Trace, Debug, Info, Warn, Error, Fatal };
 
-    static Permissions for_role(Role role) {
-        switch (role) {
-            case Role::Admin:
-                return {true, true, true, true};
-            case Role::Moderator:
-                return {true, true, true, false};
-            case Role::Developer:
-                return {true, true, false, false};
-            case Role::User:
-                return {true, true, false, false};
-            case Role::Guest:
-                return {true, false, false, false};
-        }
-        return {};
-    }
-
-    auto operator<=>(const Permissions&) const = default;
+template<typename T>
+struct StrongType {
+    T value;
+    explicit constexpr StrongType(T val) : value(std::move(val)) {}
+    constexpr T& get() { return value; }
+    constexpr const T& get() const { return value; }
+    constexpr auto operator<=>(const StrongType&) const = default;
 };
 
-class User {
+using UserId = StrongType<int64_t>;
+using Email = StrongType<std::string>;
+using Score = StrongType<double>;
+
+// ============================================================================
+// SECTION 4: Classes, Inheritance, CRTP
+// ============================================================================
+
+class Shape {
 public:
-    int id;
-    std::string name;
-    std::string email;
-    Role role;
-    std::unordered_map<std::string, std::string> metadata;
-    std::chrono::system_clock::time_point created_at;
-    std::optional<std::chrono::system_clock::time_point> updated_at;
-    Permissions permissions;
+    virtual ~Shape() = default;
+    virtual double area() const = 0;
+    virtual double perimeter() const = 0;
+    virtual std::string name() const = 0;
+    virtual std::unique_ptr<Shape> clone() const = 0;
 
-    User(int id, std::string name, std::string email, Role role = Role::User)
-        : id(id)
-        , name(std::move(name))
-        , email(std::move(email))
-        , role(role)
-        , created_at(std::chrono::system_clock::now())
-        , permissions(Permissions::for_role(role)) {}
+    friend std::ostream& operator<<(std::ostream& os, const Shape& s) {
+        return os << s.name() << "(area=" << s.area()
+                  << ", perimeter=" << s.perimeter() << ")";
+    }
+};
 
-    // Validation
-    [[nodiscard]] Result<bool> validate() const {
-        std::vector<std::string> errors;
+class Circle final : public Shape {
+    double radius_;
+public:
+    explicit Circle(double r) : radius_(r) {}
+    double area() const override { return std::numbers::pi * radius_ * radius_; }
+    double perimeter() const override { return 2.0 * std::numbers::pi * radius_; }
+    std::string name() const override { return "Circle"; }
+    std::unique_ptr<Shape> clone() const override {
+        return std::make_unique<Circle>(*this);
+    }
+    double radius() const { return radius_; }
+};
 
-        if (name.length() < 2) {
-            errors.push_back("Name must be at least 2 characters");
+class Rectangle : public Shape {
+protected:
+    double width_, height_;
+public:
+    Rectangle(double w, double h) : width_(w), height_(h) {}
+    double area() const override { return width_ * height_; }
+    double perimeter() const override { return 2.0 * (width_ + height_); }
+    std::string name() const override { return "Rectangle"; }
+    std::unique_ptr<Shape> clone() const override {
+        return std::make_unique<Rectangle>(*this);
+    }
+};
+
+class Square final : public Rectangle {
+public:
+    explicit Square(double side) : Rectangle(side, side) {}
+    std::string name() const override { return "Square"; }
+    std::unique_ptr<Shape> clone() const override {
+        return std::make_unique<Square>(*this);
+    }
+};
+
+// CRTP pattern
+template<typename Derived>
+class Singleton {
+protected:
+    Singleton() = default;
+    ~Singleton() = default;
+    Singleton(const Singleton&) = delete;
+    Singleton& operator=(const Singleton&) = delete;
+public:
+    static Derived& instance() {
+        static Derived inst;
+        return inst;
+    }
+};
+
+class AppConfig : public Singleton<AppConfig> {
+    friend class Singleton<AppConfig>;
+    std::unordered_map<std::string, std::string> settings_;
+    AppConfig() = default;
+public:
+    void set(const std::string& key, const std::string& value) {
+        settings_[key] = value;
+    }
+    std::optional<std::string> get(const std::string& key) const {
+        if (auto it = settings_.find(key); it != settings_.end()) {
+            return it->second;
         }
-
-        if (name.length() > 100) {
-            errors.push_back("Name must be at most 100 characters");
-        }
-
-        if (email.find('@') == std::string::npos) {
-            errors.push_back("Invalid email format");
-        }
-
-        // Email regex validation
-        static const std::regex email_regex(
-            R"(^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$)"
-        );
-        if (!std::regex_match(email, email_regex)) {
-            errors.push_back("Email format is invalid");
-        }
-
-        if (!errors.empty()) {
-            std::string combined;
-            for (const auto& e : errors) {
-                if (!combined.empty()) combined += "; ";
-                combined += e;
-            }
-            return Result<bool>::Err(combined);
-        }
-
-        return Result<bool>::Ok(true);
+        return std::nullopt;
     }
+};
 
-    // Builder-style methods
-    [[nodiscard]] User with_name(std::string new_name) const {
-        User copy = *this;
-        copy.name = std::move(new_name);
-        copy.updated_at = std::chrono::system_clock::now();
-        return copy;
+// CRTP for operator injection
+template<typename Derived>
+struct Addable {
+    friend Derived operator+(const Derived& a, const Derived& b) {
+        Derived result = a;
+        result += b;
+        return result;
     }
+};
 
-    [[nodiscard]] User with_email(std::string new_email) const {
-        User copy = *this;
-        copy.email = std::move(new_email);
-        copy.updated_at = std::chrono::system_clock::now();
-        return copy;
-    }
-
-    [[nodiscard]] User with_role(Role new_role) const {
-        User copy = *this;
-        copy.role = new_role;
-        copy.permissions = Permissions::for_role(new_role);
-        copy.updated_at = std::chrono::system_clock::now();
-        return copy;
-    }
-
-    [[nodiscard]] User with_metadata(std::string key, std::string value) const {
-        User copy = *this;
-        copy.metadata[std::move(key)] = std::move(value);
-        copy.updated_at = std::chrono::system_clock::now();
-        return copy;
-    }
-
-    // Serialization
-    [[nodiscard]] std::string serialize() const {
-        std::ostringstream oss;
-        oss << "{"
-            << "\"id\":" << id << ","
-            << "\"name\":\"" << name << "\","
-            << "\"email\":\"" << email << "\","
-            << "\"role\":\"" << role << "\""
-            << "}";
-        return oss.str();
-    }
-
-    // Clone
-    [[nodiscard]] User clone() const {
+struct Vector3D : Addable<Vector3D> {
+    double x, y, z;
+    constexpr Vector3D(double x = 0, double y = 0, double z = 0)
+        : x(x), y(y), z(z) {}
+    Vector3D& operator+=(const Vector3D& other) {
+        x += other.x; y += other.y; z += other.z;
         return *this;
     }
-
-    // Comparison
-    auto operator<=>(const User& other) const {
-        return id <=> other.id;
+    constexpr double magnitude() const {
+        return std::sqrt(x*x + y*y + z*z);
     }
-
-    bool operator==(const User& other) const {
-        return id == other.id;
+    constexpr Vector3D normalized() const {
+        double m = magnitude();
+        return {x/m, y/m, z/m};
     }
-
-    friend std::ostream& operator<<(std::ostream& os, const User& u) {
-        return os << "User{id=" << u.id << ", name=\"" << u.name
-                  << "\", email=\"" << u.email << "\", role=" << u.role << "}";
+    constexpr double dot(const Vector3D& other) const {
+        return x*other.x + y*other.y + z*other.z;
     }
+    constexpr Vector3D cross(const Vector3D& other) const {
+        return {
+            y*other.z - z*other.y,
+            z*other.x - x*other.z,
+            x*other.y - y*other.x
+        };
+    }
+    friend std::ostream& operator<<(std::ostream& os, const Vector3D& v) {
+        return os << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+    }
+    auto operator<=>(const Vector3D&) const = default;
 };
 
-// User hash for unordered containers
-template<>
-struct std::hash<User> {
-    std::size_t operator()(const User& u) const noexcept {
-        return std::hash<int>{}(u.id);
+// ============================================================================
+// SECTION 5: Smart Pointers and RAII
+// ============================================================================
+
+class FileHandle {
+    std::FILE* handle_;
+public:
+    explicit FileHandle(const char* path, const char* mode)
+        : handle_(std::fopen(path, mode)) {
+        if (!handle_) {
+            throw std::runtime_error(
+                std::format("Failed to open file: {}", path));
+        }
+    }
+    ~FileHandle() {
+        if (handle_) std::fclose(handle_);
+    }
+    FileHandle(const FileHandle&) = delete;
+    FileHandle& operator=(const FileHandle&) = delete;
+    FileHandle(FileHandle&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = nullptr;
+    }
+    FileHandle& operator=(FileHandle&& other) noexcept {
+        if (this != &other) {
+            if (handle_) std::fclose(handle_);
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
+    }
+    std::FILE* get() const { return handle_; }
+    explicit operator bool() const { return handle_ != nullptr; }
+};
+
+template<typename T>
+class ObjectPool {
+    std::vector<std::unique_ptr<T>> pool_;
+    std::vector<T*> available_;
+    mutable std::mutex mutex_;
+public:
+    explicit ObjectPool(size_t initial_size = 10) {
+        for (size_t i = 0; i < initial_size; ++i) {
+            auto obj = std::make_unique<T>();
+            available_.push_back(obj.get());
+            pool_.push_back(std::move(obj));
+        }
+    }
+
+    struct Deleter {
+        ObjectPool* pool;
+        void operator()(T* ptr) const {
+            pool->release(ptr);
+        }
+    };
+
+    using Ptr = std::unique_ptr<T, Deleter>;
+
+    Ptr acquire() {
+        std::lock_guard lock(mutex_);
+        if (available_.empty()) {
+            auto obj = std::make_unique<T>();
+            auto* raw = obj.get();
+            pool_.push_back(std::move(obj));
+            return Ptr(raw, Deleter{this});
+        }
+        T* ptr = available_.back();
+        available_.pop_back();
+        return Ptr(ptr, Deleter{this});
+    }
+
+    void release(T* ptr) {
+        std::lock_guard lock(mutex_);
+        available_.push_back(ptr);
+    }
+
+    size_t available_count() const {
+        std::lock_guard lock(mutex_);
+        return available_.size();
     }
 };
 
 // ============================================================================
-// SECTION 6: Repository Pattern
+// SECTION 6: Lambda Expressions and Functional Patterns
+// ============================================================================
+
+namespace functional {
+    // Higher-order functions
+    template<typename F>
+    auto memoize(F&& f) {
+        using ArgType = typename decltype(std::function{f})::argument_type;
+        using RetType = typename decltype(std::function{f})::result_type;
+        auto cache = std::make_shared<std::unordered_map<ArgType, RetType>>();
+        return [cache, f = std::forward<F>(f)](ArgType arg) -> RetType {
+            if (auto it = cache->find(arg); it != cache->end()) {
+                return it->second;
+            }
+            auto result = f(arg);
+            cache->emplace(arg, result);
+            return result;
+        };
+    }
+
+    template<typename F, typename G>
+    auto compose(F&& f, G&& g) {
+        return [f = std::forward<F>(f), g = std::forward<G>(g)](auto&&... args) {
+            return f(g(std::forward<decltype(args)>(args)...));
+        };
+    }
+
+    template<typename F, typename... Fs>
+    auto pipeline(F&& first, Fs&&... rest) {
+        if constexpr (sizeof...(rest) == 0) {
+            return std::forward<F>(first);
+        } else {
+            return compose(
+                pipeline(std::forward<Fs>(rest)...),
+                std::forward<F>(first)
+            );
+        }
+    }
+
+    // Partial application
+    template<typename F, typename... BoundArgs>
+    auto partial(F&& f, BoundArgs&&... bound) {
+        return [f = std::forward<F>(f),
+                ...bound = std::forward<BoundArgs>(bound)]
+               (auto&&... args) {
+            return f(bound..., std::forward<decltype(args)>(args)...);
+        };
+    }
+
+    void demo() {
+        // Lambda with init capture
+        auto counter = [n = 0]() mutable { return ++n; };
+        auto c1 = counter(); // 1
+        auto c2 = counter(); // 2
+
+        // Generic lambda with concepts
+        auto add = []<Numeric T>(T a, T b) { return a + b; };
+        auto sum_int = add(3, 4);
+        auto sum_dbl = add(3.14, 2.71);
+
+        // Immediately invoked lambda
+        const auto config_value = [&]() {
+            auto& cfg = AppConfig::instance();
+            auto val = cfg.get("threshold");
+            return val.value_or("100");
+        }();
+
+        // Lambda returning lambda
+        auto multiplier = [](double factor) {
+            return [factor](double x) { return x * factor; };
+        };
+        auto double_it = multiplier(2.0);
+        auto triple_it = multiplier(3.0);
+
+        // Recursive lambda with Y combinator
+        auto fibonacci = [](auto self, int n) -> int {
+            if (n <= 1) return n;
+            return self(self, n - 1) + self(self, n - 2);
+        };
+        auto fib10 = fibonacci(fibonacci, 10);
+
+        // Fold expressions with lambdas
+        auto print_all = [](auto&&... args) {
+            ((std::cout << args << " "), ...);
+            std::cout << "\n";
+        };
+        print_all(1, "hello", 3.14, 'x');
+    }
+}
+
+// ============================================================================
+// SECTION 7: Ranges and Views (C++20)
+// ============================================================================
+
+namespace ranges_demo {
+    void demonstrate_ranges() {
+        std::vector<int> numbers = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+
+        // Filter and transform
+        auto even_squares = numbers
+            | std::views::filter([](int n) { return n % 2 == 0; })
+            | std::views::transform([](int n) { return n * n; });
+
+        for (int val : even_squares) {
+            std::cout << val << " ";
+        }
+
+        // Chained views
+        auto result = numbers
+            | std::views::drop(2)
+            | std::views::take(5)
+            | std::views::reverse;
+
+        // iota view
+        for (auto i : std::views::iota(1, 20)
+                     | std::views::filter([](int n) { return n % 3 == 0; })) {
+            std::cout << i << " ";
+        }
+
+        // keys and values views with maps
+        std::map<std::string, int> scores = {
+            {"Alice", 95}, {"Bob", 87}, {"Charlie", 92}
+        };
+        for (auto& name : scores | std::views::keys) {
+            std::cout << name << " ";
+        }
+
+        // zip view (C++23)
+        std::vector<std::string> names = {"Alpha", "Beta", "Gamma"};
+        std::vector<int> ids = {1, 2, 3};
+        for (auto [name, id] : std::views::zip(names, ids)) {
+            std::cout << id << ": " << name << "\n";
+        }
+    }
+}
+
+// ============================================================================
+// SECTION 8: Variant, Visit, and Expected
+// ============================================================================
+
+namespace variant_demo {
+    using JsonValue = std::variant<
+        std::nullptr_t,
+        bool,
+        int64_t,
+        double,
+        std::string,
+        std::vector<std::variant<std::nullptr_t, bool, int64_t, double, std::string>>,
+        std::map<std::string, std::variant<std::nullptr_t, bool, int64_t, double, std::string>>
+    >;
+
+    struct JsonPrinter {
+        std::string operator()(std::nullptr_t) const { return "null"; }
+        std::string operator()(bool b) const { return b ? "true" : "false"; }
+        std::string operator()(int64_t i) const { return std::to_string(i); }
+        std::string operator()(double d) const { return std::format("{:.6f}", d); }
+        std::string operator()(const std::string& s) const {
+            return std::format("\"{}\"", s);
+        }
+        template<typename T>
+        std::string operator()(const std::vector<T>& vec) const {
+            std::string result = "[";
+            for (size_t i = 0; i < vec.size(); ++i) {
+                if (i > 0) result += ", ";
+                result += std::visit(JsonPrinter{}, vec[i]);
+            }
+            return result + "]";
+        }
+        template<typename T>
+        std::string operator()(const std::map<std::string, T>& map) const {
+            std::string result = "{";
+            bool first = true;
+            for (auto& [key, val] : map) {
+                if (!first) result += ", ";
+                first = false;
+                result += std::format("\"{}\": {}", key, std::visit(JsonPrinter{}, val));
+            }
+            return result + "}";
+        }
+    };
+
+    // Expected for error handling
+    enum class ParseError { InvalidSyntax, UnexpectedToken, Overflow };
+
+    std::expected<int, ParseError> parse_int(std::string_view sv) {
+        try {
+            size_t pos;
+            int result = std::stoi(std::string(sv), &pos);
+            if (pos != sv.size()) {
+                return std::unexpected(ParseError::InvalidSyntax);
+            }
+            return result;
+        } catch (const std::out_of_range&) {
+            return std::unexpected(ParseError::Overflow);
+        } catch (...) {
+            return std::unexpected(ParseError::UnexpectedToken);
+        }
+    }
+
+    void demo_expected() {
+        auto result = parse_int("42");
+        if (result) {
+            std::cout << "Parsed: " << *result << "\n";
+        }
+
+        auto bad = parse_int("abc");
+        auto val = bad.value_or(-1);
+
+        // Monadic operations (C++23)
+        auto doubled = parse_int("21")
+            .transform([](int n) { return n * 2; })
+            .transform([](int n) { return std::to_string(n); });
+    }
+}
+
+// ============================================================================
+// SECTION 9: constexpr / consteval
+// ============================================================================
+
+consteval int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+constexpr auto compile_time_fact = factorial(10);
+
+template<int N>
+consteval auto fibonacci_array() {
+    std::array<int, N> fib{};
+    fib[0] = 0;
+    if constexpr (N > 1) fib[1] = 1;
+    for (int i = 2; i < N; ++i) {
+        fib[i] = fib[i-1] + fib[i-2];
+    }
+    return fib;
+}
+
+constexpr auto fib_table = fibonacci_array<20>();
+
+constexpr auto is_palindrome(std::string_view sv) -> bool {
+    for (std::size_t i = 0; i < sv.size() / 2; ++i) {
+        if (sv[i] != sv[sv.size() - 1 - i]) return false;
+    }
+    return true;
+}
+
+static_assert(is_palindrome("racecar"));
+static_assert(!is_palindrome("hello"));
+static_assert(factorial(5) == 120);
+
+// ============================================================================
+// SECTION 10: Thread-Safe Data Structures
 // ============================================================================
 
 template<typename T>
-class Repository {
-public:
-    virtual ~Repository() = default;
-    virtual Option<T> find_by_id(int id) = 0;
-    virtual std::vector<T> find_all() = 0;
-    virtual Result<T> save(T entity) = 0;
-    virtual Result<bool> remove(int id) = 0;
-    virtual std::size_t count() = 0;
-    virtual void clear() = 0;
-};
-
-class InMemoryUserRepository : public Repository<User> {
-private:
-    std::unordered_map<int, User> storage_;
-    mutable std::shared_mutex mutex_;
-    std::atomic<int> next_id_{1};
+class ThreadSafeQueue {
+    std::queue<T> queue_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::atomic<bool> done_{false};
 
 public:
-    Option<User> find_by_id(int id) override {
-        std::shared_lock lock(mutex_);
-        auto it = storage_.find(id);
-        if (it != storage_.end()) {
-            return Option<User>::Some(it->second);
-        }
-        return Option<User>::None();
-    }
-
-    std::vector<User> find_all() override {
-        std::shared_lock lock(mutex_);
-        std::vector<User> users;
-        users.reserve(storage_.size());
-        for (const auto& [id, user] : storage_) {
-            users.push_back(user);
-        }
-        return users;
-    }
-
-    Result<User> save(User user) override {
-        auto validation = user.validate();
-        if (validation.is_err()) {
-            return Result<User>::Err(validation.error());
-        }
-
-        std::unique_lock lock(mutex_);
-
-        if (user.id == 0) {
-            user.id = next_id_.fetch_add(1);
-        }
-
-        storage_.insert_or_assign(user.id, user);
-        return Result<User>::Ok(user);
-    }
-
-    Result<bool> remove(int id) override {
-        std::unique_lock lock(mutex_);
-        auto erased = storage_.erase(id);
-        if (erased == 0) {
-            return Result<bool>::Err("User not found: " + std::to_string(id));
-        }
-        return Result<bool>::Ok(true);
-    }
-
-    std::size_t count() override {
-        std::shared_lock lock(mutex_);
-        return storage_.size();
-    }
-
-    void clear() override {
-        std::unique_lock lock(mutex_);
-        storage_.clear();
-    }
-
-    // Additional query methods
-    std::vector<User> find_by_role(Role role) {
-        std::shared_lock lock(mutex_);
-        std::vector<User> result;
-        for (const auto& [id, user] : storage_) {
-            if (user.role == role) {
-                result.push_back(user);
-            }
-        }
-        return result;
-    }
-
-    Option<User> find_by_email(std::string_view email) {
-        std::shared_lock lock(mutex_);
-        for (const auto& [id, user] : storage_) {
-            if (user.email == email) {
-                return Option<User>::Some(user);
-            }
-        }
-        return Option<User>::None();
-    }
-
-    std::vector<User> find_by_predicate(std::function<bool(const User&)> predicate) {
-        std::shared_lock lock(mutex_);
-        std::vector<User> result;
-        for (const auto& [id, user] : storage_) {
-            if (predicate(user)) {
-                result.push_back(user);
-            }
-        }
-        return result;
-    }
-};
-
-// ============================================================================
-// SECTION 7: Event System
-// ============================================================================
-
-enum class EventType { Created, Updated, Deleted, Accessed, Validated };
-
-inline std::ostream& operator<<(std::ostream& os, EventType type) {
-    switch (type) {
-        case EventType::Created: return os << "Created";
-        case EventType::Updated: return os << "Updated";
-        case EventType::Deleted: return os << "Deleted";
-        case EventType::Accessed: return os << "Accessed";
-        case EventType::Validated: return os << "Validated";
-    }
-    return os;
-}
-
-struct UserEvent {
-    EventType type;
-    std::variant<User, int> payload;
-    std::chrono::system_clock::time_point timestamp;
-    std::string source;
-
-    static UserEvent created(User user, std::string source = "system") {
-        return {EventType::Created, std::move(user),
-                std::chrono::system_clock::now(), std::move(source)};
-    }
-
-    static UserEvent updated(User user, std::string source = "system") {
-        return {EventType::Updated, std::move(user),
-                std::chrono::system_clock::now(), std::move(source)};
-    }
-
-    static UserEvent deleted(int id, std::string source = "system") {
-        return {EventType::Deleted, id,
-                std::chrono::system_clock::now(), std::move(source)};
-    }
-
-    static UserEvent accessed(User user, std::string source = "system") {
-        return {EventType::Accessed, std::move(user),
-                std::chrono::system_clock::now(), std::move(source)};
-    }
-};
-
-class EventBus {
-public:
-    using Handler = std::function<void(const UserEvent&)>;
-    using HandlerId = std::size_t;
-
-private:
-    std::unordered_map<HandlerId, Handler> handlers_;
-    mutable std::shared_mutex mutex_;
-    std::atomic<HandlerId> next_id_{0};
-    std::queue<UserEvent> event_queue_;
-    std::condition_variable_any cv_;
-    std::atomic<bool> running_{true};
-    std::optional<std::jthread> worker_;
-
-public:
-    EventBus() {
-        // Start async event processor
-        worker_ = std::jthread([this](std::stop_token stop_token) {
-            while (!stop_token.stop_requested()) {
-                UserEvent event;
-                {
-                    std::unique_lock lock(mutex_);
-                    cv_.wait(lock, stop_token, [this] {
-                        return !event_queue_.empty() || !running_;
-                    });
-
-                    if (stop_token.stop_requested() || !running_) break;
-                    if (event_queue_.empty()) continue;
-
-                    event = std::move(event_queue_.front());
-                    event_queue_.pop();
-                }
-
-                // Process event outside lock
-                process_event(event);
-            }
-        });
-    }
-
-    ~EventBus() {
-        running_ = false;
-        cv_.notify_all();
-    }
-
-    HandlerId subscribe(Handler handler) {
-        std::unique_lock lock(mutex_);
-        auto id = next_id_.fetch_add(1);
-        handlers_[id] = std::move(handler);
-        return id;
-    }
-
-    void unsubscribe(HandlerId id) {
-        std::unique_lock lock(mutex_);
-        handlers_.erase(id);
-    }
-
-    void publish(UserEvent event) {
+    void push(T value) {
         {
-            std::unique_lock lock(mutex_);
-            event_queue_.push(std::move(event));
+            std::lock_guard lock(mutex_);
+            queue_.push(std::move(value));
         }
         cv_.notify_one();
     }
 
-    void publish_sync(const UserEvent& event) {
-        process_event(event);
+    std::optional<T> try_pop() {
+        std::lock_guard lock(mutex_);
+        if (queue_.empty()) return std::nullopt;
+        T val = std::move(queue_.front());
+        queue_.pop();
+        return val;
     }
 
-private:
-    void process_event(const UserEvent& event) {
-        std::shared_lock lock(mutex_);
-        for (const auto& [id, handler] : handlers_) {
-            try {
-                handler(event);
-            } catch (const std::exception& e) {
-                std::cerr << "Error in event handler " << id << ": "
-                          << e.what() << std::endl;
-            }
-        }
+    T wait_and_pop() {
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this] { return !queue_.empty() || done_.load(); });
+        if (queue_.empty()) throw std::runtime_error("Queue is done");
+        T val = std::move(queue_.front());
+        queue_.pop();
+        return val;
+    }
+
+    void shutdown() {
+        done_.store(true);
+        cv_.notify_all();
+    }
+
+    bool empty() const {
+        std::lock_guard lock(mutex_);
+        return queue_.empty();
+    }
+
+    size_t size() const {
+        std::lock_guard lock(mutex_);
+        return queue_.size();
     }
 };
 
-// ============================================================================
-// SECTION 8: Service Layer
-// ============================================================================
-
-class UserService {
-private:
-    std::shared_ptr<Repository<User>> repository_;
-    std::shared_ptr<EventBus> event_bus_;
-    mutable std::unordered_map<int, User> cache_;
-    mutable std::shared_mutex cache_mutex_;
-    std::atomic<std::size_t> cache_hits_{0};
-    std::atomic<std::size_t> cache_misses_{0};
+template<typename Key, typename Value>
+class ConcurrentMap {
+    std::unordered_map<Key, Value> map_;
+    mutable std::shared_mutex mutex_;
 
 public:
-    UserService(std::shared_ptr<Repository<User>> repo,
-                std::shared_ptr<EventBus> bus)
-        : repository_(std::move(repo)), event_bus_(std::move(bus)) {}
-
-    Result<User> find_by_id(int id) {
-        // Check cache first
-        {
-            std::shared_lock lock(cache_mutex_);
-            auto it = cache_.find(id);
-            if (it != cache_.end()) {
-                cache_hits_.fetch_add(1);
-                return Result<User>::Ok(it->second);
-            }
-        }
-
-        cache_misses_.fetch_add(1);
-
-        // Fetch from repository
-        auto user_opt = repository_->find_by_id(id);
-        if (user_opt.is_none()) {
-            return Result<User>::Err("User not found: " + std::to_string(id));
-        }
-
-        auto user = user_opt.unwrap();
-
-        // Update cache
-        {
-            std::unique_lock lock(cache_mutex_);
-            cache_[id] = user;
-        }
-
-        event_bus_->publish(UserEvent::accessed(user));
-        return Result<User>::Ok(user);
+    void insert(const Key& key, Value value) {
+        std::unique_lock lock(mutex_);
+        map_[key] = std::move(value);
     }
 
-    std::vector<User> find_all() {
-        return repository_->find_all();
+    std::optional<Value> find(const Key& key) const {
+        std::shared_lock lock(mutex_);
+        auto it = map_.find(key);
+        if (it != map_.end()) return it->second;
+        return std::nullopt;
     }
 
-    Result<User> create_user(User user) {
-        auto result = repository_->save(std::move(user));
-        if (result.is_ok()) {
-            auto saved = result.value();
-            {
-                std::unique_lock lock(cache_mutex_);
-                cache_[saved.id] = saved;
-            }
-            event_bus_->publish(UserEvent::created(saved));
+    bool erase(const Key& key) {
+        std::unique_lock lock(mutex_);
+        return map_.erase(key) > 0;
+    }
+
+    size_t size() const {
+        std::shared_lock lock(mutex_);
+        return map_.size();
+    }
+
+    template<typename F>
+    void for_each(F&& func) const {
+        std::shared_lock lock(mutex_);
+        for (const auto& [k, v] : map_) {
+            func(k, v);
         }
-        return result;
-    }
-
-    Result<User> update_user(User user) {
-        auto result = repository_->save(std::move(user));
-        if (result.is_ok()) {
-            auto saved = result.value();
-            {
-                std::unique_lock lock(cache_mutex_);
-                cache_[saved.id] = saved;
-            }
-            event_bus_->publish(UserEvent::updated(saved));
-        }
-        return result;
-    }
-
-    Result<bool> delete_user(int id) {
-        auto result = repository_->remove(id);
-        if (result.is_ok()) {
-            {
-                std::unique_lock lock(cache_mutex_);
-                cache_.erase(id);
-            }
-            event_bus_->publish(UserEvent::deleted(id));
-        }
-        return result;
-    }
-
-    void clear_cache() {
-        std::unique_lock lock(cache_mutex_);
-        cache_.clear();
-        cache_hits_ = 0;
-        cache_misses_ = 0;
-    }
-
-    struct CacheStats {
-        std::size_t hits;
-        std::size_t misses;
-        std::size_t size;
-        double hit_rate;
-    };
-
-    CacheStats get_cache_stats() const {
-        std::shared_lock lock(cache_mutex_);
-        auto hits = cache_hits_.load();
-        auto misses = cache_misses_.load();
-        auto total = hits + misses;
-        return {
-            hits,
-            misses,
-            cache_.size(),
-            total > 0 ? static_cast<double>(hits) / total : 0.0
-        };
     }
 };
 
 // ============================================================================
-// SECTION 9: Coroutines (C++20)
+// SECTION 11: Structured Bindings and Aggregates
+// ============================================================================
+
+struct Point2D {
+    double x, y;
+    auto operator<=>(const Point2D&) const = default;
+};
+
+struct Config {
+    std::string host = "localhost";
+    int port = 8080;
+    bool ssl = false;
+    std::chrono::seconds timeout = 30s;
+};
+
+void structured_bindings_demo() {
+    // With arrays
+    int arr[] = {1, 2, 3};
+    auto [a, b, c] = arr;
+
+    // With tuples
+    auto [name, age, score] = std::tuple{"Alice"s, 30, 95.5};
+
+    // With structs
+    Config cfg{.host = "api.example.com", .port = 443, .ssl = true};
+    auto& [host, port, ssl, timeout] = cfg;
+
+    // With maps
+    std::map<std::string, int> grades = {{"Math", 95}, {"Science", 88}};
+    for (const auto& [subject, grade] : grades) {
+        std::cout << std::format("{}: {}\n", subject, grade);
+    }
+
+    // With optional
+    std::optional<std::pair<int, std::string>> maybe_pair =
+        std::make_pair(42, "answer"s);
+    if (maybe_pair) {
+        auto& [num, text] = *maybe_pair;
+        std::cout << std::format("{} = {}\n", text, num);
+    }
+}
+
+// ============================================================================
+// SECTION 12: Template Specialization
+// ============================================================================
+
+template<typename T>
+struct Serializer {
+    static std::string serialize(const T& value) {
+        std::ostringstream oss;
+        oss << value;
+        return oss.str();
+    }
+};
+
+template<>
+struct Serializer<bool> {
+    static std::string serialize(bool value) {
+        return value ? "true" : "false";
+    }
+};
+
+template<>
+struct Serializer<std::string> {
+    static std::string serialize(const std::string& value) {
+        return "\"" + value + "\"";
+    }
+};
+
+template<typename T>
+struct Serializer<std::vector<T>> {
+    static std::string serialize(const std::vector<T>& vec) {
+        std::string result = "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += Serializer<T>::serialize(vec[i]);
+        }
+        return result + "]";
+    }
+};
+
+template<typename K, typename V>
+struct Serializer<std::map<K, V>> {
+    static std::string serialize(const std::map<K, V>& map) {
+        std::string result = "{";
+        bool first = true;
+        for (const auto& [key, val] : map) {
+            if (!first) result += ", ";
+            first = false;
+            result += Serializer<K>::serialize(key) + ": " +
+                      Serializer<V>::serialize(val);
+        }
+        return result + "}";
+    }
+};
+
+// ============================================================================
+// SECTION 13: Exception Handling
+// ============================================================================
+
+class AppException : public std::exception {
+    std::string message_;
+    std::source_location location_;
+public:
+    AppException(std::string msg,
+                 std::source_location loc = std::source_location::current())
+        : message_(std::move(msg)), location_(loc) {}
+
+    const char* what() const noexcept override {
+        return message_.c_str();
+    }
+
+    std::string full_message() const {
+        return std::format("{}:{} in {}: {}",
+            location_.file_name(), location_.line(),
+            location_.function_name(), message_);
+    }
+};
+
+class NetworkException : public AppException {
+    int error_code_;
+public:
+    NetworkException(std::string msg, int code)
+        : AppException(std::move(msg)), error_code_(code) {}
+    int error_code() const { return error_code_; }
+};
+
+void exception_demo() {
+    try {
+        throw NetworkException("Connection refused", 111);
+    } catch (const NetworkException& e) {
+        std::cerr << "Network error " << e.error_code()
+                  << ": " << e.what() << "\n";
+    } catch (const AppException& e) {
+        std::cerr << e.full_message() << "\n";
+    } catch (...) {
+        std::cerr << "Unknown exception\n";
+        std::rethrow_exception(std::current_exception());
+    }
+}
+
+// ============================================================================
+// SECTION 14: Filesystem Operations
+// ============================================================================
+
+namespace fs_demo {
+    void scan_directory(const fs::path& dir) {
+        if (!fs::exists(dir)) {
+            std::cerr << "Directory not found: " << dir << "\n";
+            return;
+        }
+
+        size_t total_size = 0;
+        int file_count = 0;
+        std::map<std::string, int> ext_count;
+
+        for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+            if (entry.is_regular_file()) {
+                ++file_count;
+                total_size += entry.file_size();
+                auto ext = entry.path().extension().string();
+                ext_count[ext]++;
+            }
+        }
+
+        std::cout << std::format("Directory: {}\n", dir.string());
+        std::cout << std::format("Total files: {}\n", file_count);
+        std::cout << std::format("Total size: {} bytes\n", total_size);
+        std::cout << "Extensions:\n";
+        for (const auto& [ext, count] : ext_count) {
+            std::cout << std::format("  {}: {} files\n",
+                ext.empty() ? "(none)" : ext, count);
+        }
+    }
+
+    void copy_with_progress(const fs::path& src, const fs::path& dst) {
+        auto total_size = fs::file_size(src);
+        std::ifstream in(src, std::ios::binary);
+        std::ofstream out(dst, std::ios::binary);
+
+        constexpr size_t buffer_size = 8192;
+        char buffer[buffer_size];
+        size_t copied = 0;
+
+        while (in.read(buffer, buffer_size) || in.gcount() > 0) {
+            out.write(buffer, in.gcount());
+            copied += in.gcount();
+            double progress = 100.0 * copied / total_size;
+            std::cout << std::format("\rCopying: {:.1f}%", progress) << std::flush;
+        }
+        std::cout << "\n";
+    }
+}
+
+// ============================================================================
+// SECTION 15: STL Algorithms
+// ============================================================================
+
+void algorithms_demo() {
+    std::vector<int> data = {5, 3, 8, 1, 9, 2, 7, 4, 6};
+
+    // Sorting variants
+    std::ranges::sort(data);
+    std::ranges::sort(data, std::greater{});
+
+    // Stable partition
+    auto it = std::stable_partition(data.begin(), data.end(),
+        [](int n) { return n % 2 == 0; });
+
+    // Parallel algorithms
+    std::vector<double> values(1'000'000);
+    std::iota(values.begin(), values.end(), 1.0);
+
+    auto sum = std::reduce(std::execution::par_unseq,
+        values.begin(), values.end(), 0.0);
+
+    std::transform(std::execution::par,
+        values.begin(), values.end(), values.begin(),
+        [](double v) { return std::sqrt(v); });
+
+    // Accumulate with custom op
+    auto product = std::accumulate(data.begin(), data.end(), 1,
+        std::multiplies<>{});
+
+    // nth_element
+    std::vector<int> nums = {9, 4, 7, 2, 5, 8, 1, 3, 6};
+    std::nth_element(nums.begin(), nums.begin() + 4, nums.end());
+    auto median = nums[4];
+
+    // adjacent_difference
+    std::vector<int> seq = {1, 4, 9, 16, 25};
+    std::vector<int> diffs;
+    std::adjacent_difference(seq.begin(), seq.end(),
+        std::back_inserter(diffs));
+
+    // set operations
+    std::set<int> set_a = {1, 2, 3, 4, 5};
+    std::set<int> set_b = {3, 4, 5, 6, 7};
+    std::vector<int> intersection;
+    std::set_intersection(set_a.begin(), set_a.end(),
+        set_b.begin(), set_b.end(),
+        std::back_inserter(intersection));
+}
+
+// ============================================================================
+// SECTION 16: Coroutines (C++20)
 // ============================================================================
 
 template<typename T>
 struct Generator {
     struct promise_type {
         T current_value;
-        std::exception_ptr exception;
-
         Generator get_return_object() {
             return Generator{std::coroutine_handle<promise_type>::from_promise(*this)};
         }
-
-        std::suspend_always initial_suspend() noexcept { return {}; }
+        std::suspend_always initial_suspend() { return {}; }
         std::suspend_always final_suspend() noexcept { return {}; }
-
         std::suspend_always yield_value(T value) {
             current_value = std::move(value);
             return {};
         }
-
         void return_void() {}
-
-        void unhandled_exception() {
-            exception = std::current_exception();
-        }
+        void unhandled_exception() { std::terminate(); }
     };
 
-    std::coroutine_handle<promise_type> handle;
+    std::coroutine_handle<promise_type> handle_;
 
-    explicit Generator(std::coroutine_handle<promise_type> h) : handle(h) {}
-
-    ~Generator() {
-        if (handle) handle.destroy();
+    explicit Generator(std::coroutine_handle<promise_type> h) : handle_(h) {}
+    ~Generator() { if (handle_) handle_.destroy(); }
+    Generator(Generator&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = nullptr;
     }
-
-    Generator(const Generator&) = delete;
-    Generator& operator=(const Generator&) = delete;
-
-    Generator(Generator&& other) noexcept : handle(other.handle) {
-        other.handle = nullptr;
-    }
-
     Generator& operator=(Generator&& other) noexcept {
-        if (this != &other) {
-            if (handle) handle.destroy();
-            handle = other.handle;
-            other.handle = nullptr;
-        }
+        if (handle_) handle_.destroy();
+        handle_ = other.handle_;
+        other.handle_ = nullptr;
         return *this;
     }
 
-    class Iterator {
-    public:
-        using iterator_category = std::input_iterator_tag;
-        using value_type = T;
-        using difference_type = std::ptrdiff_t;
-        using pointer = T*;
-        using reference = T&;
-
-        std::coroutine_handle<promise_type> handle;
-
-        Iterator() : handle(nullptr) {}
-        explicit Iterator(std::coroutine_handle<promise_type> h) : handle(h) {}
+    struct Iterator {
+        std::coroutine_handle<promise_type> handle_;
+        bool done_;
 
         Iterator& operator++() {
-            handle.resume();
-            if (handle.done()) {
-                handle = nullptr;
-            }
+            handle_.resume();
+            done_ = handle_.done();
             return *this;
         }
-
-        T& operator*() { return handle.promise().current_value; }
-        T* operator->() { return &handle.promise().current_value; }
-
-        bool operator==(const Iterator& other) const {
-            return handle == other.handle;
-        }
+        T& operator*() { return handle_.promise().current_value; }
+        bool operator!=(const Iterator&) const { return !done_; }
     };
 
     Iterator begin() {
-        if (handle) {
-            handle.resume();
-            if (handle.done()) return end();
-        }
-        return Iterator{handle};
+        handle_.resume();
+        return Iterator{handle_, handle_.done()};
     }
-
-    Iterator end() { return Iterator{}; }
+    Iterator end() { return Iterator{handle_, true}; }
 };
 
-// Fibonacci generator using coroutines
-Generator<int> fibonacci(int n) {
-    int a = 0, b = 1;
-    for (int i = 0; i < n; ++i) {
-        co_yield a;
-        auto next = a + b;
-        a = b;
-        b = next;
-    }
-}
-
-// Range generator
 Generator<int> range(int start, int end, int step = 1) {
     for (int i = start; i < end; i += step) {
         co_yield i;
     }
 }
 
-// ============================================================================
-// SECTION 10: Functional Utilities
-// ============================================================================
-
-namespace functional {
-    // Function composition
-    template<typename F, typename G>
-    auto compose(F&& f, G&& g) {
-        return [f = std::forward<F>(f), g = std::forward<G>(g)]
-               (auto&&... args) {
-            return g(f(std::forward<decltype(args)>(args)...));
-        };
-    }
-
-    // Pipe operator
-    template<typename T, typename F>
-    auto operator|(T&& value, F&& func)
-        -> decltype(func(std::forward<T>(value))) {
-        return func(std::forward<T>(value));
-    }
-
-    // Curry
-    template<typename F>
-    auto curry(F&& f) {
-        return [f = std::forward<F>(f)](auto&& x) {
-            return [f, x = std::forward<decltype(x)>(x)](auto&&... args) {
-                return f(x, std::forward<decltype(args)>(args)...);
-            };
-        };
-    }
-
-    // Partial application
-    template<typename F, typename... Args>
-    auto partial(F&& f, Args&&... args) {
-        return [f = std::forward<F>(f),
-                ...bound = std::forward<Args>(args)]
-               (auto&&... rest) {
-            return f(bound..., std::forward<decltype(rest)>(rest)...);
-        };
-    }
-
-    // Memoization
-    template<typename F>
-    auto memoize(F&& f) {
-        using ArgType = typename std::decay_t<F>::argument_type;
-        using ReturnType = std::invoke_result_t<F, ArgType>;
-
-        auto cache = std::make_shared<std::unordered_map<ArgType, ReturnType>>();
-        auto mutex = std::make_shared<std::mutex>();
-
-        return [f = std::forward<F>(f), cache, mutex](ArgType arg) {
-            {
-                std::lock_guard lock(*mutex);
-                auto it = cache->find(arg);
-                if (it != cache->end()) {
-                    return it->second;
-                }
-            }
-
-            auto result = f(arg);
-
-            {
-                std::lock_guard lock(*mutex);
-                (*cache)[arg] = result;
-            }
-
-            return result;
-        };
-    }
-
-    // Retry with exponential backoff
-    template<typename F>
-    auto retry(F&& func, int max_attempts = 3,
-               std::chrono::milliseconds initial_delay = 100ms) {
-        using ReturnType = decltype(func());
-
-        auto current_delay = initial_delay;
-
-        for (int attempt = 0; attempt < max_attempts - 1; ++attempt) {
-            try {
-                return func();
-            } catch (const std::exception& e) {
-                std::cerr << "Attempt " << (attempt + 1) << " failed: "
-                          << e.what() << std::endl;
-                std::this_thread::sleep_for(current_delay);
-                current_delay *= 2;
-            }
+Generator<std::pair<int, int>> enumerate_pairs(int n) {
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            co_yield std::pair{i, j};
         }
-
-        return func();  // Last attempt
-    }
-
-    // Map over container
-    template<Container C, typename F>
-    auto map(const C& container, F&& func) {
-        using T = typename C::value_type;
-        using U = std::invoke_result_t<F, T>;
-
-        std::vector<U> result;
-        result.reserve(container.size());
-
-        for (const auto& elem : container) {
-            result.push_back(std::invoke(func, elem));
-        }
-
-        return result;
-    }
-
-    // Filter container
-    template<Container C, typename F>
-    auto filter(const C& container, F&& predicate) {
-        using T = typename C::value_type;
-
-        std::vector<T> result;
-
-        for (const auto& elem : container) {
-            if (std::invoke(predicate, elem)) {
-                result.push_back(elem);
-            }
-        }
-
-        return result;
-    }
-
-    // Reduce/fold
-    template<Container C, typename T, typename F>
-    T reduce(const C& container, T initial, F&& func) {
-        T accumulator = std::move(initial);
-
-        for (const auto& elem : container) {
-            accumulator = std::invoke(func, std::move(accumulator), elem);
-        }
-
-        return accumulator;
-    }
-
-    // Zip two containers
-    template<Container C1, Container C2>
-    auto zip(const C1& c1, const C2& c2) {
-        using T1 = typename C1::value_type;
-        using T2 = typename C2::value_type;
-
-        std::vector<std::pair<T1, T2>> result;
-        auto it1 = c1.begin();
-        auto it2 = c2.begin();
-
-        while (it1 != c1.end() && it2 != c2.end()) {
-            result.emplace_back(*it1++, *it2++);
-        }
-
-        return result;
     }
 }
 
 // ============================================================================
-// SECTION 11: Thread Pool
+// SECTION 17: Operator Overloading and User-Defined Literals
 // ============================================================================
 
-class ThreadPool {
-private:
-    std::vector<std::jthread> workers_;
-    std::queue<std::function<void()>> tasks_;
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    std::atomic<bool> stop_{false};
-    std::atomic<std::size_t> active_tasks_{0};
-
+class BigInt {
+    std::vector<int> digits_;
+    bool negative_ = false;
 public:
-    explicit ThreadPool(std::size_t num_threads = std::thread::hardware_concurrency()) {
-        for (std::size_t i = 0; i < num_threads; ++i) {
-            workers_.emplace_back([this](std::stop_token stop_token) {
-                while (!stop_token.stop_requested()) {
-                    std::function<void()> task;
-
-                    {
-                        std::unique_lock lock(mutex_);
-                        cv_.wait(lock, [this, &stop_token] {
-                            return stop_token.stop_requested() ||
-                                   !tasks_.empty();
-                        });
-
-                        if (stop_token.stop_requested() && tasks_.empty()) {
-                            return;
-                        }
-
-                        if (tasks_.empty()) continue;
-
-                        task = std::move(tasks_.front());
-                        tasks_.pop();
-                        active_tasks_.fetch_add(1);
-                    }
-
-                    try {
-                        task();
-                    } catch (const std::exception& e) {
-                        std::cerr << "Task exception: " << e.what() << std::endl;
-                    }
-
-                    active_tasks_.fetch_sub(1);
-                }
-            });
+    BigInt() = default;
+    explicit BigInt(const std::string& str) {
+        if (str.empty()) return;
+        size_t start = 0;
+        if (str[0] == '-') { negative_ = true; start = 1; }
+        for (size_t i = str.size(); i > start; --i) {
+            digits_.push_back(str[i-1] - '0');
         }
     }
 
-    ~ThreadPool() {
-        stop_ = true;
-        cv_.notify_all();
-    }
-
-    template<typename F, typename... Args>
-    auto enqueue(F&& f, Args&&... args)
-        -> std::future<std::invoke_result_t<F, Args...>> {
-
-        using return_type = std::invoke_result_t<F, Args...>;
-
-        auto task = std::make_shared<std::packaged_task<return_type()>>(
-            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
-        );
-
-        std::future<return_type> result = task->get_future();
-
-        {
-            std::lock_guard lock(mutex_);
-            if (stop_) {
-                throw std::runtime_error("ThreadPool is stopped");
-            }
-            tasks_.emplace([task]() { (*task)(); });
+    BigInt operator+(const BigInt& other) const {
+        BigInt result;
+        int carry = 0;
+        size_t maxLen = std::max(digits_.size(), other.digits_.size());
+        for (size_t i = 0; i < maxLen || carry; ++i) {
+            int sum = carry;
+            if (i < digits_.size()) sum += digits_[i];
+            if (i < other.digits_.size()) sum += other.digits_[i];
+            result.digits_.push_back(sum % 10);
+            carry = sum / 10;
         }
-
-        cv_.notify_one();
         return result;
     }
 
-    void wait_all() {
-        while (active_tasks_.load() > 0 || !tasks_.empty()) {
-            std::this_thread::yield();
+    BigInt operator*(const BigInt& other) const {
+        BigInt result;
+        result.digits_.resize(digits_.size() + other.digits_.size(), 0);
+        for (size_t i = 0; i < digits_.size(); ++i) {
+            int carry = 0;
+            for (size_t j = 0; j < other.digits_.size() || carry; ++j) {
+                int64_t cur = result.digits_[i + j] +
+                    static_cast<int64_t>(digits_[i]) *
+                    (j < other.digits_.size() ? other.digits_[j] : 0) + carry;
+                result.digits_[i + j] = cur % 10;
+                carry = cur / 10;
+            }
         }
+        while (result.digits_.size() > 1 && result.digits_.back() == 0)
+            result.digits_.pop_back();
+        return result;
     }
 
-    std::size_t size() const { return workers_.size(); }
-    std::size_t pending() const { return tasks_.size(); }
-    std::size_t active() const { return active_tasks_.load(); }
+    friend std::ostream& operator<<(std::ostream& os, const BigInt& bi) {
+        if (bi.negative_) os << '-';
+        for (auto it = bi.digits_.rbegin(); it != bi.digits_.rend(); ++it) {
+            os << *it;
+        }
+        return os;
+    }
 };
 
-// ============================================================================
-// SECTION 12: Logging System
-// ============================================================================
-
-enum class LogLevel { Trace, Debug, Info, Warning, Error, Fatal };
-
-inline std::ostream& operator<<(std::ostream& os, LogLevel level) {
-    switch (level) {
-        case LogLevel::Trace: return os << "TRACE";
-        case LogLevel::Debug: return os << "DEBUG";
-        case LogLevel::Info: return os << "INFO";
-        case LogLevel::Warning: return os << "WARN";
-        case LogLevel::Error: return os << "ERROR";
-        case LogLevel::Fatal: return os << "FATAL";
-    }
-    return os;
+// User-defined literals
+constexpr long double operator""_deg(long double deg) {
+    return deg * std::numbers::pi_v<long double> / 180.0L;
 }
 
-class Logger {
-private:
-    std::string name_;
-    LogLevel min_level_;
-    std::ostream& output_;
-    mutable std::mutex mutex_;
+constexpr unsigned long long operator""_KB(unsigned long long bytes) {
+    return bytes * 1024;
+}
 
-    static std::string current_time() {
-        auto now = std::chrono::system_clock::now();
-        auto time = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()) % 1000;
-
-        std::ostringstream oss;
-        oss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S")
-            << '.' << std::setfill('0') << std::setw(3) << ms.count();
-        return oss.str();
-    }
-
-public:
-    Logger(std::string name, LogLevel min_level = LogLevel::Info,
-           std::ostream& output = std::cout)
-        : name_(std::move(name)), min_level_(min_level), output_(output) {}
-
-    template<typename... Args>
-    void log(LogLevel level, std::format_string<Args...> fmt, Args&&... args) {
-        if (level < min_level_) return;
-
-        auto message = std::format(fmt, std::forward<Args>(args)...);
-
-        std::lock_guard lock(mutex_);
-        output_ << "[" << current_time() << "] "
-                << "[" << level << "] "
-                << "[" << name_ << "] "
-                << message << std::endl;
-    }
-
-    template<typename... Args>
-    void trace(std::format_string<Args...> fmt, Args&&... args) {
-        log(LogLevel::Trace, fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    void debug(std::format_string<Args...> fmt, Args&&... args) {
-        log(LogLevel::Debug, fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    void info(std::format_string<Args...> fmt, Args&&... args) {
-        log(LogLevel::Info, fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    void warning(std::format_string<Args...> fmt, Args&&... args) {
-        log(LogLevel::Warning, fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    void error(std::format_string<Args...> fmt, Args&&... args) {
-        log(LogLevel::Error, fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    void fatal(std::format_string<Args...> fmt, Args&&... args) {
-        log(LogLevel::Fatal, fmt, std::forward<Args>(args)...);
-    }
-
-    void set_level(LogLevel level) { min_level_ = level; }
-    LogLevel get_level() const { return min_level_; }
-};
+constexpr unsigned long long operator""_MB(unsigned long long bytes) {
+    return bytes * 1024 * 1024;
+}
 
 // ============================================================================
-// MAIN FUNCTION
+// MAIN
 // ============================================================================
 
 int main() {
-    Logger logger("main", LogLevel::Debug);
-    logger.info("Starting application...");
+    std::cout << "=== C++ Syntax Highlighting Test ===\n\n";
 
-    // Create infrastructure
-    auto repository = std::make_shared<InMemoryUserRepository>();
-    auto event_bus = std::make_shared<EventBus>();
-    UserService service(repository, event_bus);
+    // Concepts
+    static_assert(Numeric<int>);
+    static_assert(Numeric<double>);
+    static_assert(!Numeric<std::string>);
 
-    // Subscribe to events
-    event_bus->subscribe([&logger](const UserEvent& event) {
-        std::visit([&](auto&& payload) {
-            using T = std::decay_t<decltype(payload)>;
-            if constexpr (std::is_same_v<T, User>) {
-                logger.info("Event {}: User {}", event.type, payload.name);
-            } else {
-                logger.info("Event {}: ID {}", event.type, payload);
-            }
-        }, event.payload);
-    });
-
-    // Create users
-    logger.info("Creating users...");
-    service.create_user(User(1, "Alice", "alice@example.com", Role::Admin));
-    service.create_user(User(2, "Bob", "bob@example.com", Role::User));
-    service.create_user(User(3, "Charlie", "charlie@example.com", Role::Guest));
-    service.create_user(User(4, "Diana", "diana@example.com", Role::Developer));
-    service.create_user(User(5, "Eve", "eve@example.com", Role::Moderator));
-
-    // Query users
-    auto users = service.find_all();
-    logger.info("Total users: {}", users.size());
-
-    // Filter with ranges (C++20)
-    auto admins = users | std::views::filter([](const User& u) {
-        return u.role == Role::Admin;
-    });
-
-    logger.info("Admins:");
-    for (const auto& admin : admins) {
-        logger.info("  - {}", admin.name);
+    // Shapes
+    auto shapes = std::vector<std::unique_ptr<Shape>>{};
+    shapes.push_back(std::make_unique<Circle>(5.0));
+    shapes.push_back(std::make_unique<Rectangle>(4.0, 6.0));
+    shapes.push_back(std::make_unique<Square>(3.0));
+    for (const auto& s : shapes) {
+        std::cout << *s << "\n";
     }
 
-    // Use functional utilities
-    auto names = functional::map(users, [](const User& u) { return u.name; });
-    logger.info("User names: {}", names.size());
+    // Vector3D
+    Vector3D v1{1.0, 2.0, 3.0};
+    Vector3D v2{4.0, 5.0, 6.0};
+    auto v3 = v1 + v2;
+    std::cout << "v1 + v2 = " << v3 << "\n";
+    std::cout << "dot = " << v1.dot(v2) << "\n";
+    std::cout << "cross = " << v1.cross(v2) << "\n";
 
-    // Thread pool demo
-    ThreadPool pool(4);
-    std::vector<std::future<int>> futures;
+    // constexpr
+    std::cout << "10! = " << compile_time_fact << "\n";
+    std::cout << "fib[10] = " << fib_table[10] << "\n";
 
-    for (int i = 0; i < 10; ++i) {
-        futures.push_back(pool.enqueue([i] {
-            std::this_thread::sleep_for(50ms);
-            return i * i;
-        }));
+    // Structured bindings
+    structured_bindings_demo();
+
+    // Lambdas
+    functional::demo();
+
+    // Ranges
+    ranges_demo::demonstrate_ranges();
+
+    // Expected
+    variant_demo::demo_expected();
+
+    // Algorithms
+    algorithms_demo();
+
+    // Generator coroutine
+    for (auto val : range(0, 10, 2)) {
+        std::cout << val << " ";
     }
+    std::cout << "\n";
 
-    logger.info("Waiting for thread pool tasks...");
-    for (auto& f : futures) {
-        logger.debug("Result: {}", f.get());
-    }
+    // Thread-safe queue
+    ThreadSafeQueue<int> tsq;
+    tsq.push(42);
+    auto popped = tsq.try_pop();
+    std::cout << "Popped: " << popped.value_or(-1) << "\n";
 
-    // Generator demo
-    logger.info("Fibonacci sequence:");
-    for (auto fib : fibonacci(10)) {
-        std::cout << fib << " ";
-    }
-    std::cout << std::endl;
+    // User-defined literals
+    auto angle = 90.0_deg;
+    auto mem = 64_MB;
+    std::cout << std::format("90 deg = {} rad\n", angle);
+    std::cout << std::format("64 MB = {} bytes\n", mem);
 
-    // Cache stats
-    auto stats = service.get_cache_stats();
-    logger.info("Cache stats - hits: {}, misses: {}, size: {}, hit rate: {:.2f}%",
-                stats.hits, stats.misses, stats.size, stats.hit_rate * 100);
+    // BigInt
+    BigInt a("12345678901234567890");
+    BigInt b("98765432109876543210");
+    std::cout << "a + b = " << (a + b) << "\n";
 
-    logger.info("Application finished successfully!");
+    // Filesystem
+    fs_demo::scan_directory(fs::current_path());
+
+    // Exception handling
+    try {
+        exception_demo();
+    } catch (...) {}
+
+    std::cout << "\n=== Done ===\n";
     return 0;
 }
-

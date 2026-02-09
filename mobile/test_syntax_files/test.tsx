@@ -148,48 +148,36 @@ function DataTable<T extends { id: string }>({
     );
   }
 
-  if (data.length === 0) {
-    return (
-      <div className="table-empty">
-        <span>{emptyMessage}</span>
-      </div>
-    );
+  if (sortedData.length === 0) {
+    return <div className="table-empty">{emptyMessage}</div>;
   }
 
   return (
     <table className="data-table">
       <thead>
         <tr>
-          {columns.map(col => (
+          {columns.map((col) => (
             <th
               key={String(col.key)}
-              style={{ width: col.width }}
               onClick={() => col.sortable && handleSort(col.key)}
-              className={col.sortable ? 'sortable' : ''}
+              style={{ width: col.width, cursor: col.sortable ? 'pointer' : 'default' }}
             >
               {col.header}
               {sortColumn === col.key && (
-                <span className="sort-indicator">
-                  {sortDirection === 'asc' ? '▲' : '▼'}
-                </span>
+                <span>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
               )}
             </th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {sortedData.map(row => (
-          <tr
-            key={row.id}
-            onClick={() => onRowClick?.(row)}
-            className={onRowClick ? 'clickable' : ''}
-          >
-            {columns.map(col => (
+        {sortedData.map((row) => (
+          <tr key={row.id} onClick={() => onRowClick?.(row)}>
+            {columns.map((col) => (
               <td key={String(col.key)}>
                 {col.render
                   ? col.render(row[col.key], row)
-                  : String(row[col.key])
-                }
+                  : String(row[col.key])}
               </td>
             ))}
           </tr>
@@ -199,94 +187,551 @@ function DataTable<T extends { id: string }>({
   );
 }
 
-// User card component with memo
-const UserCard = React.memo<{ user: User; onSelect: (user: User) => void }>(
-  ({ user, onSelect }) => {
-    const { colors } = useTheme();
+// ============================================================================
+// Theme Provider Component
+// ============================================================================
 
-    return (
-      <div
-        className="user-card"
-        style={{ backgroundColor: colors.background }}
-        onClick={() => onSelect(user)}
-      >
-        <img
-          src={user.avatar || '/default-avatar.png'}
-          alt={user.name}
-          className="avatar"
-        />
-        <div className="user-info">
-          <h3 style={{ color: colors.text }}>{user.name}</h3>
-          <p style={{ color: colors.secondary }}>{user.email}</p>
-          <span className={`badge badge-${user.role}`}>
-            {user.role}
-          </span>
-        </div>
-      </div>
-    );
-  }
-);
+const lightColors = {
+  primary: '#3b82f6',
+  secondary: '#8b5cf6',
+  background: '#ffffff',
+  text: '#1f2937',
+};
 
-UserCard.displayName = 'UserCard';
+const darkColors = {
+  primary: '#60a5fa',
+  secondary: '#a78bfa',
+  background: '#111827',
+  text: '#f9fafb',
+};
 
-// Search input with debounce
-const SearchInput: React.FC<{
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}> = ({ value, onChange, placeholder = 'Search...' }) => {
-  const [localValue, setLocalValue] = useState(value);
-  const debouncedValue = useDebounce(localValue, 300);
-  const inputRef = useRef<HTMLInputElement>(null);
+function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
-  useEffect(() => {
-    onChange(debouncedValue);
-  }, [debouncedValue, onChange]);
+  const value = useMemo<ThemeContextValue>(() => ({
+    theme,
+    toggleTheme: () => setTheme(prev => prev === 'light' ? 'dark' : 'light'),
+    colors: theme === 'light' ? lightColors : darkColors,
+  }), [theme]);
 
   return (
-    <div className="search-input">
+    <ThemeContext.Provider value={value}>
+      <div
+        style={{
+          backgroundColor: value.colors.background,
+          color: value.colors.text,
+          minHeight: '100vh',
+          transition: 'all 0.3s ease',
+        }}
+      >
+        {children}
+      </div>
+    </ThemeContext.Provider>
+  );
+}
+
+// ============================================================================
+// Form Components with Validation
+// ============================================================================
+
+type ValidationRule<T> = {
+  validate: (value: T) => boolean;
+  message: string;
+};
+
+interface FormFieldProps<T> {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  rules?: ValidationRule<T>[];
+  required?: boolean;
+  disabled?: boolean;
+}
+
+function useFormValidation<T extends Record<string, unknown>>(
+  initialValues: T,
+  rules: Partial<Record<keyof T, ValidationRule<T[keyof T]>[]>>
+) {
+  const [values, setValues] = useState<T>(initialValues);
+  const [errors, setErrors] = useState<Partial<Record<keyof T, string[]>>>({});
+  const [touched, setTouched] = useState<Partial<Record<keyof T, boolean>>>({});
+
+  const validate = useCallback((field: keyof T, value: T[keyof T]): string[] => {
+    const fieldRules = rules[field] ?? [];
+    return fieldRules
+      .filter(rule => !rule.validate(value))
+      .map(rule => rule.message);
+  }, [rules]);
+
+  const setValue = useCallback(<K extends keyof T>(field: K, value: T[K]) => {
+    setValues(prev => ({ ...prev, [field]: value }));
+    setTouched(prev => ({ ...prev, [field]: true }));
+    const fieldErrors = validate(field, value);
+    setErrors(prev => ({ ...prev, [field]: fieldErrors }));
+  }, [validate]);
+
+  const isValid = useMemo(() =>
+    Object.values(errors).every((errs) =>
+      (errs as string[]).length === 0
+    ),
+  [errors]);
+
+  const validateAll = useCallback((): boolean => {
+    const allErrors: Partial<Record<keyof T, string[]>> = {};
+    let hasErrors = false;
+
+    for (const field of Object.keys(values) as Array<keyof T>) {
+      const fieldErrors = validate(field, values[field]);
+      if (fieldErrors.length > 0) {
+        allErrors[field] = fieldErrors;
+        hasErrors = true;
+      }
+    }
+
+    setErrors(allErrors);
+    setTouched(Object.fromEntries(
+      Object.keys(values).map(k => [k, true])
+    ) as Partial<Record<keyof T, boolean>>);
+
+    return !hasErrors;
+  }, [values, validate]);
+
+  return { values, errors, touched, setValue, isValid, validateAll };
+}
+
+interface TextInputProps extends Omit<FormFieldProps<string>, 'onChange'> {
+  type?: 'text' | 'email' | 'password' | 'url';
+  placeholder?: string;
+  onChange: (value: string) => void;
+}
+
+function TextInput({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  rules = [],
+  required = false,
+  disabled = false,
+}: TextInputProps) {
+  const [isFocused, setIsFocused] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    const validationErrors = rules
+      .filter(rule => !rule.validate(value))
+      .map(rule => rule.message);
+    if (required && !value) {
+      validationErrors.unshift(`${label} is required`);
+    }
+    setErrors(validationErrors);
+  };
+
+  return (
+    <div className={`form-field ${errors.length > 0 ? 'has-error' : ''}`}>
+      <label htmlFor={label.toLowerCase().replace(/\s+/g, '-')}>
+        {label}
+        {required && <span className="required-marker">*</span>}
+      </label>
       <input
         ref={inputRef}
-        type="text"
-        value={localValue}
-        onChange={e => setLocalValue(e.target.value)}
+        id={label.toLowerCase().replace(/\s+/g, '-')}
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={handleBlur}
         placeholder={placeholder}
+        disabled={disabled}
+        className={isFocused ? 'focused' : ''}
+        aria-invalid={errors.length > 0}
+        aria-describedby={errors.length > 0 ? `${label}-errors` : undefined}
       />
-      {localValue && (
-        <button
-          className="clear-button"
-          onClick={() => {
-            setLocalValue('');
-            inputRef.current?.focus();
-          }}
-        >
-          ✕
-        </button>
+      {errors.length > 0 && (
+        <ul id={`${label}-errors`} className="field-errors" role="alert">
+          {errors.map((err, i) => (
+            <li key={i}>{err}</li>
+          ))}
+        </ul>
       )}
     </div>
   );
+}
+
+// ============================================================================
+// Modal Component
+// ============================================================================
+
+interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  size?: 'small' | 'medium' | 'large';
+  closeOnOverlay?: boolean;
+}
+
+function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  footer,
+  size = 'medium',
+  closeOnOverlay = true,
+}: ModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+      modalRef.current?.focus();
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  const sizeClasses: Record<string, string> = {
+    small: 'max-w-sm',
+    medium: 'max-w-lg',
+    large: 'max-w-4xl',
+  };
+
+  return (
+    <div
+      className="modal-overlay"
+      onClick={closeOnOverlay ? onClose : undefined}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div
+        ref={modalRef}
+        className={`modal-content ${sizeClasses[size]}`}
+        onClick={e => e.stopPropagation()}
+        tabIndex={-1}
+      >
+        <div className="modal-header">
+          <h2 id="modal-title">{title}</h2>
+          <button
+            className="modal-close"
+            onClick={onClose}
+            aria-label="Close modal"
+          >
+            ×
+          </button>
+        </div>
+        <div className="modal-body">{children}</div>
+        {footer && <div className="modal-footer">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Notification System
+// ============================================================================
+
+type NotificationType = 'success' | 'error' | 'warning' | 'info';
+
+interface Notification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message?: string;
+  duration?: number;
+  dismissible?: boolean;
+}
+
+interface NotificationContextValue {
+  notifications: Notification[];
+  addNotification: (notification: Omit<Notification, 'id'>) => void;
+  removeNotification: (id: string) => void;
+  clearAll: () => void;
+}
+
+const NotificationContext = createContext<NotificationContextValue | null>(null);
+
+function useNotifications() {
+  const context = useContext(NotificationContext);
+  if (!context) throw new Error('useNotifications must be used within NotificationProvider');
+  return context;
+}
+
+function NotificationProvider({ children }: { children: React.ReactNode }) {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  const addNotification = useCallback((notification: Omit<Notification, 'id'>) => {
+    const id = crypto.randomUUID();
+    const newNotification: Notification = { ...notification, id };
+    setNotifications(prev => [...prev, newNotification]);
+
+    if (notification.duration !== 0) {
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      }, notification.duration ?? 5000);
+    }
+  }, []);
+
+  const removeNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
+  const clearAll = useCallback(() => setNotifications([]), []);
+
+  return (
+    <NotificationContext.Provider value={{ notifications, addNotification, removeNotification, clearAll }}>
+      {children}
+      <NotificationContainer notifications={notifications} onDismiss={removeNotification} />
+    </NotificationContext.Provider>
+  );
+}
+
+function NotificationContainer({
+  notifications,
+  onDismiss,
+}: {
+  notifications: Notification[];
+  onDismiss: (id: string) => void;
+}) {
+  const iconMap: Record<NotificationType, string> = {
+    success: '✓',
+    error: '✕',
+    warning: '⚠',
+    info: 'ℹ',
+  };
+
+  return (
+    <div className="notification-container" aria-live="polite">
+      {notifications.map(notification => (
+        <div
+          key={notification.id}
+          className={`notification notification-${notification.type}`}
+          role="alert"
+        >
+          <span className="notification-icon">{iconMap[notification.type]}</span>
+          <div className="notification-content">
+            <strong>{notification.title}</strong>
+            {notification.message && <p>{notification.message}</p>}
+          </div>
+          {notification.dismissible !== false && (
+            <button
+              className="notification-dismiss"
+              onClick={() => onDismiss(notification.id)}
+              aria-label="Dismiss notification"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// Pagination Component
+// ============================================================================
+
+interface PaginationProps {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  siblingCount?: number;
+}
+
+function Pagination({
+  currentPage,
+  totalPages,
+  onPageChange,
+  siblingCount = 1,
+}: PaginationProps) {
+  const range = useMemo(() => {
+    const totalPageNumbers = siblingCount + 5;
+
+    if (totalPageNumbers >= totalPages) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    const leftSiblingIndex = Math.max(currentPage - siblingCount, 1);
+    const rightSiblingIndex = Math.min(currentPage + siblingCount, totalPages);
+
+    const shouldShowLeftDots = leftSiblingIndex > 2;
+    const shouldShowRightDots = rightSiblingIndex < totalPages - 2;
+
+    if (!shouldShowLeftDots && shouldShowRightDots) {
+      const leftRange = Array.from({ length: 3 + 2 * siblingCount }, (_, i) => i + 1);
+      return [...leftRange, '...', totalPages];
+    }
+
+    if (shouldShowLeftDots && !shouldShowRightDots) {
+      const rightRange = Array.from(
+        { length: 3 + 2 * siblingCount },
+        (_, i) => totalPages - (3 + 2 * siblingCount) + i + 1
+      );
+      return [1, '...', ...rightRange];
+    }
+
+    const middleRange = Array.from(
+      { length: rightSiblingIndex - leftSiblingIndex + 1 },
+      (_, i) => leftSiblingIndex + i
+    );
+    return [1, '...', ...middleRange, '...', totalPages];
+  }, [currentPage, totalPages, siblingCount]);
+
+  return (
+    <nav aria-label="Pagination" className="pagination">
+      <button
+        disabled={currentPage === 1}
+        onClick={() => onPageChange(currentPage - 1)}
+        aria-label="Previous page"
+      >
+        ← Previous
+      </button>
+
+      {range.map((page, index) =>
+        typeof page === 'string' ? (
+          <span key={`dots-${index}`} className="pagination-dots">
+            {page}
+          </span>
+        ) : (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            className={currentPage === page ? 'active' : ''}
+            aria-current={currentPage === page ? 'page' : undefined}
+          >
+            {page}
+          </button>
+        )
+      )}
+
+      <button
+        disabled={currentPage === totalPages}
+        onClick={() => onPageChange(currentPage + 1)}
+        aria-label="Next page"
+      >
+        Next →
+      </button>
+    </nav>
+  );
+}
+
+// ============================================================================
+// Virtualized List Component
+// ============================================================================
+
+interface VirtualListProps<T> {
+  items: T[];
+  itemHeight: number;
+  containerHeight: number;
+  renderItem: (item: T, index: number) => React.ReactNode;
+  overscan?: number;
+}
+
+function VirtualList<T>({
+  items,
+  itemHeight,
+  containerHeight,
+  renderItem,
+  overscan = 3,
+}: VirtualListProps<T>) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const totalHeight = items.length * itemHeight;
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+  const endIndex = Math.min(
+    items.length - 1,
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + overscan
+  );
+
+  const visibleItems = useMemo(() => {
+    const result: { item: T; index: number; offset: number }[] = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      result.push({ item: items[i], index: i, offset: i * itemHeight });
+    }
+    return result;
+  }, [items, startIndex, endIndex, itemHeight]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="virtual-list-container"
+      style={{ height: containerHeight, overflow: 'auto' }}
+      onScroll={e => setScrollTop(e.currentTarget.scrollTop)}
+    >
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        {visibleItems.map(({ item, index, offset }) => (
+          <div
+            key={index}
+            style={{
+              position: 'absolute',
+              top: offset,
+              height: itemHeight,
+              width: '100%',
+            }}
+          >
+            {renderItem(item, index)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Higher-Order Component (HOC) Pattern
+// ============================================================================
+
+type WithLoadingProps = {
+  loading: boolean;
 };
 
-// Lazy loaded component
-const UserDetails = lazy(() => import('./UserDetails'));
+function withLoading<P extends object>(
+  WrappedComponent: React.ComponentType<P>
+): React.FC<P & WithLoadingProps> {
+  const WithLoadingComponent: React.FC<P & WithLoadingProps> = ({
+    loading,
+    ...props
+  }) => {
+    if (loading) {
+      return (
+        <div className="loading-overlay">
+          <div className="loading-spinner" />
+          <p>Loading...</p>
+        </div>
+      );
+    }
+    return <WrappedComponent {...(props as P)} />;
+  };
 
-// Main app component
-// ===== Advanced TypeScript Types =====
+  WithLoadingComponent.displayName = `WithLoading(${
+    WrappedComponent.displayName || WrappedComponent.name || 'Component'
+  })`;
 
-// Conditional types
-type IsArray<T> = T extends Array<infer U> ? U : never;
-type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;
+  return WithLoadingComponent;
+}
 
-// Template literal types
-type EventName = 'click' | 'hover' | 'focus';
-type EventHandler = `on${Capitalize<EventName>}`;
+// ============================================================================
+// Utility Types and Helpers
+// ============================================================================
 
-// Mapped types with modifiers
-type Mutable<T> = { -readonly [P in keyof T]: T[P] };
-type Optional<T> = { [P in keyof T]?: T[P] };
-type Required<T> = { [P in keyof T]-?: T[P] };
-
-// Utility type combinations
 type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
@@ -295,639 +740,74 @@ type DeepReadonly<T> = {
   readonly [P in keyof T]: T[P] extends object ? DeepReadonly<T[P]> : T[P];
 };
 
-// Discriminated unions
-type Result<T, E = Error> =
-  | { success: true; data: T }
-  | { success: false; error: E };
+type Nullable<T> = { [P in keyof T]: T[P] | null };
 
-type AsyncState<T> =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'success'; data: T }
-  | { status: 'error'; error: Error };
+type RequiredKeys<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>;
 
-// ===== Custom Hooks =====
-
-function useLocalStorage<T>(
-  key: string,
-  initialValue: T
-): [T, (value: T | ((prev: T) => T)) => void] {
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    try {
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch {
-      return initialValue;
-    }
-  });
-
-  const setValue = useCallback(
-    (value: T | ((prev: T) => T)) => {
-      setStoredValue(prev => {
-        const valueToStore = value instanceof Function ? value(prev) : value;
-        window.localStorage.setItem(key, JSON.stringify(valueToStore));
-        return valueToStore;
-      });
-    },
-    [key]
-  );
-
-  return [storedValue, setValue];
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${value}`);
 }
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() =>
-    typeof window !== 'undefined' ? window.matchMedia(query).matches : false
-  );
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(query);
-    const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
-
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, [query]);
-
-  return matches;
+function isNonNullable<T>(value: T): value is NonNullable<T> {
+  return value !== null && value !== undefined;
 }
 
-function useClickOutside<T extends HTMLElement>(
-  callback: () => void
-): React.RefObject<T> {
-  const ref = useRef<T>(null);
-
-  useEffect(() => {
-    const handleClick = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        callback();
-      }
-    };
-
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [callback]);
-
-  return ref;
+function groupBy<T, K extends string | number>(
+  items: T[],
+  keyFn: (item: T) => K
+): Record<K, T[]> {
+  return items.reduce((acc, item) => {
+    const key = keyFn(item);
+    (acc[key] ??= []).push(item);
+    return acc;
+  }, {} as Record<K, T[]>);
 }
 
-function useAsync<T>(
-  asyncFunction: () => Promise<T>,
-  deps: React.DependencyList = []
-): AsyncState<T> & { execute: () => Promise<void> } {
-  const [state, setState] = useState<AsyncState<T>>({ status: 'idle' });
-
-  const execute = useCallback(async () => {
-    setState({ status: 'loading' });
-    try {
-      const data = await asyncFunction();
-      setState({ status: 'success', data });
-    } catch (error) {
-      setState({ status: 'error', error: error as Error });
-    }
-  }, deps);
-
-  return { ...state, execute };
-}
-
-function useIntersectionObserver(
-  options: IntersectionObserverInit = {}
-): [React.RefObject<HTMLDivElement>, boolean] {
-  const ref = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) => {
-      setIsVisible(entry.isIntersecting);
-    }, options);
-
-    if (ref.current) {
-      observer.observe(ref.current);
-    }
-
-    return () => observer.disconnect();
-  }, [options.threshold, options.root, options.rootMargin]);
-
-  return [ref, isVisible];
-}
-
-// ===== Higher-Order Components =====
-
-function withLoading<P extends object>(
-  WrappedComponent: React.ComponentType<P>
-): React.FC<P & { loading?: boolean }> {
-  return function WithLoadingComponent({ loading, ...props }) {
-    if (loading) {
-      return (
-        <div className="loading-wrapper">
-          <div className="spinner" />
-        </div>
-      );
-    }
-    return <WrappedComponent {...(props as P)} />;
+function debounce<T extends (...args: unknown[]) => unknown>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
   };
 }
 
-function withErrorBoundary<P extends object>(
-  WrappedComponent: React.ComponentType<P>,
-  FallbackComponent: React.ComponentType<{ error: Error }>
-): React.ComponentType<P> {
-  return class ErrorBoundaryWrapper extends React.Component<P, { error: Error | null }> {
-    state = { error: null };
-
-    static getDerivedStateFromError(error: Error) {
-      return { error };
-    }
-
-    render() {
-      if (this.state.error) {
-        return <FallbackComponent error={this.state.error} />;
-      }
-      return <WrappedComponent {...this.props} />;
+function throttle<T extends (...args: unknown[]) => unknown>(
+  fn: T,
+  limit: number
+): (...args: Parameters<T>) => void {
+  let inThrottle = false;
+  return (...args: Parameters<T>) => {
+    if (!inThrottle) {
+      fn(...args);
+      inThrottle = true;
+      setTimeout(() => { inThrottle = false; }, limit);
     }
   };
 }
 
-// ===== Compound Components Pattern =====
-
-interface TabsContextValue {
-  activeTab: string;
-  setActiveTab: (id: string) => void;
-}
-
-const TabsContext = createContext<TabsContextValue | null>(null);
-
-interface TabsProps {
-  defaultTab?: string;
-  children: React.ReactNode;
-  onChange?: (tabId: string) => void;
-}
-
-function Tabs({ defaultTab, children, onChange }: TabsProps): JSX.Element {
-  const [activeTab, setActiveTab] = useState(defaultTab || '');
-
-  const handleTabChange = useCallback((id: string) => {
-    setActiveTab(id);
-    onChange?.(id);
-  }, [onChange]);
-
-  return (
-    <TabsContext.Provider value={{ activeTab, setActiveTab: handleTabChange }}>
-      <div className="tabs-container">{children}</div>
-    </TabsContext.Provider>
-  );
-}
-
-function TabList({ children }: { children: React.ReactNode }): JSX.Element {
-  return <div className="tab-list" role="tablist">{children}</div>;
-}
-
-function Tab({ id, children }: { id: string; children: React.ReactNode }): JSX.Element {
-  const context = useContext(TabsContext);
-  if (!context) throw new Error('Tab must be used within Tabs');
-
-  const { activeTab, setActiveTab } = context;
-
-  return (
-    <button
-      role="tab"
-      aria-selected={activeTab === id}
-      className={`tab ${activeTab === id ? 'active' : ''}`}
-      onClick={() => setActiveTab(id)}
-    >
-      {children}
-    </button>
-  );
-}
-
-function TabPanel({ id, children }: { id: string; children: React.ReactNode }): JSX.Element | null {
-  const context = useContext(TabsContext);
-  if (!context) throw new Error('TabPanel must be used within Tabs');
-
-  if (context.activeTab !== id) return null;
-
-  return (
-    <div role="tabpanel" className="tab-panel">
-      {children}
-    </div>
-  );
-}
-
-Tabs.List = TabList;
-Tabs.Tab = Tab;
-Tabs.Panel = TabPanel;
-
-// ===== Render Props Pattern =====
-
-interface MousePosition {
-  x: number;
-  y: number;
-}
-
-interface MouseTrackerProps {
-  children: (position: MousePosition) => React.ReactNode;
-}
-
-function MouseTracker({ children }: MouseTrackerProps): JSX.Element {
-  const [position, setPosition] = useState<MousePosition>({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      setPosition({ x: e.clientX, y: e.clientY });
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
-
-  return <>{children(position)}</>;
-}
-
-// ===== Form Handling with Validation =====
-
-interface FormField<T> {
-  value: T;
-  error: string | null;
-  touched: boolean;
-}
-
-interface FormState<T extends Record<string, unknown>> {
-  fields: { [K in keyof T]: FormField<T[K]> };
-  isValid: boolean;
-  isSubmitting: boolean;
-}
-
-type Validator<T> = (value: T) => string | null;
-
-interface UseFormConfig<T extends Record<string, unknown>> {
-  initialValues: T;
-  validators?: { [K in keyof T]?: Validator<T[K]> };
-  onSubmit: (values: T) => Promise<void>;
-}
-
-function useForm<T extends Record<string, unknown>>({
-  initialValues,
-  validators = {},
-  onSubmit,
-}: UseFormConfig<T>) {
-  const [fields, setFields] = useState<FormState<T>['fields']>(() => {
-    const initial = {} as FormState<T>['fields'];
-    for (const key in initialValues) {
-      initial[key] = {
-        value: initialValues[key],
-        error: null,
-        touched: false,
-      };
-    }
-    return initial;
-  });
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const setValue = useCallback(<K extends keyof T>(name: K, value: T[K]) => {
-    setFields(prev => ({
-      ...prev,
-      [name]: {
-        ...prev[name],
-        value,
-        error: validators[name]?.(value) || null,
-      },
-    }));
-  }, [validators]);
-
-  const setTouched = useCallback(<K extends keyof T>(name: K) => {
-    setFields(prev => ({
-      ...prev,
-      [name]: { ...prev[name], touched: true },
-    }));
-  }, []);
-
-  const isValid = useMemo(() => {
-    return Object.values(fields).every(field => !field.error);
-  }, [fields]);
-
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isValid || isSubmitting) return;
-
-    setIsSubmitting(true);
-    try {
-      const values = Object.fromEntries(
-        Object.entries(fields).map(([key, field]) => [key, field.value])
-      ) as T;
-      await onSubmit(values);
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [fields, isValid, isSubmitting, onSubmit]);
-
-  return { fields, setValue, setTouched, isValid, isSubmitting, handleSubmit };
-}
-
-// ===== Portal Component =====
-
-interface PortalProps {
-  children: React.ReactNode;
-  containerId?: string;
-}
-
-function Portal({ children, containerId = 'portal-root' }: PortalProps): React.ReactPortal | null {
-  const [container, setContainer] = useState<HTMLElement | null>(null);
-
-  useEffect(() => {
-    let el = document.getElementById(containerId);
-    if (!el) {
-      el = document.createElement('div');
-      el.id = containerId;
-      document.body.appendChild(el);
-    }
-    setContainer(el);
-  }, [containerId]);
-
-  if (!container) return null;
-  return ReactDOM.createPortal(children, container);
-}
-
-// ===== Modal Component =====
-
-interface ModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  title?: string;
-  children: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg';
-}
-
-function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps): JSX.Element | null {
-  const modalRef = useClickOutside<HTMLDivElement>(onClose);
-
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
-    }
-
-    return () => {
-      document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = '';
-    };
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
-  return (
-    <Portal>
-      <div className="modal-overlay">
-        <div ref={modalRef} className={`modal modal-${size}`} role="dialog" aria-modal="true">
-          {title && (
-            <div className="modal-header">
-              <h2>{title}</h2>
-              <button onClick={onClose} aria-label="Close">×</button>
-            </div>
-          )}
-          <div className="modal-body">{children}</div>
-        </div>
-      </div>
-    </Portal>
-  );
-}
-
-// ===== Virtualized List =====
-
-interface VirtualizedListProps<T> {
-  items: T[];
-  itemHeight: number;
-  containerHeight: number;
-  renderItem: (item: T, index: number) => React.ReactNode;
-}
-
-function VirtualizedList<T>({
-  items,
-  itemHeight,
-  containerHeight,
-  renderItem,
-}: VirtualizedListProps<T>): JSX.Element {
-  const [scrollTop, setScrollTop] = useState(0);
-
-  const startIndex = Math.floor(scrollTop / itemHeight);
-  const endIndex = Math.min(
-    startIndex + Math.ceil(containerHeight / itemHeight) + 1,
-    items.length
-  );
-
-  const visibleItems = items.slice(startIndex, endIndex);
-  const offsetY = startIndex * itemHeight;
-
-  return (
-    <div
-      className="virtualized-list"
-      style={{ height: containerHeight, overflow: 'auto' }}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-    >
-      <div style={{ height: items.length * itemHeight, position: 'relative' }}>
-        <div style={{ transform: `translateY(${offsetY}px)` }}>
-          {visibleItems.map((item, index) => (
-            <div key={startIndex + index} style={{ height: itemHeight }}>
-              {renderItem(item, startIndex + index)}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ===== Animation Hook =====
-
-function useSpring(target: number, config = { stiffness: 100, damping: 10 }): number {
-  const [value, setValue] = useState(target);
-  const velocity = useRef(0);
-
-  useEffect(() => {
-    let animationId: number;
-
-    const animate = () => {
-      const force = (target - value) * (config.stiffness / 1000);
-      velocity.current = velocity.current * (1 - config.damping / 100) + force;
-      const newValue = value + velocity.current;
-
-      if (Math.abs(target - newValue) < 0.01 && Math.abs(velocity.current) < 0.01) {
-        setValue(target);
-        return;
-      }
-
-      setValue(newValue);
-      animationId = requestAnimationFrame(animate);
-    };
-
-    animationId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationId);
-  }, [target, value, config.stiffness, config.damping]);
-
-  return value;
-}
-
-// ===== Toast Notification System =====
-
-interface Toast {
-  id: string;
-  message: string;
-  type: 'success' | 'error' | 'warning' | 'info';
-  duration?: number;
-}
-
-interface ToastContextValue {
-  toasts: Toast[];
-  addToast: (toast: Omit<Toast, 'id'>) => void;
-  removeToast: (id: string) => void;
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null);
-
-function ToastProvider({ children }: { children: React.ReactNode }): JSX.Element {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-
-  const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
-    const id = Math.random().toString(36).slice(2);
-    setToasts(prev => [...prev, { ...toast, id }]);
-
-    if (toast.duration !== 0) {
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== id));
-      }, toast.duration || 5000);
-    }
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  }, []);
-
-  return (
-    <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
-      {children}
-      <Portal>
-        <div className="toast-container">
-          {toasts.map(toast => (
-            <div key={toast.id} className={`toast toast-${toast.type}`}>
-              <span>{toast.message}</span>
-              <button onClick={() => removeToast(toast.id)}>×</button>
-            </div>
-          ))}
-        </div>
-      </Portal>
-    </ToastContext.Provider>
-  );
-}
-
-function useToast(): Omit<ToastContextValue, 'toasts'> {
-  const context = useContext(ToastContext);
-  if (!context) throw new Error('useToast must be used within ToastProvider');
-  return { addToast: context.addToast, removeToast: context.removeToast };
-}
-
-// ===== Data Fetching with React Query Pattern =====
-
-interface QueryOptions<T> {
-  queryKey: string[];
-  queryFn: () => Promise<T>;
-  staleTime?: number;
-  cacheTime?: number;
-  enabled?: boolean;
-  onSuccess?: (data: T) => void;
-  onError?: (error: Error) => void;
-}
-
-interface QueryResult<T> {
-  data: T | undefined;
-  error: Error | null;
-  isLoading: boolean;
-  isError: boolean;
-  isSuccess: boolean;
-  refetch: () => Promise<void>;
-}
-
-const queryCache = new Map<string, { data: unknown; timestamp: number }>();
-
-function useQuery<T>({
-  queryKey,
-  queryFn,
-  staleTime = 0,
-  enabled = true,
-  onSuccess,
-  onError,
-}: QueryOptions<T>): QueryResult<T> {
-  const cacheKey = queryKey.join(':');
-  const [data, setData] = useState<T | undefined>(() => {
-    const cached = queryCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < staleTime) {
-      return cached.data as T;
-    }
-    return undefined;
-  });
-  const [error, setError] = useState<Error | null>(null);
-  const [isLoading, setIsLoading] = useState(!data);
-
-  const fetch = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await queryFn();
-      setData(result);
-      queryCache.set(cacheKey, { data: result, timestamp: Date.now() });
-      onSuccess?.(result);
-    } catch (e) {
-      const err = e as Error;
-      setError(err);
-      onError?.(err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [cacheKey, queryFn, onSuccess, onError]);
-
-  useEffect(() => {
-    if (enabled) {
-      fetch();
-    }
-  }, [enabled, fetch]);
-
-  return {
-    data,
-    error,
-    isLoading,
-    isError: !!error,
-    isSuccess: !!data && !error,
-    refetch: fetch,
-  };
-}
-
-// Import ReactDOM for portal
-import ReactDOM from 'react-dom';
-
-// Main app component
-export default function UserDashboard(): JSX.Element {
-  const [users, setUsers] = useState<User[]>([]);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const { data, loading, error } = useFetch<User[]>('/api/users');
-
-  useEffect(() => {
-    if (data) {
-      setUsers(data);
-    }
-  }, [data]);
-
-  const filteredUsers = useMemo(() => {
-    if (!searchQuery) return users;
-    const query = searchQuery.toLowerCase();
-    return users.filter(
-      user =>
-        user.name.toLowerCase().includes(query) ||
-        user.email.toLowerCase().includes(query)
-    );
-  }, [users, searchQuery]);
+// ============================================================================
+// Lazy-loaded Components
+// ============================================================================
+
+const LazyDashboard = lazy(() => import('./Dashboard'));
+const LazySettings = lazy(() => import('./Settings'));
+const LazyAnalytics = lazy(() => import('./Analytics'));
+
+// ============================================================================
+// App Component
+// ============================================================================
+
+function App() {
+  const [currentRoute, setCurrentRoute] = useState<'home' | 'dashboard' | 'settings'>('home');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [users] = useState<User[]>([
+    { id: '1', name: 'Alice Johnson', email: 'alice@example.com', role: 'admin' },
+    { id: '2', name: 'Bob Smith', email: 'bob@example.com', role: 'user' },
+    { id: '3', name: 'Charlie Brown', email: 'charlie@example.com', role: 'guest' },
+  ]);
 
   const columns: ColumnDefinition<User>[] = useMemo(() => [
     { key: 'name', header: 'Name', sortable: true },
@@ -935,51 +815,113 @@ export default function UserDashboard(): JSX.Element {
     {
       key: 'role',
       header: 'Role',
+      sortable: true,
       render: (value) => (
-        <span className={`badge badge-${value}`}>{String(value)}</span>
+        <span className={`badge badge-${value}`}>
+          {String(value).toUpperCase()}
+        </span>
       ),
     },
   ], []);
 
-  if (error) {
-    return (
-      <div className="error-state">
-        <h2>Error loading users</h2>
-        <p>{error.message}</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="dashboard">
-      <header>
-        <h1>User Dashboard</h1>
-        <SearchInput
-          value={searchQuery}
-          onChange={setSearchQuery}
-          placeholder="Search users..."
-        />
-      </header>
+    <ThemeProvider>
+      <NotificationProvider>
+        <div className="app">
+          <header className="app-header">
+            <h1>React TSX Syntax Demo</h1>
+            <nav>
+              <button onClick={() => setCurrentRoute('home')}>Home</button>
+              <button onClick={() => setCurrentRoute('dashboard')}>Dashboard</button>
+              <button onClick={() => setCurrentRoute('settings')}>Settings</button>
+            </nav>
+            <ThemeToggle />
+          </header>
 
-      <main>
-        <section className="user-list">
-          <DataTable
-            data={filteredUsers}
-            columns={columns}
-            loading={loading}
-            onRowClick={setSelectedUser}
-            emptyMessage="No users found"
-          />
-        </section>
+          <main className="app-main">
+            {currentRoute === 'home' && (
+              <>
+                <h2>User Directory</h2>
+                <DataTable
+                  data={users}
+                  columns={columns}
+                  onRowClick={(user) => console.log('Clicked:', user)}
+                />
+                <button onClick={() => setModalOpen(true)}>
+                  Open Modal
+                </button>
+                <Pagination
+                  currentPage={1}
+                  totalPages={10}
+                  onPageChange={(page) => console.log('Page:', page)}
+                />
+              </>
+            )}
 
-        {selectedUser && (
-          <aside className="user-details">
-            <Suspense fallback={<div>Loading details...</div>}>
-              <UserDetails user={selectedUser} />
-            </Suspense>
-          </aside>
-        )}
-      </main>
-    </div>
+            {currentRoute === 'dashboard' && (
+              <Suspense fallback={<div>Loading dashboard...</div>}>
+                <LazyDashboard />
+              </Suspense>
+            )}
+
+            {currentRoute === 'settings' && (
+              <Suspense fallback={<div>Loading settings...</div>}>
+                <LazySettings />
+              </Suspense>
+            )}
+          </main>
+
+          <Modal
+            isOpen={modalOpen}
+            onClose={() => setModalOpen(false)}
+            title="User Details"
+            size="medium"
+            footer={
+              <div className="modal-actions">
+                <button onClick={() => setModalOpen(false)}>Cancel</button>
+                <button className="primary" onClick={() => setModalOpen(false)}>
+                  Save
+                </button>
+              </div>
+            }
+          >
+            <TextInput
+              label="Name"
+              value=""
+              onChange={(val) => console.log(val)}
+              required
+              rules={[
+                { validate: v => v.length >= 2, message: 'Name must be at least 2 characters' },
+                { validate: v => v.length <= 100, message: 'Name must be 100 characters or less' },
+              ]}
+            />
+            <TextInput
+              label="Email"
+              value=""
+              type="email"
+              onChange={(val) => console.log(val)}
+              required
+              rules={[
+                { validate: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), message: 'Invalid email' },
+              ]}
+            />
+          </Modal>
+        </div>
+      </NotificationProvider>
+    </ThemeProvider>
   );
 }
+
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button onClick={toggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
+      {theme === 'light' ? '🌙' : '☀️'}
+    </button>
+  );
+}
+
+export default App;
+export { DataTable, Modal, TextInput, Pagination, VirtualList, ThemeProvider, NotificationProvider };
+export type { User, DataTableProps, ColumnDefinition, ModalProps, NotificationType };
+

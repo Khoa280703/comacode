@@ -148,24 +148,13 @@ sealed class Result<out T> {
         is Failure -> default()
     }
 
-    fun getOrThrow(): T = when (this) {
-        is Success -> data
-        is Failure -> throw exception ?: RuntimeException(error)
-    }
-
-    fun exceptionOrNull(): Throwable? = (this as? Failure)?.exception
-
     companion object {
-        inline fun <T> catch(block: () -> T): Result<T> = try {
-            Success(block())
-        } catch (e: Exception) {
-            Failure(e.message ?: "Unknown error", e)
-        }
+        fun <T> success(data: T): Result<T> = Success(data)
+        fun <T> failure(error: String): Result<T> = Failure(error)
+        fun <T> failure(exception: Throwable): Result<T> =
+            Failure(exception.message ?: "Unknown error", exception)
 
-        fun <T> fromNullable(value: T?, errorMessage: String = "Value is null"): Result<T> =
-            value?.let { Success(it) } ?: Failure(errorMessage)
-
-        suspend fun <T> catchSuspend(block: suspend () -> T): Result<T> = try {
+        inline fun <T> runCatching(block: () -> T): Result<T> = try {
             Success(block())
         } catch (e: Exception) {
             Failure(e.message ?: "Unknown error", e)
@@ -173,79 +162,108 @@ sealed class Result<out T> {
     }
 }
 
-// Result extension functions
-inline fun <T, R> Result<T>.fold(
-    onSuccess: (T) -> R,
-    onFailure: (String, Throwable?) -> R
-): R = when (this) {
-    is Result.Success -> onSuccess(data)
-    is Result.Failure -> onFailure(error, exception)
-}
+// =============================================================================
+// EXTENSION FUNCTIONS & PROPERTIES
+// =============================================================================
 
-fun <T> Result<Result<T>>.flatten(): Result<T> = when (this) {
-    is Result.Success -> data
-    is Result.Failure -> this
-}
+fun String.toSlug(): String = this
+    .lowercase()
+    .replace(Regex("[^a-z0-9\\s-]"), "")
+    .replace(Regex("\\s+"), "-")
+    .trim('-')
 
-fun <T> List<Result<T>>.sequence(): Result<List<T>> {
-    val results = mutableListOf<T>()
-    for (result in this) {
-        when (result) {
-            is Result.Success -> results.add(result.data)
-            is Result.Failure -> return result
-        }
+fun String.truncate(maxLength: Int, suffix: String = "..."): String =
+    if (length <= maxLength) this
+    else take(maxLength - suffix.length) + suffix
+
+val String.wordCount: Int get() = split(Regex("\\s+")).filter { it.isNotBlank() }.size
+
+fun <T> List<T>.secondOrNull(): T? = if (size >= 2) this[1] else null
+
+inline fun <T> List<T>.forEachIndexedReversed(action: (Int, T) -> Unit) {
+    for (i in lastIndex downTo 0) {
+        action(i, this[i])
     }
-    return Result.Success(results)
 }
 
-suspend fun <T> List<Result<T>>.sequenceAsync(): Result<List<T>> = coroutineScope {
-    val deferred = map { result ->
-        async { result }
+fun <T : Comparable<T>> List<T>.isSorted(): Boolean =
+    zipWithNext().all { (a, b) -> a <= b }
+
+fun <K, V> Map<K, V>.merge(other: Map<K, V>, resolver: (V, V) -> V): Map<K, V> {
+    val result = this.toMutableMap()
+    for ((key, value) in other) {
+        result[key] = if (key in result) resolver(result[key]!!, value) else value
     }
-    deferred.awaitAll().sequence()
+    return result
 }
 
 // =============================================================================
-// ENTITY DEFINITIONS - Data Classes with Validation
+// DATA CLASSES & SEALED INTERFACES
 // =============================================================================
 
-enum class Role(val permissions: Set<Permission>) {
-    SUPER_ADMIN(Permission.values().toSet()),
-    ADMIN(setOf(Permission.READ, Permission.WRITE, Permission.DELETE, Permission.MANAGE_USERS)),
-    MODERATOR(setOf(Permission.READ, Permission.WRITE, Permission.MODERATE)),
-    USER(setOf(Permission.READ, Permission.WRITE)),
-    GUEST(setOf(Permission.READ));
+data class User(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val email: String,
+    val role: UserRole = UserRole.USER,
+    val permissions: Set<String> = emptySet(),
+    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val metadata: Map<String, Any?> = emptyMap()
+) {
+    fun hasPermission(permission: String): Boolean =
+        role == UserRole.ADMIN || permission in permissions
 
-    fun hasPermission(permission: Permission): Boolean = permission in permissions
+    fun withRole(newRole: UserRole): User = copy(role = newRole)
 }
 
-enum class Permission {
-    READ, WRITE, DELETE, MODERATE, MANAGE_USERS, MANAGE_SYSTEM
-}
+enum class UserRole(val level: Int) {
+    GUEST(0),
+    USER(1),
+    MODERATOR(2),
+    ADMIN(3);
 
-enum class UserStatus {
-    ACTIVE, INACTIVE, SUSPENDED, PENDING_VERIFICATION, DELETED
-}
-
-@JvmInline
-value class UserId(val value: String) {
-    init {
-        require(value.isNotBlank()) { "UserId cannot be blank" }
-    }
+    fun canAccess(requiredLevel: UserRole): Boolean = this.level >= requiredLevel.level
 
     companion object {
-        fun generate(): UserId = UserId(UUID.randomUUID().toString())
+        fun fromString(value: String): UserRole =
+            entries.find { it.name.equals(value, ignoreCase = true) }
+                ?: throw IllegalArgumentException("Unknown role: $value")
     }
 }
+
+sealed interface Event {
+    val timestamp: LocalDateTime
+    val source: String
+}
+
+data class UserCreated(
+    val user: User,
+    override val timestamp: LocalDateTime = LocalDateTime.now(),
+    override val source: String = "user-service"
+) : Event
+
+data class UserUpdated(
+    val userId: String,
+    val changes: Map<String, Any?>,
+    override val timestamp: LocalDateTime = LocalDateTime.now(),
+    override val source: String = "user-service"
+) : Event
+
+data class UserDeleted(
+    val userId: String,
+    val reason: String?,
+    override val timestamp: LocalDateTime = LocalDateTime.now(),
+    override val source: String = "user-service"
+) : Event
+
+// =============================================================================
+// VALUE CLASSES & INLINE CLASSES
+// =============================================================================
 
 @JvmInline
 value class Email(val value: String) {
     init {
-        require(value.matches(EMAIL_REGEX)) { "Invalid email format: $value" }
-    }
-
-    companion object {
-        private val EMAIL_REGEX = Regex("^[\\w.-]+@[\\w.-]+\\.\\w{2,}$")
+        require(value.contains("@")) { "Invalid email: $value" }
     }
 
     val domain: String get() = value.substringAfter("@")
@@ -253,738 +271,551 @@ value class Email(val value: String) {
 }
 
 @JvmInline
-value class PhoneNumber(val value: String) {
+value class Password(private val value: String) {
     init {
-        require(value.matches(PHONE_REGEX)) { "Invalid phone number format: $value" }
+        require(value.length >= 8) { "Password must be at least 8 characters" }
     }
+
+    val strength: PasswordStrength get() = when {
+        value.length >= 16 && value.any { it.isDigit() } && value.any { !it.isLetterOrDigit() } ->
+            PasswordStrength.STRONG
+        value.length >= 12 && value.any { it.isDigit() } ->
+            PasswordStrength.MEDIUM
+        else -> PasswordStrength.WEAK
+    }
+}
+
+enum class PasswordStrength { WEAK, MEDIUM, STRONG }
+
+@JvmInline
+value class Percentage(val value: Double) {
+    init {
+        require(value in 0.0..100.0) { "Percentage must be 0-100, got: $value" }
+    }
+
+    operator fun plus(other: Percentage): Percentage =
+        Percentage((value + other.value).coerceIn(0.0, 100.0))
+
+    operator fun times(factor: Double): Percentage =
+        Percentage((value * factor).coerceIn(0.0, 100.0))
+
+    override fun toString(): String = "${value}%"
+}
+
+// =============================================================================
+// DELEGATION PATTERN
+// =============================================================================
+
+interface Logger {
+    fun log(level: LogLevel, message: String)
+    fun debug(message: String) = log(LogLevel.DEBUG, message)
+    fun info(message: String) = log(LogLevel.INFO, message)
+    fun warn(message: String) = log(LogLevel.WARN, message)
+    fun error(message: String) = log(LogLevel.ERROR, message)
+}
+
+enum class LogLevel { DEBUG, INFO, WARN, ERROR }
+
+class ConsoleLogger(private val tag: String) : Logger {
+    override fun log(level: LogLevel, message: String) {
+        val timestamp = LocalDateTime.now()
+        println("[$timestamp] [$level] [$tag] $message")
+    }
+}
+
+class LoggerWithPrefix(
+    private val prefix: String,
+    private val delegate: Logger
+) : Logger by delegate {
+    override fun log(level: LogLevel, message: String) {
+        delegate.log(level, "$prefix $message")
+    }
+}
+
+// Delegated properties
+class ObservableProperty<T>(initialValue: T) {
+    private val listeners = mutableListOf<(T, T) -> Unit>()
+
+    var value: T = initialValue
+        set(new) {
+            val old = field
+            field = new
+            listeners.forEach { it(old, new) }
+        }
+
+    fun onChange(listener: (T, T) -> Unit) {
+        listeners.add(listener)
+    }
+}
+
+class UserPreferences {
+    var theme: String by Delegates.observable("light") { _, old, new ->
+        println("Theme changed: $old -> $new")
+    }
+
+    var fontSize: Int by Delegates.vetoable(14) { _, _, new ->
+        new in 8..72
+    }
+
+    val computedProperty: String by lazy {
+        println("Computing expensive property...")
+        "Computed at ${LocalDateTime.now()}"
+    }
+}
+
+// =============================================================================
+// COROUTINES & FLOW
+// =============================================================================
+
+class UserRepository(private val logger: Logger) {
+    private val users = ConcurrentHashMap<String, User>()
+    private val mutex = Mutex()
+    private val _events = MutableSharedFlow<Event>(
+        replay = 0,
+        extraBufferCapacity = 64
+    )
+    val events: SharedFlow<Event> = _events.asSharedFlow()
+
+    suspend fun create(user: User): Result<User> = mutex.withLock {
+        if (users.containsKey(user.id)) {
+            return@withLock Result.failure("User already exists: ${user.id}")
+        }
+        users[user.id] = user
+        logger.info("Created user: ${user.name}")
+        _events.emit(UserCreated(user))
+        Result.success(user)
+    }
+
+    suspend fun findById(id: String): Result<User> = withContext(Dispatchers.IO) {
+        val user = users[id]
+        if (user != null) Result.success(user)
+        else Result.failure("User not found: $id")
+    }
+
+    suspend fun findAll(): List<User> = withContext(Dispatchers.IO) {
+        users.values.toList()
+    }
+
+    fun searchByName(query: String): Flow<User> = flow {
+        users.values
+            .filter { it.name.contains(query, ignoreCase = true) }
+            .forEach { emit(it) }
+    }.flowOn(Dispatchers.IO)
+
+    suspend fun update(id: String, transform: (User) -> User): Result<User> = mutex.withLock {
+        val existing = users[id] ?: return@withLock Result.failure("User not found: $id")
+        val updated = transform(existing)
+        users[id] = updated
+        logger.info("Updated user: ${updated.name}")
+        _events.emit(UserUpdated(id, mapOf("user" to updated)))
+        Result.success(updated)
+    }
+
+    suspend fun delete(id: String, reason: String? = null): Result<Unit> = mutex.withLock {
+        users.remove(id) ?: return@withLock Result.failure("User not found: $id")
+        logger.info("Deleted user: $id")
+        _events.emit(UserDeleted(id, reason))
+        Result.success(Unit)
+    }
+}
+
+// =============================================================================
+// DSL BUILDER
+// =============================================================================
+
+@DslMarker
+annotation class HtmlDsl
+
+@HtmlDsl
+class HtmlBuilder {
+    private val elements = mutableListOf<String>()
+
+    fun head(block: HeadBuilder.() -> Unit) {
+        elements.add(HeadBuilder().apply(block).build())
+    }
+
+    fun body(block: BodyBuilder.() -> Unit) {
+        elements.add(BodyBuilder().apply(block).build())
+    }
+
+    fun build(): String = buildString {
+        appendLine("<!DOCTYPE html>")
+        appendLine("<html>")
+        elements.forEach { appendLine(it) }
+        appendLine("</html>")
+    }
+}
+
+@HtmlDsl
+class HeadBuilder {
+    private val elements = mutableListOf<String>()
+
+    fun title(text: String) { elements.add("  <title>$text</title>") }
+    fun meta(name: String, content: String) {
+        elements.add("  <meta name=\"$name\" content=\"$content\">")
+    }
+    fun link(rel: String, href: String) {
+        elements.add("  <link rel=\"$rel\" href=\"$href\">")
+    }
+
+    fun build(): String = buildString {
+        appendLine("<head>")
+        elements.forEach { appendLine(it) }
+        appendLine("</head>")
+    }
+}
+
+@HtmlDsl
+class BodyBuilder {
+    private val elements = mutableListOf<String>()
+
+    fun h1(text: String) { elements.add("  <h1>$text</h1>") }
+    fun h2(text: String) { elements.add("  <h2>$text</h2>") }
+    fun p(text: String) { elements.add("  <p>$text</p>") }
+    fun div(className: String? = null, block: BodyBuilder.() -> Unit) {
+        val cls = className?.let { " class=\"$it\"" } ?: ""
+        val inner = BodyBuilder().apply(block).build()
+        elements.add("  <div$cls>\n$inner\n  </div>")
+    }
+    fun ul(block: ListBuilder.() -> Unit) {
+        elements.add(ListBuilder().apply(block).build())
+    }
+
+    fun build(): String = buildString {
+        appendLine("<body>")
+        elements.forEach { appendLine(it) }
+        appendLine("</body>")
+    }
+}
+
+@HtmlDsl
+class ListBuilder {
+    private val items = mutableListOf<String>()
+    fun li(text: String) { items.add("    <li>$text</li>") }
+    fun build(): String = buildString {
+        appendLine("  <ul>")
+        items.forEach { appendLine(it) }
+        appendLine("  </ul>")
+    }
+}
+
+fun html(block: HtmlBuilder.() -> Unit): String = HtmlBuilder().apply(block).build()
+
+// =============================================================================
+// SCOPE FUNCTIONS & IDIOMATIC KOTLIN
+// =============================================================================
+
+fun scopeFunctionsDemo() {
+    // let - null-safe transformation
+    val name: String? = "Kotlin"
+    val length = name?.let { it.length } ?: 0
+
+    // run - object configuration and computation
+    val hexString = StringBuilder().run {
+        for (i in 0..15) {
+            append(i.toString(16))
+        }
+        toString()
+    }
+
+    // with - grouping function calls
+    val numbers = mutableListOf(1, 2, 3, 4, 5)
+    val summary = with(numbers) {
+        "Sum: ${sum()}, Size: $size, Max: ${maxOrNull()}"
+    }
+
+    // apply - object configuration
+    val user = User(name = "Alice", email = "alice@example.com").apply {
+        println("Created user: $name with email: $email")
+    }
+
+    // also - additional actions
+    val sortedList = numbers
+        .also { println("Before sort: $it") }
+        .sorted()
+        .also { println("After sort: $it") }
+
+    // takeIf / takeUnless
+    val positiveNumber = (-5).takeIf { it > 0 }  // null
+    val nonEmptyString = "hello".takeUnless { it.isBlank() }  // "hello"
+
+    // Destructuring
+    val (id, userName, email) = User(name = "Bob", email = "bob@example.com")
+    println("$id: $userName ($email)")
+
+    // when expression with multiple conditions
+    val statusMessage = when {
+        numbers.isEmpty() -> "Empty list"
+        numbers.size == 1 -> "Single element: ${numbers.first()}"
+        numbers.all { it > 0 } -> "All positive"
+        numbers.any { it < 0 } -> "Contains negative"
+        else -> "Mixed values"
+    }
+}
+
+// =============================================================================
+// GENERICS & VARIANCE
+// =============================================================================
+
+interface Repository<T : Any> {
+    suspend fun findById(id: String): T?
+    suspend fun findAll(): List<T>
+    suspend fun save(entity: T): T
+    suspend fun delete(id: String): Boolean
+}
+
+class InMemoryRepository<T : Any>(
+    private val idExtractor: (T) -> String
+) : Repository<T> {
+    private val store = ConcurrentHashMap<String, T>()
+
+    override suspend fun findById(id: String): T? = store[id]
+    override suspend fun findAll(): List<T> = store.values.toList()
+    override suspend fun save(entity: T): T {
+        store[idExtractor(entity)] = entity
+        return entity
+    }
+    override suspend fun delete(id: String): Boolean = store.remove(id) != null
+}
+
+// Variance annotations
+interface Producer<out T> {
+    fun produce(): T
+}
+
+interface Consumer<in T> {
+    fun consume(item: T)
+}
+
+interface Transformer<in I, out O> {
+    fun transform(input: I): O
+}
+
+class StringToIntTransformer : Transformer<String, Int> {
+    override fun transform(input: String): Int = input.toIntOrNull() ?: 0
+}
+
+// Type-safe builders with generics
+class TypeSafeBuilder<T> {
+    private val properties = mutableMapOf<String, Any?>()
+
+    operator fun String.invoke(value: Any?) {
+        properties[this] = value
+    }
+
+    fun build(): Map<String, Any?> = properties.toMap()
+}
+
+fun <T> buildConfig(block: TypeSafeBuilder<T>.() -> Unit): Map<String, Any?> =
+    TypeSafeBuilder<T>().apply(block).build()
+
+// =============================================================================
+// COROUTINE PATTERNS
+// =============================================================================
+
+class RateLimiter(
+    private val maxRequests: Int,
+    private val windowDuration: kotlin.time.Duration
+) {
+    private val requests = AtomicLong(0)
+    private val windowStart = AtomicLong(System.currentTimeMillis())
+
+    suspend fun <T> execute(block: suspend () -> T): T {
+        while (true) {
+            val now = System.currentTimeMillis()
+            val start = windowStart.get()
+            if (now - start > windowDuration.inWholeMilliseconds) {
+                windowStart.compareAndSet(start, now)
+                requests.set(0)
+            }
+            if (requests.incrementAndGet() <= maxRequests) {
+                return block()
+            }
+            requests.decrementAndGet()
+            delay(100.milliseconds)
+        }
+    }
+}
+
+suspend fun <T> retryWithBackoff(
+    maxAttempts: Int = 3,
+    initialDelay: kotlin.time.Duration = 100.milliseconds,
+    maxDelay: kotlin.time.Duration = 10.seconds,
+    factor: Double = 2.0,
+    block: suspend (attempt: Int) -> T
+): T {
+    var currentDelay = initialDelay
+    var lastException: Exception? = null
+
+    repeat(maxAttempts) { attempt ->
+        try {
+            return block(attempt + 1)
+        } catch (e: Exception) {
+            lastException = e
+            if (attempt < maxAttempts - 1) {
+                delay(currentDelay)
+                currentDelay = (currentDelay * factor).coerceAtMost(maxDelay)
+            }
+        }
+    }
+    throw lastException ?: IllegalStateException("All retry attempts failed")
+}
+
+// Flow operators
+fun <T> Flow<T>.chunked(size: Int): Flow<List<T>> = flow {
+    val buffer = mutableListOf<T>()
+    collect { value ->
+        buffer.add(value)
+        if (buffer.size >= size) {
+            emit(buffer.toList())
+            buffer.clear()
+        }
+    }
+    if (buffer.isNotEmpty()) {
+        emit(buffer.toList())
+    }
+}
+
+fun <T> Flow<T>.throttleFirst(windowDuration: kotlin.time.Duration): Flow<T> = flow {
+    var lastEmitTime = 0L
+    collect { value ->
+        val now = System.currentTimeMillis()
+        if (now - lastEmitTime >= windowDuration.inWholeMilliseconds) {
+            lastEmitTime = now
+            emit(value)
+        }
+    }
+}
+
+// =============================================================================
+// COMPANION OBJECT & FACTORY PATTERNS
+// =============================================================================
+
+data class HttpResponse(
+    val statusCode: Int,
+    val body: String,
+    val headers: Map<String, String> = emptyMap()
+) {
+    val isSuccess: Boolean get() = statusCode in 200..299
+    val isClientError: Boolean get() = statusCode in 400..499
+    val isServerError: Boolean get() = statusCode in 500..599
 
     companion object {
-        private val PHONE_REGEX = Regex("^\\+?[1-9]\\d{1,14}$")
-    }
-
-    val formatted: String
-        get() = when {
-            value.length == 10 -> "(${value.substring(0, 3)}) ${value.substring(3, 6)}-${value.substring(6)}"
-            value.startsWith("+") -> value
-            else -> "+$value"
-        }
-}
-
-data class Address(
-    val street: String,
-    val city: String,
-    val state: String,
-    val postalCode: String,
-    val country: String
-) {
-    init {
-        require(street.isNotBlank()) { "Street cannot be blank" }
-        require(city.isNotBlank()) { "City cannot be blank" }
-        require(country.isNotBlank()) { "Country cannot be blank" }
-    }
-
-    val formatted: String
-        get() = "$street, $city, $state $postalCode, $country"
-}
-
-data class UserProfile(
-    val firstName: String,
-    val lastName: String,
-    val avatarUrl: String? = null,
-    val bio: String? = null,
-    val dateOfBirth: LocalDateTime? = null,
-    val phone: PhoneNumber? = null,
-    val address: Address? = null,
-    val preferences: UserPreferences = UserPreferences()
-) {
-    init {
-        require(firstName.length in 1..50) { "First name must be 1-50 characters" }
-        require(lastName.length in 1..50) { "Last name must be 1-50 characters" }
-        bio?.let { require(it.length <= 500) { "Bio must be at most 500 characters" } }
-    }
-
-    val fullName: String get() = "$firstName $lastName"
-    val initials: String get() = "${firstName.first()}${lastName.first()}".uppercase()
-}
-
-data class UserPreferences(
-    val theme: Theme = Theme.SYSTEM,
-    val language: String = "en",
-    val timezone: String = "UTC",
-    val emailNotifications: Boolean = true,
-    val pushNotifications: Boolean = true,
-    val twoFactorEnabled: Boolean = false
-)
-
-enum class Theme { LIGHT, DARK, SYSTEM }
-
-data class User(
-    val id: UserId,
-    val email: Email,
-    val profile: UserProfile,
-    val role: Role = Role.USER,
-    val status: UserStatus = UserStatus.PENDING_VERIFICATION,
-    val metadata: Map<String, String> = emptyMap(),
-    val createdAt: LocalDateTime = LocalDateTime.now(),
-    val updatedAt: LocalDateTime = LocalDateTime.now(),
-    val lastLoginAt: LocalDateTime? = null,
-    val version: Long = 0
-) {
-    fun validate(): List<ValidationViolation> {
-        val violations = mutableListOf<ValidationViolation>()
-
-        if (profile.firstName.isBlank()) {
-            violations.add(ValidationViolation("profile.firstName", "First name is required"))
-        }
-        if (profile.lastName.isBlank()) {
-            violations.add(ValidationViolation("profile.lastName", "Last name is required"))
-        }
-
-        return violations
-    }
-
-    fun hasPermission(permission: Permission): Boolean = role.hasPermission(permission)
-
-    fun isActive(): Boolean = status == UserStatus.ACTIVE
-
-    fun withUpdatedProfile(block: UserProfile.() -> UserProfile): User =
-        copy(profile = profile.block(), updatedAt = LocalDateTime.now(), version = version + 1)
-}
-
-// User builder DSL
-class UserBuilder {
-    var id: UserId = UserId.generate()
-    var email: String = ""
-    var firstName: String = ""
-    var lastName: String = ""
-    var role: Role = Role.USER
-    var status: UserStatus = UserStatus.PENDING_VERIFICATION
-    private var profile: UserProfile? = null
-    private val metadata = mutableMapOf<String, String>()
-
-    fun profile(block: UserProfileBuilder.() -> Unit) {
-        profile = UserProfileBuilder().apply(block).build()
-    }
-
-    fun metadata(key: String, value: String) {
-        metadata[key] = value
-    }
-
-    fun build(): User {
-        require(email.isNotBlank()) { "Email is required" }
-        require(firstName.isNotBlank()) { "First name is required" }
-        require(lastName.isNotBlank()) { "Last name is required" }
-
-        return User(
-            id = id,
-            email = Email(email),
-            profile = profile ?: UserProfile(firstName, lastName),
-            role = role,
-            status = status,
-            metadata = metadata.toMap()
-        )
-    }
-}
-
-class UserProfileBuilder {
-    var firstName: String = ""
-    var lastName: String = ""
-    var avatarUrl: String? = null
-    var bio: String? = null
-    var phone: String? = null
-    private var address: Address? = null
-    private var preferences: UserPreferences = UserPreferences()
-
-    fun address(block: AddressBuilder.() -> Unit) {
-        address = AddressBuilder().apply(block).build()
-    }
-
-    fun preferences(block: PreferencesBuilder.() -> Unit) {
-        preferences = PreferencesBuilder().apply(block).build()
-    }
-
-    fun build(): UserProfile = UserProfile(
-        firstName = firstName,
-        lastName = lastName,
-        avatarUrl = avatarUrl,
-        bio = bio,
-        phone = phone?.let { PhoneNumber(it) },
-        address = address,
-        preferences = preferences
-    )
-}
-
-class AddressBuilder {
-    var street: String = ""
-    var city: String = ""
-    var state: String = ""
-    var postalCode: String = ""
-    var country: String = ""
-
-    fun build(): Address = Address(street, city, state, postalCode, country)
-}
-
-class PreferencesBuilder {
-    var theme: Theme = Theme.SYSTEM
-    var language: String = "en"
-    var timezone: String = "UTC"
-    var emailNotifications: Boolean = true
-    var pushNotifications: Boolean = true
-    var twoFactorEnabled: Boolean = false
-
-    fun build(): UserPreferences = UserPreferences(
-        theme, language, timezone, emailNotifications, pushNotifications, twoFactorEnabled
-    )
-}
-
-fun user(block: UserBuilder.() -> Unit): User = UserBuilder().apply(block).build()
-
-// =============================================================================
-// REPOSITORY PATTERN - Interfaces and Implementations
-// =============================================================================
-
-interface Repository<T, ID> {
-    suspend fun findById(id: ID): T?
-    suspend fun findAll(): List<T>
-    suspend fun findAll(page: Int, size: Int): Page<T>
-    suspend fun save(entity: T): T
-    suspend fun saveAll(entities: List<T>): List<T>
-    suspend fun delete(id: ID): Boolean
-    suspend fun deleteAll(ids: List<ID>): Int
-    suspend fun exists(id: ID): Boolean
-    suspend fun count(): Long
-}
-
-data class Page<T>(
-    val content: List<T>,
-    val pageNumber: Int,
-    val pageSize: Int,
-    val totalElements: Long,
-    val totalPages: Int
-) {
-    val hasNext: Boolean get() = pageNumber < totalPages - 1
-    val hasPrevious: Boolean get() = pageNumber > 0
-    val isFirst: Boolean get() = pageNumber == 0
-    val isLast: Boolean get() = pageNumber >= totalPages - 1
-
-    fun <R> map(transform: (T) -> R): Page<R> = Page(
-        content = content.map(transform),
-        pageNumber = pageNumber,
-        pageSize = pageSize,
-        totalElements = totalElements,
-        totalPages = totalPages
-    )
-}
-
-interface UserRepository : Repository<User, UserId> {
-    suspend fun findByEmail(email: Email): User?
-    suspend fun findByRole(role: Role): List<User>
-    suspend fun findByStatus(status: UserStatus): List<User>
-    suspend fun findActiveUsers(): List<User>
-    suspend fun searchByName(query: String): List<User>
-    suspend fun updateStatus(id: UserId, status: UserStatus): Boolean
-    suspend fun updateLastLogin(id: UserId, timestamp: LocalDateTime): Boolean
-}
-
-class InMemoryUserRepository : UserRepository {
-    private val storage = ConcurrentHashMap<UserId, User>()
-    private val mutex = Mutex()
-    private val idCounter = AtomicLong(0)
-
-    override suspend fun findById(id: UserId): User? = storage[id]
-
-    override suspend fun findAll(): List<User> = storage.values.toList()
-
-    override suspend fun findAll(page: Int, size: Int): Page<User> {
-        val allUsers = storage.values.toList()
-        val totalElements = allUsers.size.toLong()
-        val totalPages = ((totalElements + size - 1) / size).toInt()
-        val startIndex = page * size
-        val endIndex = minOf(startIndex + size, allUsers.size)
-
-        val content = if (startIndex < allUsers.size) {
-            allUsers.subList(startIndex, endIndex)
-        } else {
-            emptyList()
-        }
-
-        return Page(content, page, size, totalElements, totalPages)
-    }
-
-    override suspend fun save(entity: User): User = mutex.withLock {
-        val updated = entity.copy(updatedAt = LocalDateTime.now())
-        storage[entity.id] = updated
-        updated
-    }
-
-    override suspend fun saveAll(entities: List<User>): List<User> = mutex.withLock {
-        entities.map { entity ->
-            val updated = entity.copy(updatedAt = LocalDateTime.now())
-            storage[entity.id] = updated
-            updated
-        }
-    }
-
-    override suspend fun delete(id: UserId): Boolean = mutex.withLock {
-        storage.remove(id) != null
-    }
-
-    override suspend fun deleteAll(ids: List<UserId>): Int = mutex.withLock {
-        ids.count { storage.remove(it) != null }
-    }
-
-    override suspend fun exists(id: UserId): Boolean = storage.containsKey(id)
-
-    override suspend fun count(): Long = storage.size.toLong()
-
-    override suspend fun findByEmail(email: Email): User? =
-        storage.values.find { it.email == email }
-
-    override suspend fun findByRole(role: Role): List<User> =
-        storage.values.filter { it.role == role }
-
-    override suspend fun findByStatus(status: UserStatus): List<User> =
-        storage.values.filter { it.status == status }
-
-    override suspend fun findActiveUsers(): List<User> =
-        storage.values.filter { it.isActive() }
-
-    override suspend fun searchByName(query: String): List<User> {
-        val lowerQuery = query.lowercase()
-        return storage.values.filter {
-            it.profile.fullName.lowercase().contains(lowerQuery)
-        }
-    }
-
-    override suspend fun updateStatus(id: UserId, status: UserStatus): Boolean = mutex.withLock {
-        storage[id]?.let { user ->
-            storage[id] = user.copy(status = status, updatedAt = LocalDateTime.now())
-            true
-        } ?: false
-    }
-
-    override suspend fun updateLastLogin(id: UserId, timestamp: LocalDateTime): Boolean = mutex.withLock {
-        storage[id]?.let { user ->
-            storage[id] = user.copy(lastLoginAt = timestamp, updatedAt = LocalDateTime.now())
-            true
-        } ?: false
+        fun ok(body: String = "") = HttpResponse(200, body)
+        fun created(body: String = "") = HttpResponse(201, body)
+        fun noContent() = HttpResponse(204, "")
+        fun badRequest(body: String = "Bad Request") = HttpResponse(400, body)
+        fun unauthorized(body: String = "Unauthorized") = HttpResponse(401, body)
+        fun forbidden(body: String = "Forbidden") = HttpResponse(403, body)
+        fun notFound(body: String = "Not Found") = HttpResponse(404, body)
+        fun serverError(body: String = "Internal Server Error") = HttpResponse(500, body)
     }
 }
 
 // =============================================================================
-// EVENT SYSTEM - Domain Events with Flow
+// MAIN FUNCTION
 // =============================================================================
 
-sealed interface DomainEvent {
-    val eventId: String
-    val timestamp: LocalDateTime
-    val metadata: Map<String, String>
-}
+fun main() = runBlocking {
+    println("=== Kotlin Syntax Highlighting Test ===\n")
 
-sealed class UserEvent : DomainEvent {
-    override val eventId: String = UUID.randomUUID().toString()
-    override val timestamp: LocalDateTime = LocalDateTime.now()
-    override val metadata: Map<String, String> = emptyMap()
+    // Result type
+    val result = Result.runCatching { 42 / 2 }
+    result.onSuccess { println("Result: $it") }
+          .onFailure { msg, _ -> println("Error: $msg") }
 
-    data class Created(
-        val user: User,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    // Extension functions
+    println("hello-world".toSlug())
+    println("A very long string that should be truncated".truncate(20))
+    println("Hello World Kotlin".wordCount)
 
-    data class Updated(
-        val userId: UserId,
-        val oldUser: User,
-        val newUser: User,
-        val changedFields: Set<String>,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    // Value classes
+    val email = Email("alice@example.com")
+    println("Email domain: ${email.domain}")
 
-    data class Deleted(
-        val userId: UserId,
-        val deletedBy: UserId? = null,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    // User & scope functions
+    scopeFunctionsDemo()
 
-    data class StatusChanged(
-        val userId: UserId,
-        val oldStatus: UserStatus,
-        val newStatus: UserStatus,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    // Repository
+    val logger = ConsoleLogger("main")
+    val repo = UserRepository(logger)
 
-    data class RoleChanged(
-        val userId: UserId,
-        val oldRole: Role,
-        val newRole: Role,
-        val changedBy: UserId,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    val user = User(name = "Alice", email = "alice@example.com", role = UserRole.ADMIN)
+    repo.create(user)
 
-    data class LoggedIn(
-        val userId: UserId,
-        val ipAddress: String? = null,
-        val userAgent: String? = null,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    repo.findById(user.id).onSuccess { println("Found: ${it.name}") }
 
-    data class LoggedOut(
-        val userId: UserId,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
+    // Flow
+    repo.searchByName("Ali")
+        .collect { println("Search result: ${it.name}") }
 
-    data class PasswordChanged(
-        val userId: UserId,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
-
-    data class EmailVerified(
-        val userId: UserId,
-        val email: Email,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : UserEvent()
-}
-
-sealed class SystemEvent : DomainEvent {
-    override val eventId: String = UUID.randomUUID().toString()
-    override val timestamp: LocalDateTime = LocalDateTime.now()
-    override val metadata: Map<String, String> = emptyMap()
-
-    data class Started(
-        val version: String,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : SystemEvent()
-
-    data class Shutdown(
-        val reason: String,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : SystemEvent()
-
-    data class HealthCheck(
-        val status: HealthStatus,
-        val details: Map<String, HealthStatus>,
-        override val metadata: Map<String, String> = emptyMap()
-    ) : SystemEvent()
-}
-
-enum class HealthStatus { HEALTHY, DEGRADED, UNHEALTHY }
-
-interface EventHandler<E : DomainEvent> {
-    suspend fun handle(event: E)
-}
-
-class EventBus {
-    private val _events = MutableSharedFlow<DomainEvent>(
-        replay = 0,
-        extraBufferCapacity = 100,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-    val events: SharedFlow<DomainEvent> = _events.asSharedFlow()
-
-    private val handlers = ConcurrentHashMap<Class<*>, MutableList<EventHandler<*>>>()
-
-    suspend fun publish(event: DomainEvent) {
-        _events.emit(event)
-        dispatchToHandlers(event)
+    // Event processing
+    launch {
+        repo.events
+            .take(3)
+            .collect { event ->
+                when (event) {
+                    is UserCreated -> println("Event: User created: ${event.user.name}")
+                    is UserUpdated -> println("Event: User updated: ${event.userId}")
+                    is UserDeleted -> println("Event: User deleted: ${event.userId}")
+                }
+            }
     }
 
-    suspend fun publishAll(events: List<DomainEvent>) {
-        events.forEach { publish(it) }
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private suspend fun dispatchToHandlers(event: DomainEvent) {
-        handlers[event::class.java]?.forEach { handler ->
-            try {
-                (handler as EventHandler<DomainEvent>).handle(event)
-            } catch (e: Exception) {
-                println("Error handling event ${event::class.simpleName}: ${e.message}")
+    // DSL
+    val page = html {
+        head {
+            title("Kotlin DSL Demo")
+            meta("viewport", "width=device-width, initial-scale=1")
+        }
+        body {
+            h1("Welcome to Kotlin!")
+            p("This page was generated using a type-safe DSL builder.")
+            div("container") {
+                h2("Features")
+                ul {
+                    li("Coroutines & Flow")
+                    li("Sealed classes & interfaces")
+                    li("Extension functions")
+                    li("Type-safe builders")
+                }
             }
         }
     }
+    println(page)
 
-    fun <E : DomainEvent> register(eventClass: Class<E>, handler: EventHandler<E>) {
-        handlers.getOrPut(eventClass) { mutableListOf() }.add(handler)
-    }
-
-    inline fun <reified E : DomainEvent> register(handler: EventHandler<E>) {
-        register(E::class.java, handler)
-    }
-
-    fun subscribe(scope: CoroutineScope): Job = scope.launch {
-        events.collect { event ->
-            println("[EventBus] Event received: ${event::class.simpleName}")
+    // Rate limiter
+    val limiter = RateLimiter(maxRequests = 5, windowDuration = 1.seconds)
+    repeat(3) { i ->
+        limiter.execute {
+            println("Request $i executed")
         }
     }
 
-    inline fun <reified E : DomainEvent> subscribeToType(
-        scope: CoroutineScope,
-        crossinline handler: suspend (E) -> Unit
-    ): Job = scope.launch {
-        events.filterIsInstance<E>().collect { event ->
-            try {
-                handler(event)
-            } catch (e: Exception) {
-                println("Error handling ${E::class.simpleName}: ${e.message}")
-            }
+    // Retry with backoff
+    try {
+        val value = retryWithBackoff(maxAttempts = 3) { attempt ->
+            println("Attempt $attempt")
+            if (attempt < 3) throw RuntimeException("Simulated failure")
+            "Success on attempt $attempt"
         }
+        println(value)
+    } catch (e: Exception) {
+        println("All retries failed: ${e.message}")
     }
+
+    // HttpResponse factory
+    val response = HttpResponse.ok("""{"status": "healthy"}""")
+    println("Response: ${response.statusCode} - ${response.body}")
+
+    // Generic config builder
+    val config = buildConfig<Any> {
+        "host"("localhost")
+        "port"(8080)
+        "debug"(true)
+    }
+    println("Config: $config")
+
+    println("\n=== Done ===")
 }
 
-// Event sourcing support
-data class EventEnvelope<E : DomainEvent>(
-    val event: E,
-    val sequenceNumber: Long,
-    val aggregateId: String,
-    val aggregateType: String
-)
-
-interface EventStore {
-    suspend fun append(aggregateId: String, events: List<DomainEvent>): Long
-    suspend fun load(aggregateId: String): List<EventEnvelope<*>>
-    suspend fun loadFrom(aggregateId: String, fromSequence: Long): List<EventEnvelope<*>>
-}
-
-class InMemoryEventStore : EventStore {
-    private val store = ConcurrentHashMap<String, MutableList<EventEnvelope<*>>>()
-    private val sequenceCounter = AtomicLong(0)
-
-    override suspend fun append(aggregateId: String, events: List<DomainEvent>): Long {
-        val envelopes = events.map { event ->
-            EventEnvelope(
-                event = event,
-                sequenceNumber = sequenceCounter.incrementAndGet(),
-                aggregateId = aggregateId,
-                aggregateType = event::class.java.simpleName
-            )
-        }
-        store.getOrPut(aggregateId) { mutableListOf() }.addAll(envelopes)
-        return envelopes.lastOrNull()?.sequenceNumber ?: 0
-    }
-
-    override suspend fun load(aggregateId: String): List<EventEnvelope<*>> =
-        store[aggregateId]?.toList() ?: emptyList()
-
-    override suspend fun loadFrom(aggregateId: String, fromSequence: Long): List<EventEnvelope<*>> =
-        store[aggregateId]?.filter { it.sequenceNumber > fromSequence } ?: emptyList()
-}
-
-// =============================================================================
-// SERVICE LAYER - Business Logic with Caching
-// =============================================================================
-
-interface Cache<K, V> {
-    suspend fun get(key: K): V?
-    suspend fun put(key: K, value: V, ttlSeconds: Long = 300)
-    suspend fun remove(key: K): V?
-    suspend fun clear()
-    suspend fun size(): Int
-}
-
-class LRUCache<K, V>(private val maxSize: Int = 100) : Cache<K, V> {
-    private data class CacheEntry<V>(
-        val value: V,
-        val expiresAt: LocalDateTime
-    )
-
-    private val storage = LinkedHashMap<K, CacheEntry<V>>(maxSize, 0.75f, true)
-    private val mutex = Mutex()
-
-    override suspend fun get(key: K): V? = mutex.withLock {
-        storage[key]?.let { entry ->
-            if (LocalDateTime.now().isBefore(entry.expiresAt)) {
-                entry.value
-            } else {
-                storage.remove(key)
-                null
-            }
-        }
-    }
-
-    override suspend fun put(key: K, value: V, ttlSeconds: Long) = mutex.withLock {
-        if (storage.size >= maxSize) {
-            val oldest = storage.keys.firstOrNull()
-            oldest?.let { storage.remove(it) }
-        }
-        storage[key] = CacheEntry(value, LocalDateTime.now().plusSeconds(ttlSeconds))
-    }
-
-    override suspend fun remove(key: K): V? = mutex.withLock {
-        storage.remove(key)?.value
-    }
-
-    override suspend fun clear() = mutex.withLock {
-        storage.clear()
-    }
-
-    override suspend fun size(): Int = storage.size
-}
-
-class UserService(
-    private val repository: UserRepository,
-    private val eventBus: EventBus,
-    private val cache: Cache<UserId, User> = LRUCache(1000)
-) {
-    suspend fun findById(id: UserId): Result<User> {
-        cache.get(id)?.let { return Result.Success(it) }
-
-        return repository.findById(id)?.let { user ->
-            cache.put(id, user)
-            Result.Success(user)
-        } ?: Result.Failure("User not found: ${id.value}")
-    }
-
-    suspend fun findByEmail(email: Email): Result<User> {
-        return repository.findByEmail(email)?.let { Result.Success(it) }
-            ?: Result.Failure("User not found with email: ${email.value}")
-    }
-
-    suspend fun findAll(page: Int = 0, size: Int = 20): Page<User> =
-        repository.findAll(page, size)
-
-    suspend fun searchUsers(query: String): List<User> =
-        repository.searchByName(query)
-
-    suspend fun createUser(user: User): Result<User> {
-        val violations = user.validate()
-        if (violations.isNotEmpty()) {
-            return Result.Failure(
-                violations.joinToString(", ") { it.message },
-                ValidationException(violations)
-            )
-        }
-
-        repository.findByEmail(user.email)?.let {
-            return Result.Failure(
-                "Email already exists: ${user.email.value}",
-                ConflictException("User", "email", user.email.value)
-            )
-        }
-
-        val saved = repository.save(user)
-        cache.put(saved.id, saved)
-        eventBus.publish(UserEvent.Created(saved))
-
-        return Result.Success(saved)
-    }
-
-    suspend fun updateUser(id: UserId, update: (User) -> User): Result<User> {
-        val existing = repository.findById(id)
-            ?: return Result.Failure("User not found: ${id.value}")
-
-        val updated = update(existing).copy(
-            updatedAt = LocalDateTime.now(),
-            version = existing.version + 1
-        )
-
-        val violations = updated.validate()
-        if (violations.isNotEmpty()) {
-            return Result.Failure(violations.joinToString(", ") { it.message })
-        }
-
-        val saved = repository.save(updated)
-        cache.put(saved.id, saved)
-
-        val changedFields = detectChangedFields(existing, saved)
-        eventBus.publish(UserEvent.Updated(id, existing, saved, changedFields))
-
-        return Result.Success(saved)
-    }
-
-    private fun detectChangedFields(old: User, new: User): Set<String> {
-        val changes = mutableSetOf<String>()
-        if (old.email != new.email) changes.add("email")
-        if (old.profile != new.profile) changes.add("profile")
-        if (old.role != new.role) changes.add("role")
-        if (old.status != new.status) changes.add("status")
-        return changes
-    }
-
-    suspend fun changeStatus(id: UserId, newStatus: UserStatus): Result<User> {
-        val existing = repository.findById(id)
-            ?: return Result.Failure("User not found: ${id.value}")
-
-        val oldStatus = existing.status
-        repository.updateStatus(id, newStatus)
-
-        val updated = existing.copy(status = newStatus, updatedAt = LocalDateTime.now())
-        cache.put(id, updated)
-        eventBus.publish(UserEvent.StatusChanged(id, oldStatus, newStatus))
-
-        return Result.Success(updated)
-    }
-
-    suspend fun changeRole(id: UserId, newRole: Role, changedBy: UserId): Result<User> {
-        val existing = repository.findById(id)
-            ?: return Result.Failure("User not found: ${id.value}")
-
-        val oldRole = existing.role
-        val updated = repository.save(existing.copy(role = newRole, updatedAt = LocalDateTime.now()))
-
-        cache.put(id, updated)
-        eventBus.publish(UserEvent.RoleChanged(id, oldRole, newRole, changedBy))
-
-        return Result.Success(updated)
-    }
-
-    suspend fun deleteUser(id: UserId, deletedBy: UserId? = null): Result<Boolean> {
-        if (!repository.exists(id)) {
-            return Result.Failure("User not found: ${id.value}")
-        }
-
-        val deleted = repository.delete(id)
-        if (deleted) {
-            cache.remove(id)
-            eventBus.publish(UserEvent.Deleted(id, deletedBy))
-        }
-
-        return Result.Success(deleted)
-    }
-
-    suspend fun recordLogin(id: UserId, ipAddress: String? = null, userAgent: String? = null): Result<User> {
-        val now = LocalDateTime.now()
-        repository.updateLastLogin(id, now)
-
-        val user = repository.findById(id)
-            ?: return Result.Failure("User not found: ${id.value}")
-
-        cache.put(id, user)
-        eventBus.publish(UserEvent.LoggedIn(id, ipAddress, userAgent))
-
-        return Result.Success(user)
-    }
-
-    fun clearCache() {
-        runBlocking { cache.clear() }
-    }
-}
-
-// =============================================================================
-// COROUTINES PATTERNS - Advanced Flow and Channel Operations
-// =============================================================================
-
-// Retry with exponential backoff
-suspend fun <T> retryWithBackoff(
-    times: Int = 3,
-    initialDelayMs: Long = 100,
-    maxDelayMs: Long = 5000,
-    factor: Double = 2.0,
-    shouldRetry: (Throwable) -> Boolean = { true },
-    block: suspend () -> T
-): T {
-    var currentDelay = initialDelayMs
-    repeat(times - 1) { attempt ->
-        try {
-            return block()
-        } catch (e: Exception) {
-            if (!shouldRetry(e)) throw e
-            println("Attempt ${attempt + 1} failed: ${e.message}. Retrying in ${currentDelay}ms")
-            delay(currentDelay)
-            currentDelay = (currentDelay * factor).toLong().coerceAtMost(maxDelayMs)
-        }
-    }
-    return block()
-}
-
-// Timeout with fallback
-suspend fun <T> withTimeoutOrDefault(
-    timeoutMs: Long,
